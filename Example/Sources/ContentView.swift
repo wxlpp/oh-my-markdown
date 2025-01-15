@@ -5,16 +5,15 @@
 //  Created by Evan Wang on 2025年1月15日.
 //
 
-import SwiftUI
 import MarkdownKit
+import SwiftUI
 
 struct SwiftUIMarkdownKit: UIViewRepresentable {
-    func makeUIView(context: Context) -> UIView {
-        return MarkdownKit()
+    func makeUIView(context _: Context) -> UIView {
+        MarkdownKit()
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
-    }
+    func updateUIView(_: UIView, context _: Context) {}
 }
 
 struct ContentView: View {
