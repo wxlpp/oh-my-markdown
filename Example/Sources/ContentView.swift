@@ -7,20 +7,9 @@
 
 import MarkdownKit
 import SwiftUI
-
-struct SwiftUIMarkdownKit: UIViewRepresentable {
-    func makeUIView(context _: Context) -> UIView {
-        MarkdownKit()
-    }
-
-    func updateUIView(_: UIView, context _: Context) {}
-}
-
 struct ContentView: View {
     var body: some View {
-        VStack(alignment: .center) {
-            SwiftUIMarkdownKit()
-        }
+        EmptyView()
     }
 }
 
