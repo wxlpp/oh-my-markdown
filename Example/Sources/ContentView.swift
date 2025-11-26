@@ -7,9 +7,25 @@
 
 import MarkdownKit
 import SwiftUI
+import UIKit
+
 struct ContentView: View {
     var body: some View {
-        EmptyView()
+        VStack(alignment: .leading, spacing: 16) {
+            Text("TextKitLabel Demo")
+                .font(.title2)
+
+            let sampleText = """
+            Here is a long text example demonstrating TextKit-based label.
+            支持多行显示，自动换行与截断。
+            This line is intentionally long to demonstrate wrapping and sizing behavior.
+            """
+            TextKitLabelView(text: sampleText)
+                .frame(width: 300, height: 400)
+                .background {
+                Color.red
+            }
+        }
     }
 }
 
