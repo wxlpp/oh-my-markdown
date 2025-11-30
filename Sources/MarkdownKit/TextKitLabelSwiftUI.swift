@@ -11,6 +11,43 @@ public struct TextKitLabelView: UIViewRepresentable {
     public var numberOfLines: Int
     public var lineBreakMode: NSLineBreakMode
     public var preferredMaxLayoutWidth: CGFloat
+    
+    // MARK: - Equatable Support
+    
+    fileprivate struct Configuration: Equatable {
+        let text: String?
+        let attributedText: NSAttributedString?
+        let font: UIFont
+        let textColor: UIColor
+        let textAlignment: NSTextAlignment
+        let numberOfLines: Int
+        let lineBreakMode: NSLineBreakMode
+        let preferredMaxLayoutWidth: CGFloat
+        
+        static func == (lhs: Configuration, rhs: Configuration) -> Bool {
+            lhs.text == rhs.text &&
+            lhs.attributedText == rhs.attributedText &&
+            lhs.font == rhs.font &&
+            lhs.textColor == rhs.textColor &&
+            lhs.textAlignment == rhs.textAlignment &&
+            lhs.numberOfLines == rhs.numberOfLines &&
+            lhs.lineBreakMode == rhs.lineBreakMode &&
+            lhs.preferredMaxLayoutWidth == rhs.preferredMaxLayoutWidth
+        }
+    }
+    
+    private var configuration: Configuration {
+        Configuration(
+            text: text,
+            attributedText: attributedText,
+            font: font,
+            textColor: textColor,
+            textAlignment: textAlignment,
+            numberOfLines: numberOfLines,
+            lineBreakMode: lineBreakMode,
+            preferredMaxLayoutWidth: preferredMaxLayoutWidth
+        )
+    }
 
     public init(
         text: String? = nil,
@@ -34,55 +71,56 @@ public struct TextKitLabelView: UIViewRepresentable {
 
     public func makeUIView(context: Context) -> TextKitLabel {
         let label = TextKitLabel()
+        configureLayoutPriorities(label)
         configure(label)
+        return label
+    }
+
+    public func updateUIView(_ uiView: TextKitLabel, context: Context) {
+        // Only update if configuration changed
+        guard context.coordinator.lastConfiguration != configuration else { return }
+        context.coordinator.lastConfiguration = configuration
+        configure(uiView)
+    }
+    
+    public func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
+    // MARK: - Coordinator
+    
+    public final class Coordinator {
+        fileprivate var lastConfiguration: Configuration?
+    }
+    
+    private func configureLayoutPriorities(_ label: TextKitLabel) {
         // Prefer the label's intrinsic content size so SwiftUI doesn't stretch it.
         label.setContentHuggingPriority(.required, for: .horizontal)
         label.setContentHuggingPriority(.required, for: .vertical)
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
         label.setContentCompressionResistancePriority(.required, for: .vertical)
-        return label
-    }
-
-    public func updateUIView(_ uiView: TextKitLabel, context: Context) {
-        configure(uiView)
-        uiView.setContentHuggingPriority(.required, for: .horizontal)
-        uiView.setContentHuggingPriority(.required, for: .vertical)
-        uiView.setContentCompressionResistancePriority(.required, for: .horizontal)
-        uiView.setContentCompressionResistancePriority(.required, for: .vertical)
     }
     
-    public func sizeThatFits(_ proposal: ProposedViewSize, uiView: TextKitLabel, context: Context) -> CGSize? {
-        // Map proposed size to a concrete size for UIView sizing API.
-        // Use the provided proposed width/height when available; otherwise use
-        // the label's `preferredMaxLayoutWidth` for width if set, or a very large
-        // value to allow the label to compute its natural size.
-        let proposedSize = proposal.replacingUnspecifiedDimensions(by: .zero)
-        let proposedWidth: CGFloat
-        if proposedSize.width > 0 {
-            proposedWidth = proposedSize.width
-            
+    public func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: TextKitLabel,
+        context: Context
+    ) -> CGSize? {
+        // Determine fitting width based on proposal or preferredMaxLayoutWidth
+        let fittingWidth: CGFloat
+        if let proposedWidth = proposal.width, proposedWidth > 0 {
+            fittingWidth = proposedWidth
         } else if preferredMaxLayoutWidth > 0 {
-            proposedWidth = preferredMaxLayoutWidth
+            fittingWidth = preferredMaxLayoutWidth
         } else {
-            proposedWidth = CGFloat.greatestFiniteMagnitude
+            fittingWidth = .greatestFiniteMagnitude
         }
-        let proposedHeight: CGFloat
-        if proposedSize.height > 0 {
-            proposedHeight = proposedSize.height
-        } else {
-            proposedHeight = CGFloat.greatestFiniteMagnitude
-        }
+        
+        let fittingHeight = proposal.height ?? .greatestFiniteMagnitude
+        let fittingSize = CGSize(width: fittingWidth, height: fittingHeight)
 
-        let fittingSize = CGSize(width: proposedWidth, height: proposedHeight)
-
-        // Ask the underlying view for the size that fits this constraint.
-        let measured = uiView.sizeThatFits(fittingSize)
-
-        // If the proposal constrained one axis, respect that axis; otherwise return measured.
-        let resultWidth = proposedSize.width.isSubnormal ? proposedSize.width : measured.width
-        let resultHeight = proposedSize.height.isSubnormal ? proposedSize.height : measured.height
-
-        return CGSize(width: resultWidth, height: resultHeight)
+        // Ask the underlying view for the size that fits this constraint
+        return uiView.sizeThatFits(fittingSize)
     }
 
     private func configure(_ label: TextKitLabel) {
@@ -94,7 +132,6 @@ public struct TextKitLabelView: UIViewRepresentable {
         label.numberOfLines = numberOfLines
         label.lineBreakMode = lineBreakMode
         label.preferredMaxLayoutWidth = preferredMaxLayoutWidth
-        label.setNeedsLayout()
     }
 }
 
@@ -120,10 +157,18 @@ public extension TextKitLabelView {
 
 #Preview(traits: .defaultLayout) {
     ScrollView {
-        TextKitLabelView("Hello, world!2").background {
+        let sampleText = """
+        Here is a long text example demonstrating TextKit-based label.
+        支持多行显示，自动换行与截断。
+        This line is intentionally long to demonstrate wrapping and sizing behavior.
+        """
+        TextKitLabelView(text: sampleText)
+            .background {
             Color.red
         }
-    }.background {
+    }
+    .frame(maxWidth: .infinity)
+    .background {
         Color.blue
     }
 }

@@ -1,6 +1,7 @@
 import UIKit
 
-/// A lightweight UILabel-like view backed by TextKit layout (NSTextStorage/NSLayoutManager/NSTextContainer).
+/// A lightweight UILabel-like view backed by TextKit 2 layout.
+/// Uses NSTextContentStorage/NSTextLayoutManager/NSTextContainer.
 /// Provides common UILabel APIs: `text`, `attributedText`, `font`, `textColor`, `textAlignment`,
 /// `numberOfLines`, `lineBreakMode`, `intrinsicContentSize` and `sizeThatFits(_:)`.
 public final class TextKitLabel: UIView {
@@ -39,11 +40,14 @@ public final class TextKitLabel: UIView {
         didSet { invalidateIntrinsicContentSize() }
     }
 
-    // MARK: - Private TextKit objects
+    // MARK: - Private TextKit 2 objects
 
-    private let textStorage = NSTextStorage()
-    private let layoutManager = NSLayoutManager()
+    private let textContentStorage = NSTextContentStorage()
+    private let textLayoutManager = NSTextLayoutManager()
     private let textContainer = NSTextContainer(size: .zero)
+    
+    // Update batching to avoid redundant invalidations
+    private var isUpdatePending = false
 
     // Internal cached attributed string used to apply default attributes
     private var effectiveAttributedString: NSAttributedString? {
@@ -76,8 +80,9 @@ public final class TextKitLabel: UIView {
         isOpaque = false
         backgroundColor = .clear
 
-        textStorage.addLayoutManager(layoutManager)
-        layoutManager.addTextContainer(textContainer)
+        // Setup TextKit 2 hierarchy
+        textContentStorage.addTextLayoutManager(textLayoutManager)
+        textLayoutManager.textContainer = textContainer
 
         textContainer.lineFragmentPadding = 0
         textContainer.maximumNumberOfLines = 0
@@ -101,32 +106,44 @@ public final class TextKitLabel: UIView {
     }
 
     public override func draw(_ rect: CGRect) {
-        if effectiveAttributedString == nil { return }
-        // Ensure textContainer size matches current bounds when drawing
-        textContainer.size = bounds.size
+        guard let context = UIGraphicsGetCurrentContext(),
+              effectiveAttributedString != nil else { return }
 
-        let glyphRange = layoutManager.glyphRange(for: textContainer)
-        let textOrigin = CGPoint(x: 0, y: 0)
-
-        // Draw text (background first, then glyphs)
-        layoutManager.drawBackground(forGlyphRange: glyphRange, at: textOrigin)
-        layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: textOrigin)
+        // In TextKit 2, we enumerate text segments and draw them
+        textLayoutManager.enumerateTextLayoutFragments(
+            from: textLayoutManager.documentRange.location,
+            options: [.ensuresLayout]
+        ) { layoutFragment in
+            layoutFragment.draw(at: layoutFragment.layoutFragmentFrame.origin, in: context)
+            return true
+        }
     }
 
     // MARK: - Text storage updates
 
     private func updateTextStorage() {
-        // When updating, use word-wrapping for multi-line layout to avoid
-        // truncating every line. Keep single-line behavior as requested.
-        textContainer.lineBreakMode = (numberOfLines == 1 ? lineBreakMode : .byWordWrapping)
-        if let attr = effectiveAttributedString {
-            textStorage.setAttributedString(attr)
-        } else {
-            textStorage.setAttributedString(NSAttributedString(string: ""))
+        guard !isUpdatePending else { return }
+        isUpdatePending = true
+        
+        // Defer updates to next run loop to batch multiple property changes
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isUpdatePending = false
+            
+            // When updating, use word-wrapping for multi-line layout to avoid
+            // truncating every line. Keep single-line behavior as requested.
+            self.textContainer.lineBreakMode = (self.numberOfLines == 1 ? self.lineBreakMode : .byWordWrapping)
+            
+            let newAttributedString = self.effectiveAttributedString ?? NSAttributedString(string: "")
+            // Only update if content actually changed
+            if self.textContentStorage.attributedString != newAttributedString {
+                self.textContentStorage.attributedString = newAttributedString
+            }
+            
+            self.setNeedsLayout()
+            self.setNeedsDisplay()
+            self.invalidateIntrinsicContentSize()
         }
-        setNeedsLayout()
-        setNeedsDisplay()
-        invalidateIntrinsicContentSize()
     }
 
     // MARK: - Sizing
@@ -148,15 +165,28 @@ public final class TextKitLabel: UIView {
     }
 
     public override func sizeThatFits(_ size: CGSize) -> CGSize {
+        // Fast path for empty content
+        guard effectiveAttributedString?.length ?? 0 > 0 else {
+            return .zero
+        }
+        
         // Configure a measuring container sized to the provided width
         let measureWidth = max(0, size.width)
-        textContainer.size = CGSize(width: measureWidth, height: CGFloat.greatestFiniteMagnitude)
+        textContainer.size = CGSize(width: measureWidth, height: .greatestFiniteMagnitude)
         textContainer.maximumNumberOfLines = numberOfLines
 
-        // Force layout
-        layoutManager.ensureLayout(for: textContainer)
+        // Force layout by enumerating layout fragments
+        textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
 
-        var usedRect = layoutManager.usedRect(for: textContainer)
+        // Calculate used bounds more efficiently
+        var usedRect = CGRect.zero
+        textLayoutManager.enumerateTextLayoutFragments(
+            from: textLayoutManager.documentRange.location,
+            options: [.ensuresLayout]
+        ) { layoutFragment in
+            usedRect = usedRect.union(layoutFragment.layoutFragmentFrame)
+            return true
+        }
 
         // If numberOfLines > 0, clamp height to the line count
         if numberOfLines > 0 {
@@ -165,9 +195,6 @@ public final class TextKitLabel: UIView {
         }
 
         // Round up to integral values
-        let widthResult = ceil(usedRect.size.width)
-        let heightResult = ceil(usedRect.size.height)
-
-        return CGSize(width: widthResult, height: heightResult)
+        return CGSize(width: ceil(usedRect.size.width), height: ceil(usedRect.size.height))
     }
 }
