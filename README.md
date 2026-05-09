@@ -2,26 +2,263 @@
 
 ![GitHub tag (latest SemVer)](https://github.com/wxlpp/MarkdownKit/actions/workflows/ci.yml/badge.svg?branch=main)
 
-<a href="https://placehold.it/400?text=Screen+shot"><img width=200 height=200 src="https://placehold.it/400?text=Screen+shot" alt="Screenshot" /></a>
+A lightweight Markdown rendering and source editing library for iOS and macOS, built with **TextKit 2** and [swift-markdown](https://github.com/swiftlang/swift-markdown).
 
+## ✨ Features
 
-## Example
+- 🚀 **TextKit 2** based rendering for optimal performance
+- 📝 Full CommonMark support via swift-markdown
+- 🖼️ **Image Loading** - Async image loading with caching and placeholder support
+- ✨ Rich visual rendering for headings, quotes, code blocks, and tables
+- ✍️ Native Markdown source editor backed by `UITextView` / `NSTextView`
+- 🎨 Customizable rendering through `RenderStyle`
+- 📱 Native SwiftUI integration
+- 🖥️ Native UIKit and AppKit views
+- 🌐 Perfect Chinese/CJK text support
+- ⚡️ Incremental streaming updates for chat-like output
 
-To run the example project, clone this repo, and open iOS Example.xcworkspace from the iOS Example directory.
+## 📋 Requirements
 
+- iOS 26.0+
+- Xcode 17.0+
+- Swift 6.2+
 
-## Requirements
+## 📦 Installation
 
+### Swift Package Manager
 
-## Installation
+Add MarkdownKit to your project using Swift Package Manager:
 
-Add this to your project using Swift Package Manager. In Xcode that is simply: File > Swift Packages > Add Package Dependency... and you're done. Alternative installations options are shown below for legacy projects.
+1. In Xcode: **File** → **Add Package Dependencies...**
+2. Enter the repository URL: `https://github.com/wxlpp/MarkdownKit.git`
+3. Select the version you want to use
 
-## Author
+Or add it to your `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/wxlpp/MarkdownKit.git", branch: "main")
+]
+```
+
+## 🚀 Usage
+
+### SwiftUI
+
+```swift
+import SwiftUI
+import MarkdownKit
+
+struct ContentView: View {
+    var body: some View {
+        MarkdownText("""
+        # Hello, World!
+        
+        This is **bold** and this is *italic*.
+        
+        - Item 1
+        - Item 2
+        - Item 3
+        """)
+    }
+}
+```
+
+### SwiftUI Editor
+
+```swift
+import SwiftUI
+import MarkdownKit
+
+struct EditorView: View {
+    @State private var source = "# Hello\n\n- [ ] Edit me"
+
+    var body: some View {
+        MarkdownEditor(text: $source)
+            .markdownStyle(.default)
+    }
+}
+```
+
+`MarkdownEditor` is a source editor, not a WYSIWYG surface. The bound `String` remains the single source of truth; the attributed text inside the native text view is derived state used only for highlighting and editor presentation.
+
+### Custom Style
+
+```swift
+var style = RenderStyle.default
+style.paragraphSpacing = 16
+style.quoteIndent = 20
+
+#if canImport(UIKit)
+style.bodyFont = .preferredFont(forTextStyle: .body)
+style.codeBackgroundColor = .secondarySystemBackground
+#endif
+
+MarkdownText(markdownText)
+    .markdownStyle(style)
+```
+
+### Streaming Output
+
+```swift
+import SwiftUI
+import MarkdownKit
+
+struct ChatView: View {
+    @State private var markdown = MarkdownStreamingSource()
+
+    var body: some View {
+        ScrollView {
+            MarkdownStreamingText(markdown)
+                .padding()
+        }
+        .task {
+            for await chunk in stream {
+                await MainActor.run {
+                    markdown.append(chunk)
+                }
+            }
+        }
+    }
+}
+```
+
+### UIKit / AppKit
+
+```swift
+let view = MarkdownLabelView()
+view.renderStyle = .default
+view.setMarkdown("# Hello, **World**!")
+
+let editor = MarkdownEditorTextView()
+editor.renderStyle = .default
+editor.setMarkdown("# Draft\n\n- [ ] Ship the editor")
+```
+
+### Parsing Only
+
+```swift
+let document = MarkdownDocument(parsing: "# Title\n\nHello")
+print(document.blocks)
+```
+
+### Rendering Only
+
+```swift
+let document = MarkdownDocument(parsing: "| A | B |\n|:-:|--:|\n| 1 | 2 |")
+let renderer = AttributedStringRenderer(style: .default, availableWidth: 320)
+let attributedString = renderer.render(document.blocks)
+```
+
+## 📖 Public Modules
+
+- `MarkdownCore` - Markdown IR and parser output (`MarkdownDocument`, `BlockNode`, `InlineNode`)
+- `MarkdownRenderKit` - `AttributedStringRenderer`, `RenderStyle`, fenced code syntax highlighting, source editor highlighting
+- `MarkdownPlatformView` - `MarkdownLabelView`, `MarkdownEditorTextView`, editor commands and platform hosts
+- `MarkdownKit` - SwiftUI `MarkdownText`, `MarkdownEditor`, plus the lower layers via re-export
+
+## 📖 Supported Markdown Features
+
+- ✅ Headings (H1-H6)
+- ✅ **Bold**, *Italic*, ~~Strikethrough~~
+- ✅ `Inline code` and fenced code blocks
+- ✅ [Links](https://example.com)
+- ✅ Images with async loading ![alt text](url)
+- ✅ Ordered, unordered, and task lists
+- ✅ Nested lists
+- ✅ Block quotes
+- ✅ Horizontal rules
+- ✅ GFM tables including alignment markers
+- ✅ Incremental streaming updates
+- ✅ Markdown source editor with token highlighting
+- ✅ List continuation, empty-list exit, task toggle, and indent / outdent commands
+- ✅ Common editor shortcuts for bold, italic, code, and links
+
+## ✏️ Editor Scope
+
+`MarkdownEditor` is optimized for long-form source editing with native scrolling, selection, IME handling, and undo / redo inherited from system text controls.
+
+Included in the current editor release:
+- Markdown token highlighting for headings, emphasis, links, block quotes, list markers, task markers, fenced code blocks, and inline code
+- Fenced code block language highlighting through the shared `SyntaxHighlighter`
+- Native source editing on iOS and macOS through `UITextView` / `NSTextView`
+
+Not included in the current editor release:
+- WYSIWYG rich-text editing
+- Dedicated table editing UI
+- Image paste to Markdown conversion
+- Collaborative editing semantics
+
+## 🖼️ Image Loading
+
+MarkdownKit loads remote images asynchronously and reuses them across relayouts and style changes.
+
+```swift
+let markdown = """
+# Example with Images
+
+![MarkdownKit sample image](https://placehold.co/800x400.png?text=MarkdownKit)
+"""
+
+MarkdownText(markdown)
+```
+
+Images are automatically:
+- Loaded asynchronously in the background
+- Cached in memory for the lifetime of the view
+- Displayed with placeholders during loading
+- Scaled to fit available width while maintaining aspect ratio
+
+## 🎨 Customization
+
+Customize every aspect of your Markdown rendering through `RenderStyle`:
+
+```swift
+var style = RenderStyle.default
+
+#if canImport(UIKit)
+style.h1Font = .systemFont(ofSize: 34, weight: .bold)
+style.h2Font = .systemFont(ofSize: 28, weight: .bold)
+style.codeFont = .monospacedSystemFont(ofSize: 15, weight: .regular)
+style.quoteBarColor = .systemBlue
+#endif
+
+style.paragraphSpacing = 14
+style.quoteIndent = 24
+```
+
+## 🏗️ Architecture
+
+MarkdownKit consists of four layers:
+
+1. `MarkdownCore`: Parses Markdown into an intermediate representation using swift-markdown.
+2. `MarkdownRenderKit`: Turns that intermediate representation into attributed text and provides shared syntax highlighting.
+3. `MarkdownPlatformView`: Hosts the read-only view and the native source editor platform views.
+4. `MarkdownKit`: Exposes SwiftUI `MarkdownText` and `MarkdownEditor`, then re-exports the lower layers.
+
+## 🔍 Example
+
+To run the example project:
+
+```bash
+git clone https://github.com/wxlpp/MarkdownKit.git
+cd MarkdownKit
+open Example/Example.xcodeproj
+```
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📄 License
+
+MarkdownKit is available under the MIT license. See [the LICENSE file](LICENSE) for more information.
+
+## 👨‍💻 Author
 
 Evan Wang
 
+## 🙏 Acknowledgments
 
-## License
-
-MarkdownKit is available under the MIT license. See [the LICENSE file](LICENSE) for more information.
+- [swift-markdown](https://github.com/swiftlang/swift-markdown) - The excellent Markdown parser
+- Apple's TextKit 2 framework

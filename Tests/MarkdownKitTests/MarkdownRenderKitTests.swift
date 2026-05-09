@@ -1,0 +1,343 @@
+import MarkdownCore
+import Testing
+@testable import MarkdownRenderKit
+
+// MARK: - MarkdownRenderKitTests
+
+@Suite("MarkdownRenderKit")
+struct MarkdownRenderKitTests {
+    @Test("Incremental editor highlighting expands fenced code blocks")
+    func incrementalHighlightRangeExpandsFencedCodeBlock() {
+        let source = """
+        before
+
+        ```swift
+        let value = 1
+        print(value)
+        ```
+
+        after
+        """
+        let nsSource = source as NSString
+        let editedRange = nsSource.range(of: "print(value)")
+
+        let range = MarkdownSourceHighlighter(style: .default)
+            .expandedHighlightRange(in: source, around: editedRange)
+        let snippet = (source as NSString).substring(with: range)
+        let normalizedSnippet = snippet.trimmingCharacters(in: .newlines)
+
+        #expect(normalizedSnippet.hasPrefix("```swift"))
+        #expect(normalizedSnippet.hasSuffix("```"))
+    }
+
+    @Test("Incremental editor highlighting stays within the affected paragraph")
+    func incrementalHighlightRangeUsesParagraphOutsideCodeBlock() {
+        let source = """
+        first paragraph
+
+        second paragraph with `code`
+
+        third paragraph
+        """
+        let nsSource = source as NSString
+        let editedRange = nsSource.range(of: "second paragraph")
+
+        let range = MarkdownSourceHighlighter(style: .default)
+            .expandedHighlightRange(in: source, around: editedRange)
+        let snippet = (source as NSString).substring(with: range)
+
+        #expect(snippet.contains("second paragraph with `code`"))
+        #expect(snippet.contains("first paragraph") == false)
+        #expect(snippet.contains("third paragraph") == false)
+    }
+
+    @Test("Incremental editor highlighting expands unclosed fenced code blocks to EOF")
+    func incrementalHighlightRangeExpandsUnclosedFencedCodeBlock() {
+        let source = """
+        before
+
+        ```swift
+        let value = 1
+        print(value)
+        """
+        let nsSource = source as NSString
+        let editedRange = nsSource.range(of: "print(value)")
+
+        let range = MarkdownSourceHighlighter(style: .default)
+            .expandedHighlightRange(in: source, around: editedRange)
+        let snippet = (source as NSString).substring(with: range)
+        let normalizedSnippet = snippet.trimmingCharacters(in: .newlines)
+
+        #expect(normalizedSnippet.hasPrefix("```swift"))
+        #expect(normalizedSnippet.contains("print(value)"))
+        #expect(range.upperBound == nsSource.length)
+    }
+
+    @Test("Markdown source highlighting styles headings emphasis links lists and code")
+    func sourceHighlightingCoversEditorTokens() {
+        let style = RenderStyle.default
+        let source = """
+        # Title
+
+        > Quote
+        - [x] task item
+        1. ordered item
+        **bold** and *italic* and [link](https://example.com) and `code`
+
+        ```swift
+        let value = 1
+        ```
+        """
+
+        let highlighted = MarkdownSourceHighlighter(style: style).highlight(source)
+        let ns = highlighted.string as NSString
+
+        let titleIndex = ns.range(of: "Title").location
+        let quoteMarkerIndex = ns.range(of: "> ").location
+        let taskMarkerIndex = ns.range(of: "[x]").location
+        let orderedMarkerIndex = ns.range(of: "1. ").location
+        let boldIndex = ns.range(of: "bold").location
+        let italicIndex = ns.range(of: "italic").location
+        let linkIndex = ns.range(of: "[link](https://example.com)").location
+        let inlineCodeIndex = ns.range(of: "`code`").location
+        let swiftKeywordIndex = ns.range(of: "let value").location
+
+        let titleFont = highlighted.attribute(.font, at: titleIndex, effectiveRange: nil) as? PlatformFont
+        let quoteColor = highlighted.attribute(
+            .foregroundColor,
+            at: quoteMarkerIndex,
+            effectiveRange: nil
+        ) as? PlatformColor
+        let taskColor = highlighted.attribute(
+            .foregroundColor,
+            at: taskMarkerIndex,
+            effectiveRange: nil
+        ) as? PlatformColor
+        let orderedFont = highlighted.attribute(.font, at: orderedMarkerIndex, effectiveRange: nil) as? PlatformFont
+        let boldFont = highlighted.attribute(.font, at: boldIndex, effectiveRange: nil) as? PlatformFont
+        let italicFont = highlighted.attribute(.font, at: italicIndex, effectiveRange: nil) as? PlatformFont
+        let linkColor = highlighted.attribute(.foregroundColor, at: linkIndex, effectiveRange: nil) as? PlatformColor
+        let inlineCodeFont = highlighted.attribute(.font, at: inlineCodeIndex, effectiveRange: nil) as? PlatformFont
+        let inlineCodeBackground = highlighted.attribute(
+            .backgroundColor,
+            at: inlineCodeIndex,
+            effectiveRange: nil
+        ) as? PlatformColor
+        let fencedCodeFont = highlighted.attribute(.font, at: swiftKeywordIndex, effectiveRange: nil) as? PlatformFont
+        let fencedCodeColor = highlighted.attribute(
+            .foregroundColor,
+            at: swiftKeywordIndex,
+            effectiveRange: nil
+        ) as? PlatformColor
+
+        #expect(titleFont?.isEqual(style.h1Font) == true)
+        #expect(quoteColor?.isEqual(style.quoteBarColor) == true)
+        #expect(taskColor?.isEqual(style.linkColor) == true)
+        #expect(orderedFont?.isEqual(style.codeFont) == true)
+        #expect(isBold(font: boldFont) == true)
+        #expect(isItalic(font: italicFont) == true)
+        #expect(linkColor?.isEqual(style.linkColor) == true)
+        #expect(inlineCodeFont?.isEqual(style.codeFont) == true)
+        #expect(inlineCodeBackground?.isEqual(style.inlineCodeBgColor) == true)
+        #expect(fencedCodeFont?.isEqual(style.codeFont) == true)
+        #expect(fencedCodeColor?.isEqual(style.codeTextColor) == false)
+    }
+
+    @Test("Heading emphasis preserves heading size while applying traits")
+    func headingEmphasisPreservesHeadingFontSize() {
+        let style = RenderStyle.default
+        let source = "# **Title** and *focus*"
+
+        let highlighted = MarkdownSourceHighlighter(style: style).highlight(source)
+        let ns = highlighted.string as NSString
+        let boldIndex = ns.range(of: "Title").location
+        let italicIndex = ns.range(of: "focus").location
+
+        let boldFont = highlighted.attribute(.font, at: boldIndex, effectiveRange: nil) as? PlatformFont
+        let italicFont = highlighted.attribute(.font, at: italicIndex, effectiveRange: nil) as? PlatformFont
+
+        #expect(isBold(font: boldFont) == true)
+        #expect(isItalic(font: italicFont) == true)
+        #expect(fontSize(of: boldFont) == style.h1Font.pointSize)
+        #expect(fontSize(of: italicFont) == style.h1Font.pointSize)
+    }
+
+    @Test("Table alignment markers produce matching tab-stop alignments")
+    func tableAlignmentMarkersAreRendered() {
+        let document = MarkdownDocument(parsing: """
+        | Left | Center | Right |
+        | :--- | :----: | ----: |
+        | A | B | C |
+        """)
+
+        let renderer = AttributedStringRenderer(style: .default, availableWidth: 320)
+        let rendered = renderer.render(document.blocks)
+        let paragraph = rendered.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        let tabStops = paragraph?.tabStops ?? []
+
+        #expect(tabStops.count == 3)
+        #expect(tabStops[0].alignment == .left)
+        #expect(tabStops[1].alignment == .center)
+        #expect(tabStops[2].alignment == .right)
+    }
+
+    @Test("Unspecified table alignment is rendered as padded left")
+    func unspecifiedTableAlignmentIsPaddedLeft() {
+        let document = MarkdownDocument(parsing: """
+        | Name | Value |
+        | --- | --- |
+        | A | B |
+        """)
+
+        let renderer = AttributedStringRenderer(style: .default, availableWidth: 320)
+        let rendered = renderer.render(document.blocks)
+        let paragraph = rendered.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        let tabStops = paragraph?.tabStops ?? []
+
+        #expect(tabStops.count == 2)
+        #expect(tabStops[0].alignment == .left)
+        #expect(tabStops[1].alignment == .left)
+        #expect(tabStops[0].location > 14)
+        #expect(tabStops[1].location > tabStops[0].location + 72)
+    }
+
+    @Test("Table column widths expand to fit long cell content")
+    func tableColumnWidthsExpandToFitLongCellContent() throws {
+        let document = MarkdownDocument(parsing: """
+        | Short | Description |
+        | --- | --- |
+        | A | This cell has enough text to require a wider natural table column. |
+        """)
+
+        let renderer = AttributedStringRenderer(style: .default, availableWidth: 180)
+        let rendered = renderer.render(document.blocks)
+        let widths = try #require(rendered
+            .attribute(.markdownTableColumnWidths, at: 0, effectiveRange: nil) as? [CGFloat])
+        let naturalWidth = try #require(rendered.attribute(
+            .markdownTableNaturalWidth,
+            at: 0,
+            effectiveRange: nil
+        ) as? CGFloat)
+
+        #expect(widths.count == 2)
+        #expect(widths[1] > widths[0])
+        #expect(naturalWidth > 180)
+    }
+
+    @Test("Overflow table uses lightweight placeholder in the main text layout")
+    func overflowTableUsesLightweightPlaceholder() throws {
+        let longText = "This cell has enough text to require a wider natural table column."
+        let document = MarkdownDocument(parsing: """
+        | Short | Description |
+        | --- | --- |
+        | A | \(longText) |
+        """)
+
+        let renderer = AttributedStringRenderer(style: .default, availableWidth: 180)
+        let rendered = renderer.render(document.blocks)
+        _ = try #require(rendered.attribute(.markdownTableNaturalWidth, at: 0, effectiveRange: nil) as? CGFloat)
+
+        #expect(rendered.string.contains(longText) == false)
+        #expect(rendered.string.split(separator: "\n", omittingEmptySubsequences: false).count == 2)
+    }
+
+    @Test("Renderer reuses image cache when source URL has already been loaded")
+    func rendererUsesCachedImages() {
+        let block = BlockNode.paragraph([
+            .image(source: "https://example.com/image.png", alt: "Example"),
+        ])
+        let cachedImage = makeImage()
+        var renderer = AttributedStringRenderer(style: .default, availableWidth: 320)
+        renderer.imageCache["https://example.com/image.png"] = cachedImage
+
+        let rendered = renderer.render([block])
+
+        #expect(rendered.attribute(.attachment, at: 0, effectiveRange: nil) != nil)
+        #expect(rendered.string.contains("Example") == false)
+    }
+
+    @Test("Renderer scales cached images to available width")
+    func rendererScalesCachedImagesToAvailableWidth() throws {
+        let block = BlockNode.paragraph([
+            .image(source: "https://example.com/wide.png", alt: "Wide"),
+        ])
+        var renderer = AttributedStringRenderer(style: .default, availableWidth: 320)
+        renderer.imageCache["https://example.com/wide.png"] = makeImage(width: 800, height: 400)
+
+        let rendered = renderer.render([block])
+        let attachment = try #require(rendered.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment)
+
+        #expect(attachment.bounds.width == 320)
+        #expect(attachment.bounds.height == 160)
+    }
+
+    @Test("RenderStyle.isSemanticallyEqual covers every stored property")
+    func renderStyleSemanticallyEqualCoversAllProperties() {
+        // If a property is added to RenderStyle, isSemanticallyEqual must be updated
+        // to compare it. This test guards against silently missing one.
+        let propertyCount = Mirror(reflecting: RenderStyle.default).children.count
+        #expect(
+            propertyCount == 20,
+            "RenderStyle has \(propertyCount) stored properties; update isSemanticallyEqual to match."
+        )
+    }
+}
+
+#if canImport(UIKit)
+    import UIKit
+
+    private func makeImage(width: CGFloat = 8, height: CGFloat = 8) -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: width, height: height)).image { ctx in
+            UIColor.systemBlue.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        }
+    }
+
+    private func isBold(font: UIFont?) -> Bool {
+        guard let font else {
+            return false
+        }
+        return font.fontDescriptor.symbolicTraits.contains(.traitBold)
+    }
+
+    private func isItalic(font: UIFont?) -> Bool {
+        guard let font else {
+            return false
+        }
+        return font.fontDescriptor.symbolicTraits.contains(.traitItalic)
+    }
+
+    private func fontSize(of font: UIFont?) -> CGFloat? {
+        font?.pointSize
+    }
+
+#elseif canImport(AppKit)
+    import AppKit
+
+    private func makeImage(width: CGFloat = 8, height: CGFloat = 8) -> NSImage {
+        let image = NSImage(size: NSSize(width: width, height: height))
+        image.lockFocus()
+        NSColor.systemBlue.setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: width, height: height)).fill()
+        image.unlockFocus()
+        return image
+    }
+
+    private func isBold(font: NSFont?) -> Bool {
+        guard let font else {
+            return false
+        }
+        return NSFontManager.shared.traits(of: font).contains(.boldFontMask)
+    }
+
+    private func isItalic(font: NSFont?) -> Bool {
+        guard let font else {
+            return false
+        }
+        return NSFontManager.shared.traits(of: font).contains(.italicFontMask)
+    }
+
+    private func fontSize(of font: NSFont?) -> CGFloat? {
+        font?.pointSize
+    }
+#endif
