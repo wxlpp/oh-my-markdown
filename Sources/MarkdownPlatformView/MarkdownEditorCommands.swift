@@ -59,6 +59,22 @@ public struct MarkdownEditorEditResult: Equatable, Sendable {
     public var selectedRange: NSRange
 }
 
+// MARK: - MarkdownEditorInputAction
+
+/// Decision returned by an input-intercept hook (`onInsertText`) before
+/// the editor applies a user-driven character insertion.
+public enum MarkdownEditorInputAction: Equatable, Sendable {
+    /// Let the editor perform its normal insertion (including built-in
+    /// Markdown handling for newline / tab).
+    case allow
+    /// Drop the insertion entirely. The hook is expected to surface any
+    /// custom UI (e.g. a slash-command menu) on its own.
+    case reject
+    /// Replace the user's keystroke with the provided string. The editor
+    /// performs the replacement itself so undo stays atomic.
+    case replace(String)
+}
+
 // MARK: - MarkdownEditorCommands
 
 public enum MarkdownEditorCommands {
@@ -123,8 +139,7 @@ public enum MarkdownEditorCommands {
         selection: NSRange,
         indentUnit: String = "    "
     )
-        -> MarkdownEditorEditResult
-    {
+        -> MarkdownEditorEditResult {
         let nsText = text as NSString
         let selection = selection.clamped(to: nsText.length)
         let selectedLines = self.lineBlockRange(in: nsText, selection: selection)
@@ -154,8 +169,7 @@ public enum MarkdownEditorCommands {
         selection: NSRange,
         indentUnit: String = "    "
     )
-        -> MarkdownEditorEditResult
-    {
+        -> MarkdownEditorEditResult {
         let nsText = text as NSString
         let selection = selection.clamped(to: nsText.length)
         let selectedLines = self.lineBlockRange(in: nsText, selection: selection)
@@ -240,8 +254,7 @@ public enum MarkdownEditorCommands {
         suffix: String,
         placeholder: String = ""
     )
-        -> MarkdownEditorEditResult?
-    {
+        -> MarkdownEditorEditResult? {
         guard let selectedTextRange = Range(selection, in: text) else {
             return nil
         }
@@ -280,8 +293,7 @@ public enum MarkdownEditorCommands {
         taskMarker: String?,
         content: String
     )
-        -> MarkdownEditorEditResult
-    {
+        -> MarkdownEditorEditResult {
         let trimmedContent = content.trimmingCharacters(in: .whitespaces)
         if trimmedContent.isEmpty {
             let hadLineTerminator = context.lineRange.length > context.contentRange.length
@@ -315,8 +327,7 @@ public enum MarkdownEditorCommands {
         cursorDelta: Int = 0,
         forcedSelection: NSRange? = nil
     )
-        -> MarkdownEditorEditResult
-    {
+        -> MarkdownEditorEditResult {
         guard let swiftRange = Range(range, in: text) else {
             return MarkdownEditorEditResult(text: text, selectedRange: selection)
         }
