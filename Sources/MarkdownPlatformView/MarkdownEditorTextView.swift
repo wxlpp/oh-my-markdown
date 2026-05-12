@@ -111,13 +111,7 @@ public final class MarkdownEditorTextView: UITextView, UITextViewDelegate {
     /// on AppKit it is a no-op hint — `NSTextView.scrollRangeToVisible` never
     /// animates.
     public func scrollToRange(_ range: NSRange, animated: Bool = true) {
-        if animated {
-            self.scrollSelectionToVisible(range)
-        } else {
-            UIView.performWithoutAnimation {
-                self.scrollSelectionToVisible(range)
-            }
-        }
+        self.scrollSelectionToVisible(range, animated: animated)
     }
 
     /// Caret rect for the current selection start, in the receiver's
@@ -329,7 +323,7 @@ public final class MarkdownEditorTextView: UITextView, UITextViewDelegate {
         )
     }
 
-    private func scrollSelectionToVisible(_ selection: NSRange) {
+    private func scrollSelectionToVisible(_ selection: NSRange, animated: Bool = true) {
         self.scrollGeneration &+= 1
         let generation = self.scrollGeneration
 
@@ -353,7 +347,24 @@ public final class MarkdownEditorTextView: UITextView, UITextViewDelegate {
 
         let location = min(selection.location, textLength - 1)
         let length = max(1, min(selection.length, textLength - location))
-        scrollRangeToVisible(NSRange(location: location, length: length))
+        let clamped = NSRange(location: location, length: length)
+        if animated {
+            // UITextView.scrollRangeToVisible carries the default scroll
+            // animation when the receiver is laid out and visible.
+            scrollRangeToVisible(clamped)
+        } else {
+            // scrollRectToVisible(_:animated:) is the only path that
+            // deterministically disables animation (scrollRangeToVisible has
+            // no animated parameter; UIView.performWithoutAnimation only
+            // catches implicit animations, not the scroll view's own).
+            let glyphRange = layoutManager.glyphRange(
+                forCharacterRange: clamped,
+                actualCharacterRange: nil
+            )
+            let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            let viewRect = rect.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)
+            scrollRectToVisible(viewRect, animated: false)
+        }
     }
 
     private func scrollToDocumentEnd() {
