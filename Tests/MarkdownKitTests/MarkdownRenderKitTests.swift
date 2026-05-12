@@ -1,6 +1,6 @@
 import MarkdownCore
-import Testing
 @testable import MarkdownRenderKit
+import Testing
 
 // MARK: - MarkdownRenderKitTests
 
@@ -211,8 +211,10 @@ struct MarkdownRenderKitTests {
 
         let renderer = AttributedStringRenderer(style: .default, availableWidth: 180)
         let rendered = renderer.render(document.blocks)
-        let widths = try #require(rendered
-            .attribute(.markdownTableColumnWidths, at: 0, effectiveRange: nil) as? [CGFloat])
+        let widths = try #require(
+            rendered
+                .attribute(.markdownTableColumnWidths, at: 0, effectiveRange: nil) as? [CGFloat]
+        )
         let naturalWidth = try #require(rendered.attribute(
             .markdownTableNaturalWidth,
             at: 0,
@@ -284,60 +286,60 @@ struct MarkdownRenderKitTests {
 }
 
 #if canImport(UIKit)
-    import UIKit
+import UIKit
 
-    private func makeImage(width: CGFloat = 8, height: CGFloat = 8) -> UIImage {
-        UIGraphicsImageRenderer(size: CGSize(width: width, height: height)).image { ctx in
-            UIColor.systemBlue.setFill()
-            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        }
+private func makeImage(width: CGFloat = 8, height: CGFloat = 8) -> UIImage {
+    UIGraphicsImageRenderer(size: CGSize(width: width, height: height)).image { ctx in
+        UIColor.systemBlue.setFill()
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
     }
+}
 
-    private func isBold(font: UIFont?) -> Bool {
-        guard let font else {
-            return false
-        }
-        return font.fontDescriptor.symbolicTraits.contains(.traitBold)
+private func isBold(font: UIFont?) -> Bool {
+    guard let font else {
+        return false
     }
+    return font.fontDescriptor.symbolicTraits.contains(.traitBold)
+}
 
-    private func isItalic(font: UIFont?) -> Bool {
-        guard let font else {
-            return false
-        }
-        return font.fontDescriptor.symbolicTraits.contains(.traitItalic)
+private func isItalic(font: UIFont?) -> Bool {
+    guard let font else {
+        return false
     }
+    return font.fontDescriptor.symbolicTraits.contains(.traitItalic)
+}
 
-    private func fontSize(of font: UIFont?) -> CGFloat? {
-        font?.pointSize
-    }
+private func fontSize(of font: UIFont?) -> CGFloat? {
+    font?.pointSize
+}
 
 #elseif canImport(AppKit)
-    import AppKit
+import AppKit
 
-    private func makeImage(width: CGFloat = 8, height: CGFloat = 8) -> NSImage {
-        let image = NSImage(size: NSSize(width: width, height: height))
-        image.lockFocus()
-        NSColor.systemBlue.setFill()
-        NSBezierPath(rect: NSRect(x: 0, y: 0, width: width, height: height)).fill()
-        image.unlockFocus()
-        return image
-    }
+private func makeImage(width: CGFloat = 8, height: CGFloat = 8) -> NSImage {
+    let image = NSImage(size: NSSize(width: width, height: height))
+    image.lockFocus()
+    NSColor.systemBlue.setFill()
+    NSBezierPath(rect: NSRect(x: 0, y: 0, width: width, height: height)).fill()
+    image.unlockFocus()
+    return image
+}
 
-    private func isBold(font: NSFont?) -> Bool {
-        guard let font else {
-            return false
-        }
-        return NSFontManager.shared.traits(of: font).contains(.boldFontMask)
+private func isBold(font: NSFont?) -> Bool {
+    guard let font else {
+        return false
     }
+    return NSFontManager.shared.traits(of: font).contains(.boldFontMask)
+}
 
-    private func isItalic(font: NSFont?) -> Bool {
-        guard let font else {
-            return false
-        }
-        return NSFontManager.shared.traits(of: font).contains(.italicFontMask)
+private func isItalic(font: NSFont?) -> Bool {
+    guard let font else {
+        return false
     }
+    return NSFontManager.shared.traits(of: font).contains(.italicFontMask)
+}
 
-    private func fontSize(of font: NSFont?) -> CGFloat? {
-        font?.pointSize
-    }
+private func fontSize(of font: NSFont?) -> CGFloat? {
+    font?.pointSize
+}
 #endif

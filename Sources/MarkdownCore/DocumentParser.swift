@@ -31,8 +31,7 @@ public struct MarkdownDocument: Sendable, Equatable {
         guard
             newSource.hasPrefix(previousSource),
             let tail = parsedBlocks.last,
-            let tailRange = tail.sourceRange else
-        {
+            let tailRange = tail.sourceRange else {
             return MarkdownDocument(parsing: newSource)
         }
 
@@ -41,8 +40,7 @@ public struct MarkdownDocument: Sendable, Equatable {
         let reparseStart = reparseBlock.sourceRange?.lowerBound ?? tailRange.lowerBound
         guard
             reparseStart <= previousSource.utf8.count,
-            let suffixStart = newSource.utf8Index(at: reparseStart) else
-        {
+            let suffixStart = newSource.utf8Index(at: reparseStart) else {
             return MarkdownDocument(parsing: newSource)
         }
 
@@ -274,8 +272,7 @@ private struct SourceRangeMapper {
             let sourceRange,
             let lower = offset(for: sourceRange.lowerBound),
             let upper = offset(for: sourceRange.upperBound),
-            lower <= upper else
-        {
+            lower <= upper else {
             return nil
         }
         return MarkdownSourceRange(lowerBound: lower, upperBound: upper)
@@ -287,12 +284,11 @@ private struct SourceRangeMapper {
             range.lowerBound <= range.upperBound,
             range.upperBound <= self.source.utf8.count,
             let lower = source.utf8Index(at: range.lowerBound),
-            let upper = source.utf8Index(at: range.upperBound) else
-        {
+            let upper = source.utf8Index(at: range.upperBound) else {
             return nil
         }
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
-        for byte in self.source[lower..<upper].utf8 {
+        for byte in self.source[lower ..< upper].utf8 {
             hash ^= UInt64(byte)
             hash &*= 0x100_0000_01B3
         }
@@ -310,8 +306,8 @@ private struct SourceRangeMapper {
     }
 }
 
-private extension String {
-    func utf8Index(at offset: Int) -> String.Index? {
+extension String {
+    fileprivate func utf8Index(at offset: Int) -> String.Index? {
         guard offset >= 0, offset <= utf8.count else {
             return nil
         }

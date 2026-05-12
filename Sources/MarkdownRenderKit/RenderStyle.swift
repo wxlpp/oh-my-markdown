@@ -1,9 +1,9 @@
 import Foundation
 
 #if canImport(UIKit)
-    import UIKit
+import UIKit
 #elseif canImport(AppKit)
-    import AppKit
+import AppKit
 #endif
 
 // MARK: - RenderStyle
@@ -17,91 +17,91 @@ public struct RenderStyle: @unchecked Sendable {
 
     public static var `default`: RenderStyle {
         #if canImport(UIKit)
-            RenderStyle(
-                bodyFont: .systemFont(ofSize: 16, weight: .regular),
-                codeFont: .monospacedSystemFont(ofSize: 14, weight: .regular),
-                h1Font: .systemFont(ofSize: 32, weight: .semibold),
-                h2Font: .systemFont(ofSize: 24, weight: .semibold),
-                h3Font: .systemFont(ofSize: 20, weight: .semibold),
-                h4Font: .systemFont(ofSize: 16, weight: .semibold),
-                h5Font: .systemFont(ofSize: 14, weight: .semibold),
-                h6Font: .systemFont(ofSize: 13, weight: .semibold),
-                textColor: .label,
-                secondaryTextColor: .secondaryLabel,
-                codeTextColor: .label,
-                codeBackgroundColor: UIColor { t in
-                    t.userInterfaceStyle == .dark
-                        ? UIColor(red: 0.10, green: 0.12, blue: 0.15, alpha: 1)
-                        : UIColor(red: 0.95, green: 0.96, blue: 0.97, alpha: 1)
-                },
-                inlineCodeTextColor: UIColor { t in
-                    t.userInterfaceStyle == .dark
-                        ? UIColor(red: 0.97, green: 0.46, blue: 0.59, alpha: 1)
-                        : UIColor(red: 0.84, green: 0.20, blue: 0.45, alpha: 1)
-                },
-                inlineCodeBgColor: UIColor { t in
-                    t.userInterfaceStyle == .dark
-                        ? UIColor(red: 0.12, green: 0.15, blue: 0.19, alpha: 1)
-                        : UIColor(red: 0.94, green: 0.95, blue: 0.96, alpha: 1)
-                },
-                linkColor: .link,
-                quoteColor: .secondaryLabel,
-                quoteBarColor: UIColor { t in
-                    t.userInterfaceStyle == .dark
-                        ? UIColor(red: 0.25, green: 0.50, blue: 0.90, alpha: 1)
-                        : UIColor(red: 0.21, green: 0.45, blue: 0.85, alpha: 1)
-                },
-                headingBorderColor: UIColor { t in
-                    t.userInterfaceStyle == .dark
-                        ? UIColor(white: 1, alpha: 0.12)
-                        : UIColor(white: 0, alpha: 0.10)
-                },
-                paragraphSpacing: 12,
-                quoteIndent: 16
-            )
+        RenderStyle(
+            bodyFont: .systemFont(ofSize: 16, weight: .regular),
+            codeFont: .monospacedSystemFont(ofSize: 14, weight: .regular),
+            h1Font: .systemFont(ofSize: 32, weight: .semibold),
+            h2Font: .systemFont(ofSize: 24, weight: .semibold),
+            h3Font: .systemFont(ofSize: 20, weight: .semibold),
+            h4Font: .systemFont(ofSize: 16, weight: .semibold),
+            h5Font: .systemFont(ofSize: 14, weight: .semibold),
+            h6Font: .systemFont(ofSize: 13, weight: .semibold),
+            textColor: .label,
+            secondaryTextColor: .secondaryLabel,
+            codeTextColor: .label,
+            codeBackgroundColor: UIColor { t in
+                t.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.10, green: 0.12, blue: 0.15, alpha: 1)
+                    : UIColor(red: 0.95, green: 0.96, blue: 0.97, alpha: 1)
+            },
+            inlineCodeTextColor: UIColor { t in
+                t.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.97, green: 0.46, blue: 0.59, alpha: 1)
+                    : UIColor(red: 0.84, green: 0.20, blue: 0.45, alpha: 1)
+            },
+            inlineCodeBgColor: UIColor { t in
+                t.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.12, green: 0.15, blue: 0.19, alpha: 1)
+                    : UIColor(red: 0.94, green: 0.95, blue: 0.96, alpha: 1)
+            },
+            linkColor: .link,
+            quoteColor: .secondaryLabel,
+            quoteBarColor: UIColor { t in
+                t.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.25, green: 0.50, blue: 0.90, alpha: 1)
+                    : UIColor(red: 0.21, green: 0.45, blue: 0.85, alpha: 1)
+            },
+            headingBorderColor: UIColor { t in
+                t.userInterfaceStyle == .dark
+                    ? UIColor(white: 1, alpha: 0.12)
+                    : UIColor(white: 0, alpha: 0.10)
+            },
+            paragraphSpacing: 12,
+            quoteIndent: 16
+        )
         #elseif canImport(AppKit)
-            RenderStyle(
-                bodyFont: .systemFont(ofSize: 15, weight: .regular),
-                codeFont: .monospacedSystemFont(ofSize: 13, weight: .regular),
-                h1Font: .systemFont(ofSize: 30, weight: .semibold),
-                h2Font: .systemFont(ofSize: 22, weight: .semibold),
-                h3Font: .systemFont(ofSize: 18, weight: .semibold),
-                h4Font: .systemFont(ofSize: 15, weight: .semibold),
-                h5Font: .systemFont(ofSize: 13, weight: .semibold),
-                h6Font: .systemFont(ofSize: 12, weight: .semibold),
-                textColor: .labelColor,
-                secondaryTextColor: .secondaryLabelColor,
-                codeTextColor: .labelColor,
-                codeBackgroundColor: NSColor(name: nil) { a in
-                    a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                        ? NSColor(calibratedRed: 0.10, green: 0.12, blue: 0.15, alpha: 1)
-                        : NSColor(calibratedRed: 0.95, green: 0.96, blue: 0.97, alpha: 1)
-                },
-                inlineCodeTextColor: NSColor(name: nil) { a in
-                    a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                        ? NSColor(calibratedRed: 0.97, green: 0.46, blue: 0.59, alpha: 1)
-                        : NSColor(calibratedRed: 0.84, green: 0.20, blue: 0.45, alpha: 1)
-                },
-                inlineCodeBgColor: NSColor(name: nil) { a in
-                    a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                        ? NSColor(calibratedRed: 0.12, green: 0.15, blue: 0.19, alpha: 1)
-                        : NSColor(calibratedRed: 0.94, green: 0.95, blue: 0.96, alpha: 1)
-                },
-                linkColor: .linkColor,
-                quoteColor: .secondaryLabelColor,
-                quoteBarColor: NSColor(name: nil) { a in
-                    a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                        ? NSColor(calibratedRed: 0.25, green: 0.50, blue: 0.90, alpha: 1)
-                        : NSColor(calibratedRed: 0.21, green: 0.45, blue: 0.85, alpha: 1)
-                },
-                headingBorderColor: NSColor(name: nil) { a in
-                    a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                        ? NSColor(white: 1, alpha: 0.12)
-                        : NSColor(white: 0, alpha: 0.10)
-                },
-                paragraphSpacing: 12,
-                quoteIndent: 16
-            )
+        RenderStyle(
+            bodyFont: .systemFont(ofSize: 15, weight: .regular),
+            codeFont: .monospacedSystemFont(ofSize: 13, weight: .regular),
+            h1Font: .systemFont(ofSize: 30, weight: .semibold),
+            h2Font: .systemFont(ofSize: 22, weight: .semibold),
+            h3Font: .systemFont(ofSize: 18, weight: .semibold),
+            h4Font: .systemFont(ofSize: 15, weight: .semibold),
+            h5Font: .systemFont(ofSize: 13, weight: .semibold),
+            h6Font: .systemFont(ofSize: 12, weight: .semibold),
+            textColor: .labelColor,
+            secondaryTextColor: .secondaryLabelColor,
+            codeTextColor: .labelColor,
+            codeBackgroundColor: NSColor(name: nil) { a in
+                a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                    ? NSColor(calibratedRed: 0.10, green: 0.12, blue: 0.15, alpha: 1)
+                    : NSColor(calibratedRed: 0.95, green: 0.96, blue: 0.97, alpha: 1)
+            },
+            inlineCodeTextColor: NSColor(name: nil) { a in
+                a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                    ? NSColor(calibratedRed: 0.97, green: 0.46, blue: 0.59, alpha: 1)
+                    : NSColor(calibratedRed: 0.84, green: 0.20, blue: 0.45, alpha: 1)
+            },
+            inlineCodeBgColor: NSColor(name: nil) { a in
+                a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                    ? NSColor(calibratedRed: 0.12, green: 0.15, blue: 0.19, alpha: 1)
+                    : NSColor(calibratedRed: 0.94, green: 0.95, blue: 0.96, alpha: 1)
+            },
+            linkColor: .linkColor,
+            quoteColor: .secondaryLabelColor,
+            quoteBarColor: NSColor(name: nil) { a in
+                a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                    ? NSColor(calibratedRed: 0.25, green: 0.50, blue: 0.90, alpha: 1)
+                    : NSColor(calibratedRed: 0.21, green: 0.45, blue: 0.85, alpha: 1)
+            },
+            headingBorderColor: NSColor(name: nil) { a in
+                a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                    ? NSColor(white: 1, alpha: 0.12)
+                    : NSColor(white: 0, alpha: 0.10)
+            },
+            paragraphSpacing: 12,
+            quoteIndent: 16
+        )
         #endif
     }
 

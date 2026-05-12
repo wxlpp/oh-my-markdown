@@ -3,9 +3,9 @@ import MarkdownCore
 import MarkdownRenderKit
 
 #if canImport(UIKit)
-    import UIKit
+import UIKit
 #elseif canImport(AppKit)
-    import AppKit
+import AppKit
 #endif
 
 // MARK: - MarkdownLabelDecorations
@@ -78,13 +78,11 @@ struct MarkdownLabelDecorations {
         columns: Int,
         totalWidth: CGFloat
     )
-        -> [CGFloat]
-    {
+        -> [CGFloat] {
         if
             location < str.length,
             let widths = str.attribute(.markdownTableColumnWidths, at: location, effectiveRange: nil) as? [CGFloat],
-            widths.count == columns
-        {
+            widths.count == columns {
             return widths
         }
         return Array(repeating: (totalWidth - 28) / CGFloat(max(columns, 1)), count: columns)
@@ -166,8 +164,7 @@ struct MarkdownLabelDecorations {
             : self.documentLength
         guard
             let str = contentStorage.attributedString,
-            let startLoc = locationAt(blockStart) else
-        {
+            let startLoc = locationAt(blockStart) else {
             return
         }
 
@@ -250,7 +247,7 @@ struct MarkdownLabelDecorations {
             }
         }
 
-        for i in 1..<rowBounds.count {
+        for i in 1 ..< rowBounds.count {
             let y = (rowBounds[i - 1].maxY + rowBounds[i].minY) / 2
             let lineH: CGFloat = i == 1 ? 1.0 : 0.5
             let alpha: CGFloat = 0.4
