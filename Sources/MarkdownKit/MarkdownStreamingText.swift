@@ -78,142 +78,140 @@ public struct MarkdownStreamingText: View {
 }
 
 #if canImport(UIKit)
-    private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
-        final class Coordinator {
-            var listenerID: UUID?
-            var currentSource: MarkdownStreamingSource?
-            var lastStyle: RenderStyle?
+private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
+    final class Coordinator {
+        var listenerID: UUID?
+        var currentSource: MarkdownStreamingSource?
+        var lastStyle: RenderStyle?
+    }
+
+    let source: MarkdownStreamingSource
+    let style: RenderStyle
+
+    static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
+        coordinator.currentSource?.removeListener(coordinator.listenerID)
+        coordinator.listenerID = nil
+        coordinator.currentSource = nil
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> MarkdownLabelView {
+        let view = MarkdownLabelView()
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.required, for: .vertical)
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.required, for: .vertical)
+        self.attachListener(to: view, context: context)
+        return view
+    }
+
+    func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
+        if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
+            uiView.renderStyle = self.style
+            context.coordinator.lastStyle = self.style
         }
-
-        let source: MarkdownStreamingSource
-        let style: RenderStyle
-
-        static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
-            coordinator.currentSource?.removeListener(coordinator.listenerID)
-            coordinator.listenerID = nil
-            coordinator.currentSource = nil
+        if context.coordinator.currentSource !== self.source {
+            self.attachListener(to: uiView, context: context)
         }
+    }
 
-        func makeCoordinator() -> Coordinator {
-            Coordinator()
-        }
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: MarkdownLabelView,
+        context: Context
+    )
+        -> CGSize? {
+        let width = proposal.width ?? UIView.layoutFittingExpandedSize.width
+        return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+    }
 
-        func makeUIView(context: Context) -> MarkdownLabelView {
-            let view = MarkdownLabelView()
-            view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            view.setContentCompressionResistancePriority(.required, for: .vertical)
-            view.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            view.setContentHuggingPriority(.required, for: .vertical)
-            self.attachListener(to: view, context: context)
-            return view
-        }
-
-        func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
-            if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
-                uiView.renderStyle = self.style
-                context.coordinator.lastStyle = self.style
+    private func attachListener(to view: MarkdownLabelView, context: Context) {
+        context.coordinator.currentSource?.removeListener(context.coordinator.listenerID)
+        context.coordinator.currentSource = self.source
+        context.coordinator.listenerID = self.source.addListener { [weak view] event in
+            guard let view else {
+                return
             }
-            if context.coordinator.currentSource !== self.source {
-                self.attachListener(to: uiView, context: context)
-            }
-        }
-
-        func sizeThatFits(
-            _ proposal: ProposedViewSize,
-            uiView: MarkdownLabelView,
-            context: Context
-        )
-            -> CGSize?
-        {
-            let width = proposal.width ?? UIView.layoutFittingExpandedSize.width
-            return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        }
-
-        private func attachListener(to view: MarkdownLabelView, context: Context) {
-            context.coordinator.currentSource?.removeListener(context.coordinator.listenerID)
-            context.coordinator.currentSource = self.source
-            context.coordinator.listenerID = self.source.addListener { [weak view] event in
-                guard let view else {
-                    return
-                }
-                switch event {
-                case .set(let markdown):
-                    view.setMarkdown(markdown)
-                case .append(let chunk):
-                    view.appendMarkdown(chunk)
-                }
+            switch event {
+            case .set(let markdown):
+                view.setMarkdown(markdown)
+            case .append(let chunk):
+                view.appendMarkdown(chunk)
             }
         }
     }
+}
 
 #elseif canImport(AppKit)
-    private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
-        final class Coordinator {
-            var listenerID: UUID?
-            var currentSource: MarkdownStreamingSource?
-            var lastStyle: RenderStyle?
+private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
+    final class Coordinator {
+        var listenerID: UUID?
+        var currentSource: MarkdownStreamingSource?
+        var lastStyle: RenderStyle?
+    }
+
+    let source: MarkdownStreamingSource
+    let style: RenderStyle
+
+    static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
+        coordinator.currentSource?.removeListener(coordinator.listenerID)
+        coordinator.listenerID = nil
+        coordinator.currentSource = nil
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> MarkdownLabelView {
+        let view = MarkdownLabelView()
+        self.attachListener(to: view, context: context)
+        return view
+    }
+
+    func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
+        if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
+            nsView.renderStyle = self.style
+            context.coordinator.lastStyle = self.style
         }
-
-        let source: MarkdownStreamingSource
-        let style: RenderStyle
-
-        static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
-            coordinator.currentSource?.removeListener(coordinator.listenerID)
-            coordinator.listenerID = nil
-            coordinator.currentSource = nil
+        if context.coordinator.currentSource !== self.source {
+            self.attachListener(to: nsView, context: context)
         }
+    }
 
-        func makeCoordinator() -> Coordinator {
-            Coordinator()
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: MarkdownLabelView,
+        context: Context
+    )
+        -> CGSize? {
+        let width = proposal.width ?? nsView.fittingSize.width
+        let targetWidth = max(width, 1)
+        let previousWidth = nsView.frame.width
+        if abs(previousWidth - targetWidth) > 0.5 {
+            nsView.frame.size.width = targetWidth
         }
+        let fitted = nsView.intrinsicContentSize
+        return CGSize(width: targetWidth, height: fitted.height)
+    }
 
-        func makeNSView(context: Context) -> MarkdownLabelView {
-            let view = MarkdownLabelView()
-            self.attachListener(to: view, context: context)
-            return view
-        }
-
-        func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
-            if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
-                nsView.renderStyle = self.style
-                context.coordinator.lastStyle = self.style
+    private func attachListener(to view: MarkdownLabelView, context: Context) {
+        context.coordinator.currentSource?.removeListener(context.coordinator.listenerID)
+        context.coordinator.currentSource = self.source
+        context.coordinator.listenerID = self.source.addListener { [weak view] event in
+            guard let view else {
+                return
             }
-            if context.coordinator.currentSource !== self.source {
-                self.attachListener(to: nsView, context: context)
-            }
-        }
-
-        func sizeThatFits(
-            _ proposal: ProposedViewSize,
-            nsView: MarkdownLabelView,
-            context: Context
-        )
-            -> CGSize?
-        {
-            let width = proposal.width ?? nsView.fittingSize.width
-            let targetWidth = max(width, 1)
-            let previousWidth = nsView.frame.width
-            if abs(previousWidth - targetWidth) > 0.5 {
-                nsView.frame.size.width = targetWidth
-            }
-            let fitted = nsView.intrinsicContentSize
-            return CGSize(width: targetWidth, height: fitted.height)
-        }
-
-        private func attachListener(to view: MarkdownLabelView, context: Context) {
-            context.coordinator.currentSource?.removeListener(context.coordinator.listenerID)
-            context.coordinator.currentSource = self.source
-            context.coordinator.listenerID = self.source.addListener { [weak view] event in
-                guard let view else {
-                    return
-                }
-                switch event {
-                case .set(let markdown):
-                    view.setMarkdown(markdown)
-                case .append(let chunk):
-                    view.appendMarkdown(chunk)
-                }
+            switch event {
+            case .set(let markdown):
+                view.setMarkdown(markdown)
+            case .append(let chunk):
+                view.appendMarkdown(chunk)
             }
         }
     }
+}
 #endif

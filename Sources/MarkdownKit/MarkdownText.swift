@@ -38,122 +38,120 @@ public struct MarkdownText: View {
 
 #if canImport(UIKit)
 
-    private struct _MarkdownTextRepresentable: UIViewRepresentable {
-        final class Coordinator {
-            var lastSource = ""
-            var lastStyle: RenderStyle?
+private struct _MarkdownTextRepresentable: UIViewRepresentable {
+    final class Coordinator {
+        var lastSource = ""
+        var lastStyle: RenderStyle?
+    }
+
+    let source: String
+    let style: RenderStyle
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> MarkdownLabelView {
+        let view = MarkdownLabelView()
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.required, for: .vertical)
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.required, for: .vertical)
+        return view
+    }
+
+    func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
+        if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
+            uiView.renderStyle = self.style
+            context.coordinator.lastStyle = self.style
         }
-
-        let source: String
-        let style: RenderStyle
-
-        func makeCoordinator() -> Coordinator {
-            Coordinator()
+        let old = context.coordinator.lastSource
+        guard old != self.source else {
+            return
         }
-
-        func makeUIView(context: Context) -> MarkdownLabelView {
-            let view = MarkdownLabelView()
-            view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            view.setContentCompressionResistancePriority(.required, for: .vertical)
-            view.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            view.setContentHuggingPriority(.required, for: .vertical)
-            return view
-        }
-
-        func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
-            if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
-                uiView.renderStyle = self.style
-                context.coordinator.lastStyle = self.style
-            }
-            let old = context.coordinator.lastSource
-            guard old != self.source else {
-                return
-            }
-            context.coordinator.lastSource = self.source
-            if !old.isEmpty && self.source.hasPrefix(old) {
-                uiView.appendMarkdown(String(self.source.dropFirst(old.count)))
-            } else {
-                uiView.setMarkdown(self.source)
-            }
-        }
-
-        /// Use sizeThatFits so the view expands vertically to fit its content.
-        func sizeThatFits(
-            _ proposal: ProposedViewSize,
-            uiView: MarkdownLabelView,
-            context: Context
-        )
-            -> CGSize?
-        {
-            let width = proposal.width ?? UIView.layoutFittingExpandedSize.width
-            return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        context.coordinator.lastSource = self.source
+        if !old.isEmpty && self.source.hasPrefix(old) {
+            uiView.appendMarkdown(String(self.source.dropFirst(old.count)))
+        } else {
+            uiView.setMarkdown(self.source)
         }
     }
+
+    /// Use sizeThatFits so the view expands vertically to fit its content.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: MarkdownLabelView,
+        context: Context
+    )
+        -> CGSize? {
+        let width = proposal.width ?? UIView.layoutFittingExpandedSize.width
+        return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+    }
+}
 
 #elseif canImport(AppKit)
 
-    private struct _MarkdownTextRepresentable: NSViewRepresentable {
-        final class Coordinator {
-            var lastSource = ""
-            var lastStyle: RenderStyle?
+private struct _MarkdownTextRepresentable: NSViewRepresentable {
+    final class Coordinator {
+        var lastSource = ""
+        var lastStyle: RenderStyle?
+    }
+
+    let source: String
+    let style: RenderStyle
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> MarkdownLabelView {
+        MarkdownLabelView()
+    }
+
+    func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
+        if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
+            nsView.renderStyle = self.style
+            context.coordinator.lastStyle = self.style
         }
-
-        let source: String
-        let style: RenderStyle
-
-        func makeCoordinator() -> Coordinator {
-            Coordinator()
+        let old = context.coordinator.lastSource
+        guard old != self.source else {
+            return
         }
-
-        func makeNSView(context: Context) -> MarkdownLabelView {
-            MarkdownLabelView()
-        }
-
-        func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
-            if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
-                nsView.renderStyle = self.style
-                context.coordinator.lastStyle = self.style
-            }
-            let old = context.coordinator.lastSource
-            guard old != self.source else {
-                return
-            }
-            context.coordinator.lastSource = self.source
-            if !old.isEmpty && self.source.hasPrefix(old) {
-                nsView.appendMarkdown(String(self.source.dropFirst(old.count)))
-            } else {
-                nsView.setMarkdown(self.source)
-            }
-        }
-
-        func sizeThatFits(
-            _ proposal: ProposedViewSize,
-            nsView: MarkdownLabelView,
-            context: Context
-        )
-            -> CGSize?
-        {
-            let width = proposal.width ?? nsView.fittingSize.width
-            let targetWidth = max(width, 1)
-            let previousWidth = nsView.frame.width
-            if abs(previousWidth - targetWidth) > 0.5 {
-                nsView.frame.size.width = targetWidth
-            }
-            let fitted = nsView.intrinsicContentSize
-            return CGSize(width: targetWidth, height: fitted.height)
+        context.coordinator.lastSource = self.source
+        if !old.isEmpty && self.source.hasPrefix(old) {
+            nsView.appendMarkdown(String(self.source.dropFirst(old.count)))
+        } else {
+            nsView.setMarkdown(self.source)
         }
     }
 
-#endif
-
-public extension EnvironmentValues {
-    // The ``RenderStyle`` applied to ``MarkdownText`` views in this environment.
-    @Entry var markdownStyle: RenderStyle = .default
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: MarkdownLabelView,
+        context: Context
+    )
+        -> CGSize? {
+        let width = proposal.width ?? nsView.fittingSize.width
+        let targetWidth = max(width, 1)
+        let previousWidth = nsView.frame.width
+        if abs(previousWidth - targetWidth) > 0.5 {
+            nsView.frame.size.width = targetWidth
+        }
+        let fitted = nsView.intrinsicContentSize
+        return CGSize(width: targetWidth, height: fitted.height)
+    }
 }
 
-public extension View {
+#endif
+
+extension EnvironmentValues {
+    /// The ``RenderStyle`` applied to ``MarkdownText`` views in this environment.
+    @Entry public var markdownStyle: RenderStyle = .default
+}
+
+extension View {
     /// Applies a custom ``RenderStyle`` to all ``MarkdownText`` views in this subtree.
-    func markdownStyle(_ style: RenderStyle) -> some View {
+    public func markdownStyle(_ style: RenderStyle) -> some View {
         environment(\.markdownStyle, style)
     }
 }

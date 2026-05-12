@@ -17,382 +17,380 @@ private struct TableRowBounds {
 }
 
 #if canImport(UIKit)
-    import UIKit
+import UIKit
 
-    @MainActor
-    final class TableContentView: UIView {
-        init(tableString: NSAttributedString, style: RenderStyle, naturalWidth: CGFloat) {
-            self.bgColor = style.codeBackgroundColor
-            self.separatorColor = style.headingBorderColor
-            super.init(frame: .zero)
-            isOpaque = false
-            backgroundColor = .clear
+@MainActor
+final class TableContentView: UIView {
+    init(tableString: NSAttributedString, style: RenderStyle, naturalWidth: CGFloat) {
+        self.bgColor = style.codeBackgroundColor
+        self.separatorColor = style.headingBorderColor
+        super.init(frame: .zero)
+        isOpaque = false
+        backgroundColor = .clear
 
-            self.textContainer.lineFragmentPadding = 0
-            self.layoutManager.textContainer = self.textContainer
-            self.contentStorage.addTextLayoutManager(self.layoutManager)
-            self.contentStorage.attributedString = tableString
+        self.textContainer.lineFragmentPadding = 0
+        self.layoutManager.textContainer = self.textContainer
+        self.contentStorage.addTextLayoutManager(self.layoutManager)
+        self.contentStorage.attributedString = tableString
 
-            self.textContainer.size = CGSize(width: naturalWidth, height: .greatestFiniteMagnitude)
-            self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-            let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
-            frame = CGRect(x: 0, y: 0, width: naturalWidth, height: textH + 16)
-            self.rebuildRowBounds()
+        self.textContainer.size = CGSize(width: naturalWidth, height: .greatestFiniteMagnitude)
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
+        frame = CGRect(x: 0, y: 0, width: naturalWidth, height: textH + 16)
+        self.rebuildRowBounds()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("Use init(tableString:style:naturalWidth:)")
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else {
+            return
+        }
+        guard let str = contentStorage.attributedString, str.length > 0 else {
+            return
         }
 
-        @available(*, unavailable)
-        required init?(coder: NSCoder) {
-            fatalError("Use init(tableString:style:naturalWidth:)")
+        let cols = str.attribute(.markdownTableColumns, at: 0, effectiveRange: nil) as? Int ?? 0
+        let outerRect = bounds
+        let outerPath = CGPath(roundedRect: outerRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+
+        ctx.saveGState()
+
+        // Background fill
+        ctx.addPath(outerPath)
+        ctx.setFillColor(self.bgColor.withAlphaComponent(0.5).cgColor)
+        ctx.fillPath()
+
+        // Clip inner content to the rounded rect
+        ctx.saveGState()
+        ctx.addPath(outerPath)
+        ctx.clip()
+
+        let startLoc = self.contentStorage.documentRange.location
+
+        // Header row: slightly darker background
+        if let header = rowBounds.first(where: { $0.section == 0 }) {
+            ctx.setFillColor(self.bgColor.cgColor)
+            ctx.fill(CGRect(
+                x: 0,
+                y: header.minY - 4,
+                width: outerRect.width,
+                height: header.maxY - header.minY + 8
+            ))
         }
 
-        override func draw(_ rect: CGRect) {
-            guard let ctx = UIGraphicsGetCurrentContext() else {
-                return
-            }
-            guard let str = contentStorage.attributedString, str.length > 0 else {
-                return
-            }
-
-            let cols = str.attribute(.markdownTableColumns, at: 0, effectiveRange: nil) as? Int ?? 0
-            let outerRect = bounds
-            let outerPath = CGPath(roundedRect: outerRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
-
-            ctx.saveGState()
-
-            // Background fill
-            ctx.addPath(outerPath)
-            ctx.setFillColor(self.bgColor.withAlphaComponent(0.5).cgColor)
-            ctx.fillPath()
-
-            // Clip inner content to the rounded rect
-            ctx.saveGState()
-            ctx.addPath(outerPath)
-            ctx.clip()
-
-            let startLoc = self.contentStorage.documentRange.location
-
-            // Header row: slightly darker background
-            if let header = rowBounds.first(where: { $0.section == 0 }) {
-                ctx.setFillColor(self.bgColor.cgColor)
-                ctx.fill(CGRect(
-                    x: 0,
-                    y: header.minY - 4,
-                    width: outerRect.width,
-                    height: header.maxY - header.minY + 8
-                ))
-            }
-
-            // Vertical column separator lines
-            if cols > 1 {
-                let colWidths = self.tableColumnWidths(in: str, columns: cols, totalWidth: outerRect.width)
-                var x = outerRect.minX + 14
-                ctx.setFillColor(self.separatorColor.withAlphaComponent(0.35).cgColor)
-                for width in colWidths.dropLast() {
-                    x += width
-                    ctx.fill(CGRect(x: x - 0.25, y: outerRect.minY, width: 0.5, height: outerRect.height))
-                }
-            }
-
-            // Horizontal row separators: thicker after header, same color as body row separators
-            for i in 1..<self.rowBounds.count {
-                let y = (rowBounds[i - 1].maxY + self.rowBounds[i].minY) / 2
-                let lineH: CGFloat = i == 1 ? 1.0 : 0.5
-                let alpha: CGFloat = 0.4
-                ctx.setFillColor(self.separatorColor.withAlphaComponent(alpha).cgColor)
-                ctx.fill(CGRect(x: 0, y: y - lineH / 2, width: outerRect.width, height: lineH))
-            }
-
-            ctx.restoreGState() // remove clip
-
-            // Outer border stroke
-            ctx.addPath(outerPath)
-            ctx.setStrokeColor(self.separatorColor.withAlphaComponent(0.2).cgColor)
-            ctx.setLineWidth(0.5)
-            ctx.strokePath()
-
-            ctx.restoreGState()
-
-            // Draw text fragments, shifted down by textOffsetY
-            self.layoutManager.enumerateTextLayoutFragments(
-                from: startLoc,
-                options: [.ensuresLayout, .ensuresExtraLineFragment]
-            ) { frag in
-                let origin = CGPoint(
-                    x: frag.layoutFragmentFrame.origin.x,
-                    y: frag.layoutFragmentFrame.origin.y + self.textOffsetY
-                )
-                frag.draw(at: origin, in: ctx)
-                return true
+        // Vertical column separator lines
+        if cols > 1 {
+            let colWidths = self.tableColumnWidths(in: str, columns: cols, totalWidth: outerRect.width)
+            var x = outerRect.minX + 14
+            ctx.setFillColor(self.separatorColor.withAlphaComponent(0.35).cgColor)
+            for width in colWidths.dropLast() {
+                x += width
+                ctx.fill(CGRect(x: x - 0.25, y: outerRect.minY, width: 0.5, height: outerRect.height))
             }
         }
 
-        /// Update table content in place without recreating the view.
-        /// Preserves the parent UIScrollView's contentOffset so the user's
-        /// horizontal scroll position is not reset during streaming updates.
-        func update(tableString: NSAttributedString) {
-            self.contentStorage.attributedString = tableString
-            self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-            let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
-            let newH = textH + 16
-            if abs(frame.height - newH) > 0.5 {
-                frame.size.height = newH
-            }
-            self.rebuildRowBounds()
-            setNeedsDisplay()
+        // Horizontal row separators: thicker after header, same color as body row separators
+        for i in 1 ..< self.rowBounds.count {
+            let y = (rowBounds[i - 1].maxY + self.rowBounds[i].minY) / 2
+            let lineH: CGFloat = i == 1 ? 1.0 : 0.5
+            let alpha: CGFloat = 0.4
+            ctx.setFillColor(self.separatorColor.withAlphaComponent(alpha).cgColor)
+            ctx.fill(CGRect(x: 0, y: y - lineH / 2, width: outerRect.width, height: lineH))
         }
 
-        private let contentStorage = NSTextContentStorage()
-        private let layoutManager = NSTextLayoutManager()
-        private let textContainer = NSTextContainer(size: .zero)
-        private let bgColor: UIColor
-        private let separatorColor: UIColor
-        private var rowBounds: [TableRowBounds] = []
-        private let textOffsetY: CGFloat = 8
+        ctx.restoreGState() // remove clip
 
-        private func rebuildRowBounds() {
-            guard let str = contentStorage.attributedString, str.length > 0 else {
-                self.rowBounds = []
-                return
-            }
+        // Outer border stroke
+        ctx.addPath(outerPath)
+        ctx.setStrokeColor(self.separatorColor.withAlphaComponent(0.2).cgColor)
+        ctx.setLineWidth(0.5)
+        ctx.strokePath()
 
-            var bounds: [TableRowBounds] = []
-            var curSection = -1
-            var curMinY: CGFloat = 0
-            var curMaxY: CGFloat = 0
-            let startLoc = self.contentStorage.documentRange.location
-            let strLen = str.length
-            self.layoutManager.enumerateTextLayoutFragments(from: startLoc, options: [.ensuresLayout]) { frag in
-                let off = self.contentStorage.offset(
-                    from: self.contentStorage.documentRange.location,
-                    to: frag.rangeInElement.location
-                )
-                guard off < strLen else {
-                    return false
-                }
-                let sec = str.attribute(.markdownTableSection, at: off, effectiveRange: nil) as? Int ?? 0
-                let ff = frag.layoutFragmentFrame
-                if sec != curSection {
-                    if curSection >= 0 {
-                        bounds.append(TableRowBounds(
-                            section: curSection,
-                            minY: curMinY + self.textOffsetY,
-                            maxY: curMaxY + self.textOffsetY
-                        ))
-                    }
-                    curSection = sec
-                    curMinY = ff.minY
-                    curMaxY = ff.maxY
-                } else {
-                    curMaxY = max(curMaxY, ff.maxY)
-                }
-                return true
-            }
-            if curSection >= 0 {
-                bounds.append(TableRowBounds(
-                    section: curSection,
-                    minY: curMinY + self.textOffsetY,
-                    maxY: curMaxY + self.textOffsetY
-                ))
-            }
-            self.rowBounds = bounds
-        }
+        ctx.restoreGState()
 
-        private func tableColumnWidths(in str: NSAttributedString, columns: Int, totalWidth: CGFloat) -> [CGFloat] {
-            if
-                let widths = str.attribute(.markdownTableColumnWidths, at: 0, effectiveRange: nil) as? [CGFloat],
-                widths.count == columns
-            {
-                return widths
-            }
-            return Array(repeating: (totalWidth - 28) / CGFloat(max(columns, 1)), count: columns)
+        // Draw text fragments, shifted down by textOffsetY
+        self.layoutManager.enumerateTextLayoutFragments(
+            from: startLoc,
+            options: [.ensuresLayout, .ensuresExtraLineFragment]
+        ) { frag in
+            let origin = CGPoint(
+                x: frag.layoutFragmentFrame.origin.x,
+                y: frag.layoutFragmentFrame.origin.y + self.textOffsetY
+            )
+            frag.draw(at: origin, in: ctx)
+            return true
         }
     }
+
+    /// Update table content in place without recreating the view.
+    /// Preserves the parent UIScrollView's contentOffset so the user's
+    /// horizontal scroll position is not reset during streaming updates.
+    func update(tableString: NSAttributedString) {
+        self.contentStorage.attributedString = tableString
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
+        let newH = textH + 16
+        if abs(frame.height - newH) > 0.5 {
+            frame.size.height = newH
+        }
+        self.rebuildRowBounds()
+        setNeedsDisplay()
+    }
+
+    private let contentStorage = NSTextContentStorage()
+    private let layoutManager = NSTextLayoutManager()
+    private let textContainer = NSTextContainer(size: .zero)
+    private let bgColor: UIColor
+    private let separatorColor: UIColor
+    private var rowBounds: [TableRowBounds] = []
+    private let textOffsetY: CGFloat = 8
+
+    private func rebuildRowBounds() {
+        guard let str = contentStorage.attributedString, str.length > 0 else {
+            self.rowBounds = []
+            return
+        }
+
+        var bounds: [TableRowBounds] = []
+        var curSection = -1
+        var curMinY: CGFloat = 0
+        var curMaxY: CGFloat = 0
+        let startLoc = self.contentStorage.documentRange.location
+        let strLen = str.length
+        self.layoutManager.enumerateTextLayoutFragments(from: startLoc, options: [.ensuresLayout]) { frag in
+            let off = self.contentStorage.offset(
+                from: self.contentStorage.documentRange.location,
+                to: frag.rangeInElement.location
+            )
+            guard off < strLen else {
+                return false
+            }
+            let sec = str.attribute(.markdownTableSection, at: off, effectiveRange: nil) as? Int ?? 0
+            let ff = frag.layoutFragmentFrame
+            if sec != curSection {
+                if curSection >= 0 {
+                    bounds.append(TableRowBounds(
+                        section: curSection,
+                        minY: curMinY + self.textOffsetY,
+                        maxY: curMaxY + self.textOffsetY
+                    ))
+                }
+                curSection = sec
+                curMinY = ff.minY
+                curMaxY = ff.maxY
+            } else {
+                curMaxY = max(curMaxY, ff.maxY)
+            }
+            return true
+        }
+        if curSection >= 0 {
+            bounds.append(TableRowBounds(
+                section: curSection,
+                minY: curMinY + self.textOffsetY,
+                maxY: curMaxY + self.textOffsetY
+            ))
+        }
+        self.rowBounds = bounds
+    }
+
+    private func tableColumnWidths(in str: NSAttributedString, columns: Int, totalWidth: CGFloat) -> [CGFloat] {
+        if
+            let widths = str.attribute(.markdownTableColumnWidths, at: 0, effectiveRange: nil) as? [CGFloat],
+            widths.count == columns {
+            return widths
+        }
+        return Array(repeating: (totalWidth - 28) / CGFloat(max(columns, 1)), count: columns)
+    }
+}
 
 #elseif canImport(AppKit)
-    import AppKit
+import AppKit
 
-    @MainActor
-    final class TableContentView: NSView {
-        init(tableString: NSAttributedString, style: RenderStyle, naturalWidth: CGFloat) {
-            self.bgColor = style.codeBackgroundColor
-            self.separatorColor = style.headingBorderColor
-            super.init(frame: .zero)
-            wantsLayer = true
-            layer?.backgroundColor = NSColor.clear.cgColor
+@MainActor
+final class TableContentView: NSView {
+    init(tableString: NSAttributedString, style: RenderStyle, naturalWidth: CGFloat) {
+        self.bgColor = style.codeBackgroundColor
+        self.separatorColor = style.headingBorderColor
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
 
-            self.textContainer.lineFragmentPadding = 0
-            self.layoutManager.textContainer = self.textContainer
-            self.contentStorage.addTextLayoutManager(self.layoutManager)
-            self.contentStorage.attributedString = tableString
+        self.textContainer.lineFragmentPadding = 0
+        self.layoutManager.textContainer = self.textContainer
+        self.contentStorage.addTextLayoutManager(self.layoutManager)
+        self.contentStorage.attributedString = tableString
 
-            self.textContainer.size = CGSize(width: naturalWidth, height: .greatestFiniteMagnitude)
-            self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-            let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
-            frame = CGRect(x: 0, y: 0, width: naturalWidth, height: textH + 16)
-            self.rebuildRowBounds()
+        self.textContainer.size = CGSize(width: naturalWidth, height: .greatestFiniteMagnitude)
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
+        frame = CGRect(x: 0, y: 0, width: naturalWidth, height: textH + 16)
+        self.rebuildRowBounds()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("Use init(tableString:style:naturalWidth:)")
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else {
+            return
+        }
+        guard let str = contentStorage.attributedString, str.length > 0 else {
+            return
         }
 
-        @available(*, unavailable)
-        required init?(coder: NSCoder) {
-            fatalError("Use init(tableString:style:naturalWidth:)")
+        let cols = str.attribute(.markdownTableColumns, at: 0, effectiveRange: nil) as? Int ?? 0
+        let outerRect = bounds
+        let outerPath = CGPath(roundedRect: outerRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+
+        ctx.saveGState()
+
+        ctx.addPath(outerPath)
+        ctx.setFillColor(self.bgColor.withAlphaComponent(0.5).cgColor)
+        ctx.fillPath()
+
+        ctx.saveGState()
+        ctx.addPath(outerPath)
+        ctx.clip()
+
+        let startLoc = self.contentStorage.documentRange.location
+
+        if let header = rowBounds.first(where: { $0.section == 0 }) {
+            ctx.setFillColor(self.bgColor.cgColor)
+            ctx.fill(CGRect(
+                x: 0,
+                y: header.minY - 4,
+                width: outerRect.width,
+                height: header.maxY - header.minY + 8
+            ))
         }
 
-        override var isFlipped: Bool {
-            true
-        }
-
-        override func draw(_ dirtyRect: NSRect) {
-            guard let ctx = NSGraphicsContext.current?.cgContext else {
-                return
-            }
-            guard let str = contentStorage.attributedString, str.length > 0 else {
-                return
-            }
-
-            let cols = str.attribute(.markdownTableColumns, at: 0, effectiveRange: nil) as? Int ?? 0
-            let outerRect = bounds
-            let outerPath = CGPath(roundedRect: outerRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
-
-            ctx.saveGState()
-
-            ctx.addPath(outerPath)
-            ctx.setFillColor(self.bgColor.withAlphaComponent(0.5).cgColor)
-            ctx.fillPath()
-
-            ctx.saveGState()
-            ctx.addPath(outerPath)
-            ctx.clip()
-
-            let startLoc = self.contentStorage.documentRange.location
-
-            if let header = rowBounds.first(where: { $0.section == 0 }) {
-                ctx.setFillColor(self.bgColor.cgColor)
-                ctx.fill(CGRect(
-                    x: 0,
-                    y: header.minY - 4,
-                    width: outerRect.width,
-                    height: header.maxY - header.minY + 8
-                ))
-            }
-
-            if cols > 1 {
-                let colWidths = self.tableColumnWidths(in: str, columns: cols, totalWidth: outerRect.width)
-                var x = outerRect.minX + 14
-                ctx.setFillColor(self.separatorColor.withAlphaComponent(0.35).cgColor)
-                for width in colWidths.dropLast() {
-                    x += width
-                    ctx.fill(CGRect(x: x - 0.25, y: outerRect.minY, width: 0.5, height: outerRect.height))
-                }
-            }
-
-            for i in 1..<self.rowBounds.count {
-                let y = (rowBounds[i - 1].maxY + self.rowBounds[i].minY) / 2
-                let lineH: CGFloat = i == 1 ? 1.0 : 0.5
-                let alpha: CGFloat = 0.4
-                ctx.setFillColor(self.separatorColor.withAlphaComponent(alpha).cgColor)
-                ctx.fill(CGRect(x: 0, y: y - lineH / 2, width: outerRect.width, height: lineH))
-            }
-
-            ctx.restoreGState()
-
-            ctx.addPath(outerPath)
-            ctx.setStrokeColor(self.separatorColor.withAlphaComponent(0.2).cgColor)
-            ctx.setLineWidth(0.5)
-            ctx.strokePath()
-
-            ctx.restoreGState()
-
-            self.layoutManager.enumerateTextLayoutFragments(
-                from: startLoc,
-                options: [.ensuresLayout, .ensuresExtraLineFragment]
-            ) { frag in
-                let origin = CGPoint(
-                    x: frag.layoutFragmentFrame.origin.x,
-                    y: frag.layoutFragmentFrame.origin.y + self.textOffsetY
-                )
-                frag.draw(at: origin, in: ctx)
-                return true
+        if cols > 1 {
+            let colWidths = self.tableColumnWidths(in: str, columns: cols, totalWidth: outerRect.width)
+            var x = outerRect.minX + 14
+            ctx.setFillColor(self.separatorColor.withAlphaComponent(0.35).cgColor)
+            for width in colWidths.dropLast() {
+                x += width
+                ctx.fill(CGRect(x: x - 0.25, y: outerRect.minY, width: 0.5, height: outerRect.height))
             }
         }
 
-        /// Update table content in place without recreating the view.
-        /// Preserves the parent NSScrollView's scroll position during streaming updates.
-        func update(tableString: NSAttributedString) {
-            self.contentStorage.attributedString = tableString
-            self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-            let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
-            let newH = textH + 16
-            if abs(frame.height - newH) > 0.5 {
-                frame.size.height = newH
-            }
-            self.rebuildRowBounds()
-            needsDisplay = true
+        for i in 1 ..< self.rowBounds.count {
+            let y = (rowBounds[i - 1].maxY + self.rowBounds[i].minY) / 2
+            let lineH: CGFloat = i == 1 ? 1.0 : 0.5
+            let alpha: CGFloat = 0.4
+            ctx.setFillColor(self.separatorColor.withAlphaComponent(alpha).cgColor)
+            ctx.fill(CGRect(x: 0, y: y - lineH / 2, width: outerRect.width, height: lineH))
         }
 
-        private let contentStorage = NSTextContentStorage()
-        private let layoutManager = NSTextLayoutManager()
-        private let textContainer = NSTextContainer(size: .zero)
-        private let bgColor: NSColor
-        private let separatorColor: NSColor
-        private var rowBounds: [TableRowBounds] = []
-        private let textOffsetY: CGFloat = 8
+        ctx.restoreGState()
 
-        private func rebuildRowBounds() {
-            guard let str = contentStorage.attributedString, str.length > 0 else {
-                self.rowBounds = []
-                return
-            }
+        ctx.addPath(outerPath)
+        ctx.setStrokeColor(self.separatorColor.withAlphaComponent(0.2).cgColor)
+        ctx.setLineWidth(0.5)
+        ctx.strokePath()
 
-            var bounds: [TableRowBounds] = []
-            var curSection = -1
-            var curMinY: CGFloat = 0
-            var curMaxY: CGFloat = 0
-            let startLoc = self.contentStorage.documentRange.location
-            let strLen = str.length
-            self.layoutManager.enumerateTextLayoutFragments(from: startLoc, options: [.ensuresLayout]) { frag in
-                let off = self.contentStorage.offset(
-                    from: self.contentStorage.documentRange.location,
-                    to: frag.rangeInElement.location
-                )
-                guard off < strLen else {
-                    return false
-                }
-                let sec = str.attribute(.markdownTableSection, at: off, effectiveRange: nil) as? Int ?? 0
-                let ff = frag.layoutFragmentFrame
-                if sec != curSection {
-                    if curSection >= 0 {
-                        bounds.append(TableRowBounds(
-                            section: curSection,
-                            minY: curMinY + self.textOffsetY,
-                            maxY: curMaxY + self.textOffsetY
-                        ))
-                    }
-                    curSection = sec
-                    curMinY = ff.minY
-                    curMaxY = ff.maxY
-                } else {
-                    curMaxY = max(curMaxY, ff.maxY)
-                }
-                return true
-            }
-            if curSection >= 0 {
-                bounds.append(TableRowBounds(
-                    section: curSection,
-                    minY: curMinY + self.textOffsetY,
-                    maxY: curMaxY + self.textOffsetY
-                ))
-            }
-            self.rowBounds = bounds
-        }
+        ctx.restoreGState()
 
-        private func tableColumnWidths(in str: NSAttributedString, columns: Int, totalWidth: CGFloat) -> [CGFloat] {
-            if
-                let widths = str.attribute(.markdownTableColumnWidths, at: 0, effectiveRange: nil) as? [CGFloat],
-                widths.count == columns
-            {
-                return widths
-            }
-            return Array(repeating: (totalWidth - 28) / CGFloat(max(columns, 1)), count: columns)
+        self.layoutManager.enumerateTextLayoutFragments(
+            from: startLoc,
+            options: [.ensuresLayout, .ensuresExtraLineFragment]
+        ) { frag in
+            let origin = CGPoint(
+                x: frag.layoutFragmentFrame.origin.x,
+                y: frag.layoutFragmentFrame.origin.y + self.textOffsetY
+            )
+            frag.draw(at: origin, in: ctx)
+            return true
         }
     }
+
+    /// Update table content in place without recreating the view.
+    /// Preserves the parent NSScrollView's scroll position during streaming updates.
+    func update(tableString: NSAttributedString) {
+        self.contentStorage.attributedString = tableString
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
+        let newH = textH + 16
+        if abs(frame.height - newH) > 0.5 {
+            frame.size.height = newH
+        }
+        self.rebuildRowBounds()
+        needsDisplay = true
+    }
+
+    private let contentStorage = NSTextContentStorage()
+    private let layoutManager = NSTextLayoutManager()
+    private let textContainer = NSTextContainer(size: .zero)
+    private let bgColor: NSColor
+    private let separatorColor: NSColor
+    private var rowBounds: [TableRowBounds] = []
+    private let textOffsetY: CGFloat = 8
+
+    private func rebuildRowBounds() {
+        guard let str = contentStorage.attributedString, str.length > 0 else {
+            self.rowBounds = []
+            return
+        }
+
+        var bounds: [TableRowBounds] = []
+        var curSection = -1
+        var curMinY: CGFloat = 0
+        var curMaxY: CGFloat = 0
+        let startLoc = self.contentStorage.documentRange.location
+        let strLen = str.length
+        self.layoutManager.enumerateTextLayoutFragments(from: startLoc, options: [.ensuresLayout]) { frag in
+            let off = self.contentStorage.offset(
+                from: self.contentStorage.documentRange.location,
+                to: frag.rangeInElement.location
+            )
+            guard off < strLen else {
+                return false
+            }
+            let sec = str.attribute(.markdownTableSection, at: off, effectiveRange: nil) as? Int ?? 0
+            let ff = frag.layoutFragmentFrame
+            if sec != curSection {
+                if curSection >= 0 {
+                    bounds.append(TableRowBounds(
+                        section: curSection,
+                        minY: curMinY + self.textOffsetY,
+                        maxY: curMaxY + self.textOffsetY
+                    ))
+                }
+                curSection = sec
+                curMinY = ff.minY
+                curMaxY = ff.maxY
+            } else {
+                curMaxY = max(curMaxY, ff.maxY)
+            }
+            return true
+        }
+        if curSection >= 0 {
+            bounds.append(TableRowBounds(
+                section: curSection,
+                minY: curMinY + self.textOffsetY,
+                maxY: curMaxY + self.textOffsetY
+            ))
+        }
+        self.rowBounds = bounds
+    }
+
+    private func tableColumnWidths(in str: NSAttributedString, columns: Int, totalWidth: CGFloat) -> [CGFloat] {
+        if
+            let widths = str.attribute(.markdownTableColumnWidths, at: 0, effectiveRange: nil) as? [CGFloat],
+            widths.count == columns {
+            return widths
+        }
+        return Array(repeating: (totalWidth - 28) / CGFloat(max(columns, 1)), count: columns)
+    }
+}
 #endif

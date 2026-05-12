@@ -1,9 +1,9 @@
 import Foundation
 
 #if canImport(UIKit)
-    import UIKit
+import UIKit
 #elseif canImport(AppKit)
-    import AppKit
+import AppKit
 #endif
 
 // MARK: - SyntaxHighlighter
@@ -72,8 +72,7 @@ public enum SyntaxHighlighter {
         font: PlatformFont,
         defaultColor: PlatformColor
     )
-        -> NSAttributedString
-    {
+        -> NSAttributedString {
         let lang = language?.lowercased() ?? ""
         let nsCode = code as NSString
         let nsLen = nsCode.length
@@ -117,14 +116,14 @@ public enum SyntaxHighlighter {
                 return
             }
             var subStart: Int?
-            for i in lo...hi {
+            for i in lo ... hi {
                 if i < hi, painted[i] == 0 {
                     if subStart == nil {
                         subStart = i
                     }
                 } else if let s = subStart {
                     let sub = NSRange(location: s, length: i - s)
-                    for j in s..<i {
+                    for j in s ..< i {
                         painted[j] = kind.rawValue
                     }
                     spans.append((sub, kind))
@@ -155,8 +154,7 @@ public enum SyntaxHighlighter {
         apply(self.singleStringRx, .string)
         if
             lang == "javascript" || lang == "js" ||
-            lang == "typescript" || lang == "ts" || lang == "jsx" || lang == "tsx"
-        {
+            lang == "typescript" || lang == "ts" || lang == "jsx" || lang == "tsx" {
             apply(self.templateStringRx, .string)
         }
 
@@ -196,67 +194,67 @@ public enum SyntaxHighlighter {
     ]
 
     #if canImport(UIKit)
-        /// Xcode-inspired palette
-        private static let colorKeyword = UIColor { t in
-            t.userInterfaceStyle == .dark
-                ? UIColor(red: 0.81, green: 0.56, blue: 0.96, alpha: 1) // #CF8EF4
-                : UIColor(red: 0.61, green: 0.14, blue: 0.58, alpha: 1) // #9B2393
-        }
+    /// Xcode-inspired palette
+    private static let colorKeyword = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.81, green: 0.56, blue: 0.96, alpha: 1) // #CF8EF4
+            : UIColor(red: 0.61, green: 0.14, blue: 0.58, alpha: 1) // #9B2393
+    }
 
-        private static let colorString = UIColor { t in
-            t.userInterfaceStyle == .dark
-                ? UIColor(red: 0.99, green: 0.42, blue: 0.36, alpha: 1) // #FC6A5D
-                : UIColor(red: 0.77, green: 0.10, blue: 0.09, alpha: 1) // #C41A16
-        }
+    private static let colorString = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.99, green: 0.42, blue: 0.36, alpha: 1) // #FC6A5D
+            : UIColor(red: 0.77, green: 0.10, blue: 0.09, alpha: 1) // #C41A16
+    }
 
-        private static let colorComment = UIColor { t in
-            t.userInterfaceStyle == .dark
-                ? UIColor(red: 0.42, green: 0.54, blue: 0.38, alpha: 1)
-                : UIColor(red: 0.25, green: 0.43, blue: 0.20, alpha: 1)
-        }
+    private static let colorComment = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.42, green: 0.54, blue: 0.38, alpha: 1)
+            : UIColor(red: 0.25, green: 0.43, blue: 0.20, alpha: 1)
+    }
 
-        private static let colorNumber = UIColor { t in
-            t.userInterfaceStyle == .dark
-                ? UIColor(red: 0.82, green: 0.75, blue: 0.41, alpha: 1) // #D0BF69
-                : UIColor(red: 0.11, green: 0.11, blue: 0.73, alpha: 1)
-        }
+    private static let colorNumber = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.82, green: 0.75, blue: 0.41, alpha: 1) // #D0BF69
+            : UIColor(red: 0.11, green: 0.11, blue: 0.73, alpha: 1)
+    }
 
-        private static let colorType = UIColor { t in
-            t.userInterfaceStyle == .dark
-                ? UIColor(red: 0.36, green: 0.85, blue: 1.00, alpha: 1) // #5DD8FF
-                : UIColor(red: 0.22, green: 0.00, blue: 0.63, alpha: 1)
-        }
+    private static let colorType = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.36, green: 0.85, blue: 1.00, alpha: 1) // #5DD8FF
+            : UIColor(red: 0.22, green: 0.00, blue: 0.63, alpha: 1)
+    }
 
     #elseif canImport(AppKit)
-        private static let colorKeyword = NSColor(name: nil) { a in
-            a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(calibratedRed: 0.81, green: 0.56, blue: 0.96, alpha: 1)
-                : NSColor(calibratedRed: 0.61, green: 0.14, blue: 0.58, alpha: 1)
-        }
+    private static let colorKeyword = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.81, green: 0.56, blue: 0.96, alpha: 1)
+            : NSColor(calibratedRed: 0.61, green: 0.14, blue: 0.58, alpha: 1)
+    }
 
-        private static let colorString = NSColor(name: nil) { a in
-            a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(calibratedRed: 0.99, green: 0.42, blue: 0.36, alpha: 1)
-                : NSColor(calibratedRed: 0.77, green: 0.10, blue: 0.09, alpha: 1)
-        }
+    private static let colorString = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.99, green: 0.42, blue: 0.36, alpha: 1)
+            : NSColor(calibratedRed: 0.77, green: 0.10, blue: 0.09, alpha: 1)
+    }
 
-        private static let colorComment = NSColor(name: nil) { a in
-            a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(calibratedRed: 0.42, green: 0.54, blue: 0.38, alpha: 1)
-                : NSColor(calibratedRed: 0.25, green: 0.43, blue: 0.20, alpha: 1)
-        }
+    private static let colorComment = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.42, green: 0.54, blue: 0.38, alpha: 1)
+            : NSColor(calibratedRed: 0.25, green: 0.43, blue: 0.20, alpha: 1)
+    }
 
-        private static let colorNumber = NSColor(name: nil) { a in
-            a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(calibratedRed: 0.82, green: 0.75, blue: 0.41, alpha: 1)
-                : NSColor(calibratedRed: 0.11, green: 0.11, blue: 0.73, alpha: 1)
-        }
+    private static let colorNumber = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.82, green: 0.75, blue: 0.41, alpha: 1)
+            : NSColor(calibratedRed: 0.11, green: 0.11, blue: 0.73, alpha: 1)
+    }
 
-        private static let colorType = NSColor(name: nil) { a in
-            a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(calibratedRed: 0.36, green: 0.85, blue: 1.00, alpha: 1)
-                : NSColor(calibratedRed: 0.22, green: 0.00, blue: 0.63, alpha: 1)
-        }
+    private static let colorType = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.36, green: 0.85, blue: 1.00, alpha: 1)
+            : NSColor(calibratedRed: 0.22, green: 0.00, blue: 0.63, alpha: 1)
+    }
     #endif
 
     // MARK: - Precompiled regexes
@@ -404,8 +402,7 @@ public enum SyntaxHighlighter {
         _ pattern: String,
         _ opts: NSRegularExpression.Options = []
     )
-        -> NSRegularExpression
-    {
+        -> NSRegularExpression {
         // swiftlint:disable:next force_try
         try! NSRegularExpression(pattern: pattern, options: opts)
     }

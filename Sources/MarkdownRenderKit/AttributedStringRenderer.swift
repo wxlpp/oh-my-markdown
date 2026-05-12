@@ -2,25 +2,25 @@ import Foundation
 import MarkdownCore
 
 #if canImport(UIKit)
-    import UIKit
+import UIKit
 #elseif canImport(AppKit)
-    import AppKit
+import AppKit
 #endif
 
 // MARK: - Custom attribute keys
 
-public extension NSAttributedString.Key {
+extension NSAttributedString.Key {
     /// Image source URL string; marks inline placeholder text pending async load.
-    static let markdownImageSource = NSAttributedString.Key("MarkdownKit.imageSource")
+    public static let markdownImageSource = NSAttributedString.Key("MarkdownKit.imageSource")
     /// Table row section: 0 = header, 1+ = body row index (used by decoration drawing).
-    static let markdownTableSection = NSAttributedString.Key("MarkdownKit.tableSection")
+    public static let markdownTableSection = NSAttributedString.Key("MarkdownKit.tableSection")
     /// Number of columns in the table (used to compute tab stops and draw column separators).
-    static let markdownTableColumns = NSAttributedString.Key("MarkdownKit.tableColumns")
+    public static let markdownTableColumns = NSAttributedString.Key("MarkdownKit.tableColumns")
     /// Natural (uncompressed) table width when the table overflows the available width.
     /// Presence of this attribute signals the view to show a horizontal-scroll overlay.
-    static let markdownTableNaturalWidth = NSAttributedString.Key("MarkdownKit.tableNaturalWidth")
+    public static let markdownTableNaturalWidth = NSAttributedString.Key("MarkdownKit.tableNaturalWidth")
     /// Natural widths for each rendered table column, used by platform views to draw separators.
-    static let markdownTableColumnWidths = NSAttributedString.Key("MarkdownKit.tableColumnWidths")
+    public static let markdownTableColumnWidths = NSAttributedString.Key("MarkdownKit.tableColumnWidths")
 }
 
 // MARK: - AttributedStringRenderer
@@ -270,8 +270,7 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         head: [TableCell],
         rows: [[TableCell]]
     )
-        -> NSAttributedString
-    {
+        -> NSAttributedString {
         guard !head.isEmpty else {
             return NSAttributedString()
         }
@@ -304,11 +303,11 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         }
         let naturalTableWidth = horizontalInset * 2 + colWidths.reduce(0, +)
         let needsScroll = naturalTableWidth > self.availableWidth + 0.5
-        let columnAlignments = (0..<cols).map { index in
+        let columnAlignments = (0 ..< cols).map { index in
             index < columns.count ? columns[index] : .none
         }
         var columnStart = horizontalInset
-        let tabStops: [NSTextTab] = (0..<cols).map { index in
+        let tabStops: [NSTextTab] = (0 ..< cols).map { index in
             let start = columnStart
             let end = start + colWidths[index] - cellHorizontalPadding
             columnStart += colWidths[index]
@@ -438,8 +437,7 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         headerAttributes: [NSAttributedString.Key: Any],
         bodyAttributes: [NSAttributedString.Key: Any]
     )
-        -> NSAttributedString
-    {
+        -> NSAttributedString {
         let result = NSMutableAttributedString()
         var headerAttrs = headerAttributes
         headerAttrs[.foregroundColor] = PlatformColor.clear
@@ -455,7 +453,7 @@ public struct AttributedStringRenderer: @unchecked Sendable {
 
         var rowAttrs = bodyAttributes
         rowAttrs[.foregroundColor] = PlatformColor.clear
-        for rowIndex in 0..<rows {
+        for rowIndex in 0 ..< rows {
             result.append(NSAttributedString(string: "\n", attributes: rowAttrs))
             let row = NSMutableAttributedString(string: "\u{00A0}", attributes: rowAttrs)
             self.applyTableAttributes(
@@ -491,8 +489,7 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         cellHorizontalPadding: CGFloat,
         minColWidth: CGFloat
     )
-        -> [CGFloat]
-    {
+        -> [CGFloat] {
         var widths = Array(repeating: minColWidth, count: columns)
         var headerAttrs = self.bodyAttributes()
         headerAttrs[.font] = self.style.bodyFont.bold()
@@ -519,8 +516,7 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         _ inlines: [InlineNode],
         attributes: [NSAttributedString.Key: Any]
     )
-        -> CGFloat
-    {
+        -> CGFloat {
         let rendered = self.renderInlines(inlines, attributes: attributes)
         guard rendered.length > 0 else {
             return 0
@@ -539,8 +535,7 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         _ inlines: [InlineNode],
         attributes: [NSAttributedString.Key: Any]
     )
-        -> NSAttributedString
-    {
+        -> NSAttributedString {
         let result = NSMutableAttributedString()
         for node in inlines {
             result.append(self.renderInline(node, attributes: attributes))
@@ -552,8 +547,7 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         _ node: InlineNode,
         attributes: [NSAttributedString.Key: Any]
     )
-        -> NSAttributedString
-    {
+        -> NSAttributedString {
         switch node {
         case .text(let str):
             return NSAttributedString(string: str, attributes: attributes)

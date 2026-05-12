@@ -101,7 +101,7 @@ struct MarkdownCoreIncrementalParseTests {
         var index = source.startIndex
         while index < source.endIndex {
             let next = source.index(index, offsetBy: 2, limitedBy: source.endIndex) ?? source.endIndex
-            let newSource = previousSource + source[index..<next]
+            let newSource = previousSource + source[index ..< next]
             document = document.parsingAppend(to: String(newSource), previousSource: previousSource)
             previousSource = String(newSource)
             index = next

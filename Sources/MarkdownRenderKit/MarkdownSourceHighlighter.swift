@@ -1,9 +1,9 @@
 import Foundation
 
 #if canImport(UIKit)
-    import UIKit
+import UIKit
 #elseif canImport(AppKit)
-    import AppKit
+import AppKit
 #endif
 
 // MARK: - MarkdownSourceHighlighter
@@ -77,8 +77,7 @@ public struct MarkdownSourceHighlighter: Sendable {
         if
             let codeBlockRange = codeBlockMatches(in: source).first(where: {
                 $0.fullRange.intersects(clampedRange) || $0.fullRange.intersects(paragraphRange)
-            })?.fullRange
-        {
+            })?.fullRange {
             return codeBlockRange
         }
 
@@ -357,8 +356,7 @@ public struct MarkdownSourceHighlighter: Sendable {
                         candidateLine,
                         marker: openingFence.marker,
                         minimumCount: openingFence.count
-                    )
-                {
+                    ) {
                     closingFenceRange = candidateRange
                     cursor = candidateRange.upperBound
                     break
@@ -389,12 +387,12 @@ public struct MarkdownSourceHighlighter: Sendable {
     }
 }
 
-private extension NSRange {
-    func intersects(_ other: NSRange) -> Bool {
+extension NSRange {
+    fileprivate func intersects(_ other: NSRange) -> Bool {
         location < other.upperBound && other.location < upperBound
     }
 
-    func shifted(by offset: Int) -> NSRange {
+    fileprivate func shifted(by offset: Int) -> NSRange {
         NSRange(location: location + offset, length: length)
     }
 }
