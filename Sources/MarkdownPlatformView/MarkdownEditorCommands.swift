@@ -61,16 +61,20 @@ public struct MarkdownEditorEditResult: Equatable, Sendable {
 
 // MARK: - MarkdownEditorInputAction
 
-/// Decision returned by an input-intercept hook (`onInsertText`) before
-/// the editor applies a user-driven character insertion.
+/// Decision returned by `onInsertText` before the editor applies a
+/// user-driven text change. The hook fires for any edit that flows
+/// through `shouldChangeTextIn` — typing, paste, deletion (empty
+/// replacement), drag-drop, auto-correct — so callers should filter on
+/// `range` / `replacement` if they only care about a subset (e.g.
+/// slash-command insertions where `replacement == "/"`).
 public enum MarkdownEditorInputAction: Equatable, Sendable {
-    /// Let the editor perform its normal insertion (including built-in
+    /// Let the editor process the change normally (including built-in
     /// Markdown handling for newline / tab).
     case allow
-    /// Drop the insertion entirely. The hook is expected to surface any
+    /// Drop the change entirely. The hook is expected to surface any
     /// custom UI (e.g. a slash-command menu) on its own.
     case reject
-    /// Replace the user's keystroke with the provided string. The editor
+    /// Replace the incoming text with the provided string. The editor
     /// performs the replacement itself so undo stays atomic.
     case replace(String)
 }
