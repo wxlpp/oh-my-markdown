@@ -357,6 +357,11 @@ public final class MarkdownEditorTextView: UITextView, UITextViewDelegate {
             // deterministically disables animation (scrollRangeToVisible has
             // no animated parameter; UIView.performWithoutAnimation only
             // catches implicit animations, not the scroll view's own).
+            //
+            // boundingRect(forGlyphRange:in:) is unreliable until layout has
+            // run — calling ensureLayout(for:) up front avoids returning an
+            // empty rect when the editor is freshly populated or off-screen.
+            layoutManager.ensureLayout(for: textContainer)
             let glyphRange = layoutManager.glyphRange(
                 forCharacterRange: clamped,
                 actualCharacterRange: nil
