@@ -344,14 +344,15 @@ public final class MarkdownLabelView: UIView {
     private var _lastHeight: CGFloat = 0
     /// Coalesces expensive TextKit height queries during streaming updates.
     private var _heightUpdateTask: Task<Void, Never>?
-    /// Test-only monotonic counter: how many times `resetLayout()` has requested a
-    /// host relayout + deferred height re-measure (the discipline `applyDocument`
-    /// already applies to the streaming incremental path). Async write-back paths
-    /// (image/math glyph resolution → updateContent → resetLayout) must invoke the
-    /// same discipline; the deferred task auto-nils after ~33ms so a transient flag
-    /// would race, hence a durable counter. Pure observation — zero production
-    /// behavior beyond an Int increment.
-    var _hostRelayoutRequestCount = 0
+    /// Test-only monotonic counter incremented as the *first line* of
+    /// `scheduleDeferredHeightUpdate()` itself, so "counter++" and "that primitive
+    /// was actually invoked" are one indivisible semantic — there is no decoupled
+    /// bypass. If a caller (e.g. `resetLayout()` on the async write-back path) stops
+    /// invoking `scheduleDeferredHeightUpdate()`, this counter cannot advance, so a
+    /// regression test bound to it necessarily turns red. The deferred task auto-nils
+    /// after ~33ms so a transient flag would race, hence a durable counter. Zero
+    /// production behavior beyond an Int increment at the primitive's entry.
+    var _deferredHeightScheduleCount = 0
     /// In-flight parse task. Streaming keeps this single-flight so large documents do not
     /// accumulate cancelled full-document parses as tokens arrive.
     private var _parseTask: Task<Void, Never>?
@@ -460,12 +461,14 @@ public final class MarkdownLabelView: UIView {
         // deferred height re-measure exactly as the streaming incremental path does.
         setNeedsLayout()
         self.scheduleDeferredHeightUpdate()
-        self._hostRelayoutRequestCount += 1
         self._pendingTableOverlaySyncStart = nil
         self._syncTableOverlays(from: 0)
     }
 
     private func scheduleDeferredHeightUpdate() {
+        // Counter is bumped here, at the primitive's entry, so it is indivisible
+        // from "scheduleDeferredHeightUpdate() was actually invoked" (see decl).
+        self._deferredHeightScheduleCount += 1
         guard self._heightUpdateTask == nil else {
             return
         }
@@ -1443,14 +1446,15 @@ public final class MarkdownLabelView: NSView {
     private var _lastHeight: CGFloat = 0
     /// Coalesces expensive TextKit height queries during streaming updates.
     private var _heightUpdateTask: Task<Void, Never>?
-    /// Test-only monotonic counter: how many times `resetLayout()` has requested a
-    /// host relayout + deferred height re-measure (the discipline `applyDocument`
-    /// already applies to the streaming incremental path). Async write-back paths
-    /// (image/math glyph resolution → updateContent → resetLayout) must invoke the
-    /// same discipline; the deferred task auto-nils after ~33ms so a transient flag
-    /// would race, hence a durable counter. Pure observation — zero production
-    /// behavior beyond an Int increment.
-    var _hostRelayoutRequestCount = 0
+    /// Test-only monotonic counter incremented as the *first line* of
+    /// `scheduleDeferredHeightUpdate()` itself, so "counter++" and "that primitive
+    /// was actually invoked" are one indivisible semantic — there is no decoupled
+    /// bypass. If a caller (e.g. `resetLayout()` on the async write-back path) stops
+    /// invoking `scheduleDeferredHeightUpdate()`, this counter cannot advance, so a
+    /// regression test bound to it necessarily turns red. The deferred task auto-nils
+    /// after ~33ms so a transient flag would race, hence a durable counter. Zero
+    /// production behavior beyond an Int increment at the primitive's entry.
+    var _deferredHeightScheduleCount = 0
     /// In-flight parse task. Streaming keeps this single-flight so large documents do not
     /// accumulate cancelled full-document parses as tokens arrive.
     private var _parseTask: Task<Void, Never>?
@@ -1550,12 +1554,14 @@ public final class MarkdownLabelView: NSView {
         // deferred height re-measure exactly as the streaming incremental path does.
         needsLayout = true
         self.scheduleDeferredHeightUpdate()
-        self._hostRelayoutRequestCount += 1
         self._pendingTableOverlaySyncStart = nil
         self._syncTableOverlays(from: 0)
     }
 
     private func scheduleDeferredHeightUpdate() {
+        // Counter is bumped here, at the primitive's entry, so it is indivisible
+        // from "scheduleDeferredHeightUpdate() was actually invoked" (see decl).
+        self._deferredHeightScheduleCount += 1
         guard self._heightUpdateTask == nil else {
             return
         }
