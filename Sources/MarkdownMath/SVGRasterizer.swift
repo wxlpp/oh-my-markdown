@@ -20,8 +20,10 @@ enum SVGRasterizerError: Error { case parseFailed, rasterizeFailed }
 /// 1. SwiftDraw 不支持 CSS `ex` 单位（`SVG(data:)` 直接返回 nil），喂给 SwiftDraw
 ///    前必须把根 svg 元素 width/height 的 `<num>ex` 改写为 `<num>px`。
 /// 2. 返回的 `image.size` 必须是「点」单位（目标文本空间渲染尺寸），不是像素。
-///    macOS `SwiftDraw.rasterize(with:scale:)` 返回 `.size == size * scale`（像素），
-///    须显式把 `NSImage.size` 修正回点尺寸。
+///    SwiftDraw 的 rasterize API 分平台（标签/返回类型不同），点尺寸契约在两平台
+///    分别成立：UIKit `rasterize(size:scale:)` 返回的 `UIImage.size` 天然是点；
+///    AppKit `rasterize(with:scale:)` 返回 `.size == size * scale`（像素），须显式
+///    把 `NSImage.size` 修正回点尺寸。详见 `rasterize(svg:hex:pointSize:scale:)`。
 enum SVGRasterizer {
     static func injectColor(into svg: String, hex: String) -> String {
         svg.replacingOccurrences(of: "currentColor", with: hex)
@@ -90,17 +92,24 @@ enum SVGRasterizer {
         let aspect = drawing.size.height > 0 ? drawing.size.width / drawing.size.height : 1
         let targetPointSize = CGSize(width: heightPoints * aspect, height: heightPoints)
 
+        // SwiftDraw 的 rasterize API 按平台拆分，签名/标签/返回类型均不同：
+        // - UIKit  `UIImage+SVG.swift`:  func rasterize(size: CGSize, scale: CGFloat = 0) -> UIImage
+        // - AppKit `NSImage+SVG.swift`:  func rasterize(with size: CGSize? = nil, scale: CGFloat = 0) -> NSImage
+        // 必须按平台选用正确的参数标签，否则 iOS SDK 下（只有 UIKit 重载）编译失败：
+        //   error: incorrect argument label in call (have 'with:scale:', expected 'size:scale:')
+        //
+        // 点尺寸契约（image.size 必须是「点」）：
+        // - UIKit：rasterize(size:scale:) → sized(size).rasterize(scale:)；内部
+        //   makeBounds(size:scale:1) 用固定 scale 1（点空间），UIGraphicsImageRendererFormat.scale
+        //   单独编码栅格密度，UIGraphicsImageRenderer(size:) 即点尺寸 → 返回 UIImage.size
+        //   天然等于 targetPointSize（点），无需修正（与 Task 13 结论一致）。
+        // - AppKit：rasterize(with:scale:) 把返回 NSImage.size 设为 size×scale（像素），
+        //   须显式改回点尺寸以满足点尺寸契约；Retina 清晰度由 AppKit 按设备 rect
+        //   矢量重画保证，scale: 在 macOS 路径实为冗余（仅影响被覆盖的中间 .size）。
+        #if canImport(UIKit)
+        let image = drawing.rasterize(size: targetPointSize, scale: scale)
+        #elseif canImport(AppKit)
         let image = drawing.rasterize(with: targetPointSize, scale: scale)
-
-        // 点尺寸契约：
-        // - macOS：SwiftDraw 的 rasterize(with:scale:) 返回 block-backed NSImage
-        //   （NSCustomImageRep，矢量重绘 handler，无任何 bitmap representation）；
-        //   其 .size 被设为 size×scale（像素）。这里显式改回点尺寸以满足点尺寸契约
-        //   （image.size 必须是点）；Retina 清晰度由 AppKit 按设备 rect 矢量重画保证，
-        //   scale: 参数在 macOS 路径实为冗余（仅影响被覆盖的中间 .size，不产生位图缓存）。
-        // - UIKit：rasterize(size:scale:) 已用 UIGraphicsImageRenderer 的 scale 编码
-        //   栅格密度，`.size` 已是点尺寸，无需修正。
-        #if canImport(AppKit) && !canImport(UIKit)
         image.size = targetPointSize
         #endif
 
