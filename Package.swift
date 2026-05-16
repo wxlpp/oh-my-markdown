@@ -13,9 +13,12 @@ let package = Package(
         .library(name: "MarkdownCore", targets: ["MarkdownCore"]),
         .library(name: "MarkdownRenderKit", targets: ["MarkdownRenderKit"]),
         .library(name: "MarkdownPlatformView", targets: ["MarkdownPlatformView"]),
+        .library(name: "MarkdownMath", targets: ["MarkdownMath"]),
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.7.3"),
+        .package(url: "https://github.com/colinc86/MathJaxSwift.git", branch: "main"),
+        .package(url: "https://github.com/swhitty/SwiftDraw.git", branch: "main"),
     ],
     targets: [
         // MARK: - MarkdownCore
@@ -56,11 +59,27 @@ let package = Package(
             dependencies: ["MarkdownPlatformView"]
         ),
 
+        // MARK: - MarkdownMath
+
+        // MathJax + SwiftDraw implementation of the MathRendering protocol from MarkdownRenderKit.
+        .target(
+            name: "MarkdownMath",
+            dependencies: [
+                "MarkdownRenderKit",
+                .product(name: "MathJaxSwift", package: "MathJaxSwift"),
+                .product(name: "SwiftDraw", package: "SwiftDraw"),
+            ]
+        ),
+
         // MARK: - Tests
 
         .testTarget(
             name: "MarkdownKitTests",
             dependencies: ["MarkdownCore", "MarkdownRenderKit", "MarkdownPlatformView", "MarkdownKit"]
+        ),
+        .testTarget(
+            name: "MarkdownMathTests",
+            dependencies: ["MarkdownMath", "MarkdownCore", "MarkdownRenderKit"]
         ),
     ]
 )
