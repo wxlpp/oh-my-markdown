@@ -102,6 +102,6 @@ struct RenderStyleMathTests {
         let s = RenderStyle.default
         #expect(s.mathScale == 1.0)
         #expect(s.mathColorOverride == nil)
-        _ = s.mathTokenColor
+        #expect(s.mathTokenColor != s.textColor)
     }
 }

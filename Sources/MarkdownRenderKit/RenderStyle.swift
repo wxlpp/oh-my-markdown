@@ -144,7 +144,7 @@ public struct RenderStyle: @unchecked Sendable {
     public var mathScale: CGFloat = 1.0
     /// Optional color override for rendered math; falls back to `textColor` when nil.
     public var mathColorOverride: PlatformColor?
-    /// 编辑器中数学定界符 token 的高亮色。
+    /// Highlight color for math delimiter tokens in the editor.
     public var mathTokenColor: PlatformColor = {
         #if canImport(UIKit)
         return UIColor.systemTeal
