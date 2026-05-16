@@ -4,7 +4,7 @@ import MathJaxSwift
 @testable import MarkdownMath
 import MarkdownRenderKit
 import MarkdownCore
-@testable import MarkdownPlatformView
+import MarkdownPlatformView
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -234,9 +234,10 @@ struct MathEndToEndTests {
         #expect(g.baselineOffsetEx <= 0.5)                 // 块级基线合理（通常 ~0 或负）
     }
 
-    // G3：setRenderer 切换 + 大量在途 render 被取消——不污染新代际、不崩
-    @Test("G3 coordinator 切 renderer 时在途 render 取消不污染新代际")
-    func g3SetRendererCancelsInflightCleanly() async {
+    // G3：setRenderer 切换 + 大量在途 render ——旧在途 Task 不会被 cancel，但其写入的 key 带旧
+    // generation，永不被新代际查到——本测试验证新代际渲染不被旧在途污染、不崩，而非验证 cancel
+    @Test("G3 coordinator 切 renderer 时新代际渲染不受旧在途影响")
+    func g3SetRendererNewGenerationIsolatesInflight() async {
         let c = MathLoadCoordinator()
         await c.setRenderer(MathJaxRenderer())
         let g1 = await c.generation

@@ -166,7 +166,7 @@ Notes:
 
 - Without `.mathRenderer(_:)`, math is gracefully degraded and shown as its raw LaTeX text.
 - `MarkdownEditor` only token-highlights the math delimiters; it does not render formulas.
-- `MathJaxRenderer` loads only the core math packages (`base` / `ams`). Non-core commands such as `\ce{}`, `\braket`, or `\color` render as a visible error placeholder rather than the intended output.
+- `MathJaxRenderer` loads a minimal core package set (`base` + `ams`, plus `noundefined` so undefined commands render as a visible error placeholder rather than failing). Non-core commands such as `\ce{}`, `\braket`, or `\color` render as a visible error placeholder rather than the intended output.
 
 ## 📖 Public Modules
 
