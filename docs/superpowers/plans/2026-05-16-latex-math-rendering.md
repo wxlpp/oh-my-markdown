@@ -1352,12 +1352,15 @@ git commit -m "feat(renderkit): 渲染 .math/.mathBlock，命中出 attachment�
 
 ---
 
-## Task 9: RenderStyle 新增 math 样式字段
+## Task 9: RenderStyle 新增 mathTokenColor（mathScale/mathColorOverride 已由 Task 8 提前加入）
 
 spec §9。
 
+> ⚠️ **Task 8 评审协调：** Task 8 已提前在 `RenderStyle` 加入 `mathScale: CGFloat = 1.0` 与 `mathColorOverride: PlatformColor?`（带默认值），并已在 `isSemanticallyEqual` 中比较这两者、把 `Tests/MarkdownKitTests/MarkdownRenderKitTests.swift` 里「覆盖每个存储属性」的属性计数守卫从 20 → 22。**本任务不得重复添加这两个字段**，只新增 `mathTokenColor`；并相应：在 `isSemanticallyEqual` 增加对 `mathTokenColor` 的比较、把属性计数守卫 22 → 23。
+
 **Files:**
 - Modify: `Sources/MarkdownRenderKit/RenderStyle.swift`
+- Modify: `Tests/MarkdownKitTests/MarkdownRenderKitTests.swift`（属性计数守卫 22→23）
 - Test: `Tests/MarkdownKitTests/MathRenderingTests.swift`（追加）
 
 - [ ] **Step 1: 追加失败测试**
@@ -1368,27 +1371,23 @@ struct RenderStyleMathTests {
     @Test("默认值：mathScale=1，mathColorOverride=nil，mathTokenColor 非空")
     func defaults() {
         let s = RenderStyle.default
-        #expect(s.mathScale == 1.0)
-        #expect(s.mathColorOverride == nil)
-        _ = s.mathTokenColor   // 存在即可
+        #expect(s.mathScale == 1.0)            // Task 8 已加，断言仍应成立
+        #expect(s.mathColorOverride == nil)    // Task 8 已加，断言仍应成立
+        _ = s.mathTokenColor                   // 本任务新增——存在即可
     }
 }
 ```
 
 - [ ] **Step 2: 运行验证失败**
 
-Run: `swift test --filter "RenderStyle math fields"`
-Expected: 编译失败，`value of type 'RenderStyle' has no member 'mathScale'`。
+Run: `swift test --filter RenderStyleMathTests`
+Expected: 编译失败，`value of type 'RenderStyle' has no member 'mathTokenColor'`（`mathScale`/`mathColorOverride` 已存在，只有 `mathTokenColor` 缺失）。
 
-- [ ] **Step 3: 加字段（带默认值，避免破坏现有初始化器调用点）**
+- [ ] **Step 3: 只加 `mathTokenColor`（带默认值）**
 
-`RenderStyle.swift` 的 `struct RenderStyle` 内、存储属性区追加：
+`RenderStyle.swift` 的 `struct RenderStyle` 内，紧邻已存在的 `mathScale`/`mathColorOverride` 之后追加：
 
 ```swift
-    /// 公式相对正文的缩放（折进有效字号，见 MathMetrics）。默认 1。
-    public var mathScale: CGFloat = 1.0
-    /// 公式着色覆盖；nil → 用 textColor。
-    public var mathColorOverride: PlatformColor?
     /// 编辑器中数学定界符 token 的高亮色。
     public var mathTokenColor: PlatformColor = {
         #if canImport(UIKit)
@@ -1399,23 +1398,27 @@ Expected: 编译失败，`value of type 'RenderStyle' has no member 'mathScale'`
     }()
 ```
 
-> 因为给了默认值，现有 `RenderStyle(...)` 成员初始化器与 `.default` 工厂无需改动即可继续编译（这三个字段走默认）。
+> 不要再添加 `mathScale` / `mathColorOverride`（已存在会导致重复声明编译错误）。默认值保证现有 `RenderStyle(...)` 初始化器与 `.default` 工厂仍编译。
 
-- [ ] **Step 4: 运行验证通过**
+- [ ] **Step 4: 同步 isSemanticallyEqual 与属性计数守卫**
 
-Run: `swift test --filter "RenderStyle math fields"`
-Expected: PASS
+在 `RenderStyle.isSemanticallyEqual` 中，紧随已有的 `mathScale`/`mathColorOverride` 比较，增加对 `mathTokenColor` 的比较（与现有 `PlatformColor` 比较风格一致，如 `lhs.mathTokenColor.isEqual(rhs.mathTokenColor)` 或代码库既有等值写法）。在 `Tests/MarkdownKitTests/MarkdownRenderKitTests.swift` 的「覆盖每个存储属性」守卫里，把期望属性数 **22 → 23**（连同其注释一并更新）。
 
-- [ ] **Step 5: 回归**
+- [ ] **Step 5: 运行验证通过**
 
-Run: `swift build`
-Expected: 退出码 0（确认所有 `RenderStyle` 调用点仍编译）。
+Run: `swift test --filter RenderStyleMathTests` 与 `swift test --filter MarkdownRenderKitTests`
+Expected: 均 PASS（含属性计数守卫 23）。
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: 回归**
+
+Run: `swift build && swift test 2>&1 | tail -8`
+Expected: 退出码 0；全量绿、零回归。
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add Sources/MarkdownRenderKit/RenderStyle.swift Tests/MarkdownKitTests/MathRenderingTests.swift
-git commit -m "feat(renderkit): RenderStyle 新增 mathScale/mathColorOverride/mathTokenColor"
+git add Sources/MarkdownRenderKit/RenderStyle.swift Tests/MarkdownKitTests/MarkdownRenderKitTests.swift Tests/MarkdownKitTests/MathRenderingTests.swift
+git commit -m "feat(renderkit): RenderStyle 新增 mathTokenColor（mathScale/Override 已于 Task 8 加入）"
 ```
 
 ---
