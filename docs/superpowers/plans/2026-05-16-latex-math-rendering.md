@@ -1990,6 +1990,12 @@ git commit -m "feat(math): SVGRasterizer 颜色注入/基线解析/SwiftDraw 光
 
 spec §8、§5.3。共享 MathJax 实例、failed 标志、取消、三态映射。
 
+> ⚠️ **Task 13 评审强制契约（必须在本任务钉死）：** SVGRasterizer 的输入契约是「MathJax 默认 **inline** SVG」（根 `width="<num>ex"` + `viewBox`）。MathJax 的 **container/SVG-tag 模式**输出根 `width="100%"` 且根无 `viewBox` → SwiftDraw 解析返回 nil → 对**合法公式**静默 `.parseFailed`。本任务**必须**：
+> 1. 显式配置 MathJax 为 **非 container**（默认 inline）模式产 SVG（确认 `SVGOutputProcessorOptions`/转换选项不开 container/SVG-tag）。
+> 2. 加配置契约测试：真实 `tex2svg` 输出根含 `width="<num>ex"` 且**不含** `width="100%"`。
+> 3. 加真实 fixture 颜色注入测试：对真实 MathJax SVG 跑 `SVGRasterizer.injectColor`，断言 `currentColor` 在 **`stroke=` 与 `fill=` 两处**都被替换为目标 hex 且结果不再含 `currentColor`（真实 MathJax 根是 `<g stroke="currentColor" fill="currentColor">`，合成样本只覆盖 fill）。
+> 4. 加真实 fixture 端到端 `rasterize` 测试：真实合法公式 → 不抛错、`baselineOffsetEx` 为解析出的真实负值、`image.size` 为点尺寸量级（非 pixel×scale）。
+
 **Files:**
 - Create: `Sources/MarkdownMath/MathJaxRenderer.swift`
 - Test: `Tests/MarkdownMathTests/MathJaxRendererTests.swift`
