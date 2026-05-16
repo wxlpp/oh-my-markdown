@@ -32,6 +32,11 @@ public struct MarkdownDocument: Sendable, Equatable {
     /// Parse an appended version of this document by preserving stable prefix blocks
     /// and reparsing the previous tail block plus the appended source.
     public func parsingAppend(to newSource: String, previousSource: String) -> MarkdownDocument {
+        // 数学感知：若被保留的 prefix 可能含会被追加文本闭合的未闭合数学开界符，
+        // suffix-only 扫描看不到开界符，直接全量解析以保证与全量一致（spec §4.3）。
+        if Self.previousSourceHasOpenMathDelimiter(previousSource) {
+            return MarkdownDocument(parsing: newSource)
+        }
         guard
             newSource.hasPrefix(previousSource),
             let tail = parsedBlocks.last,
@@ -49,7 +54,13 @@ public struct MarkdownDocument: Sendable, Equatable {
         }
 
         let suffix = String(newSource[suffixStart...])
-        let reparsedTail = DocumentParser().parse(source: suffix, document: Markdown.Document(parsing: suffix))
+        // 与 init(parsing:) 同一管线：扫描 → 哨兵替换 → 解析 → 回填，使重解析的尾窗
+        // 也能识别数学（前缀已确认无未闭合开界符，故按块边界切出的尾窗对数学自洽）。
+        let suffixSpans = MathScanner.scan(suffix)
+        let suffixSub = MathSentinel.substitute(source: suffix, spans: suffixSpans)
+        let suffixDoc = Markdown.Document(parsing: suffixSub.transformed)
+        let suffixRaw = DocumentParser().parse(source: suffixSub.transformed, document: suffixDoc)
+        let reparsedTail = MathBackfill.resolve(suffixRaw, table: suffixSub.table)
             .map { parsed in
                 ParsedBlockNode(
                     block: parsed.block,
@@ -71,6 +82,31 @@ public struct MarkdownDocument: Sendable, Equatable {
             return previousIndex
         }
         return tailIndex
+    }
+
+    /// previousSource 末尾是否处于「数学定界符未闭合」状态。
+    /// 复用 MathScanner 的代码区/转义规则：若存在任何开界符但 scan 未把它配成 span，
+    /// 说明闭合符尚未出现，追加文本可能闭合它 → 必须全量。
+    static func previousSourceHasOpenMathDelimiter(_ source: String) -> Bool {
+        let spans = MathScanner.scan(source)
+        let bytes = Array(source.utf8)
+        let covered = spans.map(\.range)
+        func isCovered(_ i: Int) -> Bool { covered.contains { $0.contains(i) } }
+        let mask = MathScanner.debugCodeMask(source: source)
+        var i = 0
+        while i < bytes.count {
+            if mask[i] { i += 1; continue }
+            var bs = 0, k = i - 1
+            while k >= 0, bytes[k] == 0x5C { bs += 1; k -= 1 }
+            let escaped = bs % 2 == 1
+            if !escaped, !isCovered(i) {
+                if bytes[i] == 0x24 { return true }
+                if bytes[i] == 0x5C, i + 1 < bytes.count,
+                   bytes[i + 1] == 0x28 || bytes[i + 1] == 0x5B { return true }
+            }
+            i += 1
+        }
+        return false
     }
 }
 

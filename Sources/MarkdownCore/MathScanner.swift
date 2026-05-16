@@ -107,6 +107,13 @@ public enum MathScanner {
         return nil
     }
 
+    /// 供增量边界判定复用同一套代码区规则。
+    /// 返回 UTF-8 字节索引的 `[Bool]`，长度 == `Array(source.utf8).count`，
+    /// 与 `MathSpan.range`（UTF-8 字节偏移）索引对齐。
+    public static func debugCodeMask(source: String) -> [Bool] {
+        self.codeRegionMask(source: source, byteCount: Array(source.utf8).count)
+    }
+
     /// 标出落在围栏代码块 / 缩进代码块 / 行内代码内的字节（true = 在代码内，数学定界符忽略）。
     private static func codeRegionMask(source: String, byteCount: Int) -> [Bool] {
         var mask = [Bool](repeating: false, count: byteCount)

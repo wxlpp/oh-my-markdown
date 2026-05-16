@@ -122,3 +122,32 @@ struct MathCodeBlockIntegrityTests {
         #expect(joined.contains("$x$"))
     }
 }
+
+@Suite("Math incremental boundary")
+struct MathIncrementalBoundaryTests {
+    @Test("跨保留块的 $$ 流式追加，增量 == 全量")
+    func crossBlockStreaming() {
+        let prev = "intro paragraph\n\n$$\n\\frac{a}{b}\n"
+        let next = prev + "\\frac{c}{d}\n$$\n\ntail"
+        let incremental = MarkdownDocument(parsing: prev).parsingAppend(to: next, previousSource: prev)
+        let full = MarkdownDocument(parsing: next)
+        #expect(incremental.blocks == full.blocks)
+    }
+
+    @Test("追加不含跨界公式时仍走增量且结果正确")
+    func normalAppendStillWorks() {
+        let prev = "# Title\n\nfirst $a$ done"
+        let next = prev + "\n\nsecond paragraph"
+        let incremental = MarkdownDocument(parsing: prev).parsingAppend(to: next, previousSource: prev)
+        let full = MarkdownDocument(parsing: next)
+        #expect(incremental.blocks == full.blocks)
+    }
+
+    @Test("代码围栏内 $$ 不触发误判，增量 == 全量")
+    func codeFenceNotMisread() {
+        let prev = "```\n$$ not math\n"
+        let next = prev + "still code\n```\n\nreal $x$"
+        let incremental = MarkdownDocument(parsing: prev).parsingAppend(to: next, previousSource: prev)
+        #expect(incremental.blocks == MarkdownDocument(parsing: next).blocks)
+    }
+}
