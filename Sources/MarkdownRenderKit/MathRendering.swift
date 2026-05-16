@@ -68,7 +68,12 @@ public enum MathMetrics {
         textPointSize * mathScale
     }
 
-    /// 颜色转稳定 hex（含 alpha），用于缓存键。
+    /// 颜色转稳定 6 位 hex `#RRGGBB`，用于缓存键和 SVG currentColor 注入。
+    ///
+    /// 返回 6 位（不含 alpha），原因：
+    /// - SVG 注入侧 SwiftDraw 仅支持 `#RGB`/`#RRGGBB`，8 位 `#RRGGBBAA` 会被误解析
+    ///   为单一整数，导致 alpha 字节落入 blue 通道，公式渲染成蓝色（Bug 2）。
+    /// - 数学字形颜色的 alpha 恒≈1.0（body 文本色），仅 RGB 不同会撞键，属良性复用。
     public static func colorHex(_ color: PlatformColor) -> String {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         #if canImport(UIKit)
@@ -77,6 +82,6 @@ public enum MathMetrics {
         (color.usingColorSpace(.sRGB) ?? color).getRed(&r, green: &g, blue: &b, alpha: &a)
         #endif
         func h(_ v: CGFloat) -> String { String(format: "%02X", min(255, max(0, Int((v * 255).rounded())))) }
-        return "#\(h(r))\(h(g))\(h(b))\(h(a))"
+        return "#\(h(r))\(h(g))\(h(b))"
     }
 }

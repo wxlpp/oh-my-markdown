@@ -10,6 +10,15 @@ struct MathRenderingTypeTests {
         #expect(MathMetrics.effectivePointSize(textPointSize: 16, mathScale: 1.5) == 24)
     }
 
+    @Test("colorHex 输出 6 位 #RRGGBB（不含 alpha）")
+    func colorHexSixDigit() {
+        // Bug 2 fix: colorHex must return 6-digit #RRGGBB so SwiftDraw can parse it.
+        // Before fix: returns "#000000FF" (8-digit) → SwiftDraw misparses → blue pixels.
+        let hex = MathMetrics.colorHex(PlatformColor.black)
+        #expect(hex == "#000000", "colorHex must be 6-digit #RRGGBB, got: \(hex)")
+        #expect(hex.count == 7, "Expected '#' + 6 hex chars = 7 chars total, got \(hex.count)")
+    }
+
     @Test("MathCacheKey 任一维度不同则不相等")
     func cacheKeyIdentity() {
         let base = MathCacheKey(latex: "x", display: false, pointSize: 16,
