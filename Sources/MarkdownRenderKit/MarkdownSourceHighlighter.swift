@@ -302,26 +302,22 @@ public struct MarkdownSourceHighlighter: Sendable {
         let ns = source as NSString
         let spans = MathScanner.scan(source)
         for span in spans {
-            let lower = utf16Index(ns, utf8Offset: span.range.lowerBound)
-            let upper = utf16Index(ns, utf8Offset: span.range.upperBound)
+            let lower = utf16Index(source, utf8Offset: span.range.lowerBound)
+            let upper = utf16Index(source, utf8Offset: span.range.upperBound)
             guard lower >= 0, upper > lower, upper <= ns.length else { continue }
             result.addAttribute(.foregroundColor, value: self.style.mathTokenColor,
                                 range: NSRange(location: lower, length: upper - lower))
         }
     }
 
-    private func utf16Index(_ ns: NSString, utf8Offset: Int) -> Int {
-        var u8 = 0
-        var i = 0
-        while i < ns.length {
-            let c = ns.character(at: i)
-            let s = String(utf16CodeUnits: [c], count: 1)
-            let bytes = s.utf8.count
-            if u8 >= utf8Offset { return i }
-            u8 += bytes
-            i += 1
-        }
-        return u8 >= utf8Offset ? i : -1
+    /// 把 source 的 UTF-8 字节偏移换成 NSString(UTF-16) 索引（字符边界对齐）。
+    /// 对所有 Unicode 标量正确（含补充平面/emoji）。越界/非字符边界返回 -1。
+    private func utf16Index(_ source: String, utf8Offset: Int) -> Int {
+        guard utf8Offset >= 0, utf8Offset <= source.utf8.count else { return -1 }
+        let utf8 = source.utf8
+        let u8Idx = utf8.index(utf8.startIndex, offsetBy: utf8Offset)
+        guard let strIdx = String.Index(u8Idx, within: source) else { return -1 }
+        return source.utf16.distance(from: source.utf16.startIndex, to: strIdx)
     }
 
     private func applyFontTransform(
