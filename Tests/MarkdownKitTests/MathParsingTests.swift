@@ -63,6 +63,43 @@ struct MathParsingIntegrationTests {
         let joined = inlines.compactMap { if case .text(let t) = $0 { t } else { nil } }.joined()
         #expect(joined.contains("\u{10FE00}0\u{10FE00}"))
     }
+
+    @Test("emphasis/strong/link 内的块定界符降级为行内 math，且 IR 不残留哨兵")
+    func blockMathNestedInInlineDegrades() {
+        let docs = [
+            MarkdownDocument(parsing: "*pre $$x$$ post*"),
+            MarkdownDocument(parsing: "**bold $$bx$$ tail**"),
+            MarkdownDocument(parsing: "[txt $$lx$$](https://e.com)"),
+            MarkdownDocument(parsing: "*$$only$$*"),
+        ]
+        // 收集整棵 IR 里所有 InlineNode，断言：无任何 .html 含 U+10FE02 哨兵；至少出现一个 .math。
+        func inlines(_ b: BlockNode) -> [InlineNode] {
+            switch b {
+            case .paragraph(let n), .heading(_, let n): return n.flatMap(flatten)
+            case .blockquote(let bs): return bs.flatMap(inlines)
+            case .bulletList(let items), .orderedList(_, let items):
+                return items.flatMap { $0.blocks.flatMap(inlines) }
+            case .table(_, let head, let rows):
+                return head.flatMap { $0.content.flatMap(flatten) }
+                    + rows.flatMap { $0.flatMap { $0.content.flatMap(flatten) } }
+            default: return []
+            }
+        }
+        func flatten(_ n: InlineNode) -> [InlineNode] {
+            switch n {
+            case .emphasis(let c), .strong(let c), .strikethrough(let c): return [n] + c.flatMap(flatten)
+            case .link(_, _, let c): return [n] + c.flatMap(flatten)
+            default: return [n]
+            }
+        }
+        for doc in docs {
+            let all = doc.blocks.flatMap(inlines)
+            let hasSentinelHTML = all.contains { if case .html(let s) = $0 { return s.unicodeScalars.contains("\u{10FE02}") } else { return false } }
+            #expect(!hasSentinelHTML)
+            let hasMath = all.contains { if case .math = $0 { return true } else { return false } }
+            #expect(hasMath)
+        }
+    }
 }
 
 @Suite("Math code-block integrity")

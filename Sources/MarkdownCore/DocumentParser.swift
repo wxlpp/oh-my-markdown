@@ -322,6 +322,8 @@ extension String {
 // MARK: - MathBackfill
 
 /// 把哨兵锚就地换回 math 节点，严格保留容器结构（spec §4.2、§11.6）。
+/// 注：行内专属容器（emphasis/strong/strikethrough/link）与表格单元格内的块定界符会降级为行内 `.math`，
+/// 不产生块级占位符，以保证不残留哨兵到公开 IR（与 §4.2 表格单元格降级规则一致）。
 enum MathBackfill {
     static func resolve(_ blocks: [ParsedBlockNode], table: [MathSentinel.Entry]) -> [ParsedBlockNode] {
         blocks.flatMap { node -> [ParsedBlockNode] in
@@ -390,11 +392,11 @@ enum MathBackfill {
             switch node {
             case .text(let raw):
                 return self.splitText(raw, table: table, allowBlock: allowBlock)
-            case .emphasis(let c): return [.emphasis(self.resolveInlines(c, table: table, allowBlock: allowBlock))]
-            case .strong(let c): return [.strong(self.resolveInlines(c, table: table, allowBlock: allowBlock))]
-            case .strikethrough(let c): return [.strikethrough(self.resolveInlines(c, table: table, allowBlock: allowBlock))]
+            case .emphasis(let c): return [.emphasis(self.resolveInlines(c, table: table, allowBlock: false))]
+            case .strong(let c): return [.strong(self.resolveInlines(c, table: table, allowBlock: false))]
+            case .strikethrough(let c): return [.strikethrough(self.resolveInlines(c, table: table, allowBlock: false))]
             case .link(let d, let t, let c):
-                return [.link(destination: d, title: t, children: self.resolveInlines(c, table: table, allowBlock: allowBlock))]
+                return [.link(destination: d, title: t, children: self.resolveInlines(c, table: table, allowBlock: false))]
             default:
                 return [node]
             }
