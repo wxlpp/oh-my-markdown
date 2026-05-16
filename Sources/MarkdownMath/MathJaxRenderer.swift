@@ -45,6 +45,7 @@ public final class MathJaxRenderer: MathRendering, @unchecked Sendable {
     /// （如 `\sum_{i=1}^n`、`x_{1}`、`\lim_{x\to 0}` 里的 `0/1`）时会错误吞掉花括号
     /// → 真实产出 `merror`「Extra open brace or missing close brace」→ `render`
     /// 归 `.failed`。故此处显式覆盖为 MathJax 规范数字正则。
+    /// TODO(upstream): MathJaxSwift `defaultDigits` 转义丢失（缺 `\{ \} \.`）；上游修复后可移除本 `digits:` 覆盖。建议提 issue/PR 跟踪。
     ///
     /// `loadPackages` 同时从 `.all`（34 包全载）收敛为最小且无冲突的
     /// `[base, ams, noundefined]`：实证矩阵表明该集合配合修正后的 `digits`，10 个
@@ -53,9 +54,11 @@ public final class MathJaxRenderer: MathRendering, @unchecked Sendable {
     /// 而非抛 `Undefined control sequence`，正是 spec §5.3「LaTeX 语法错误仍产错误
     /// SVG 算成功」契约（既有测试 `invalidStillRenders` 依赖此行为）；去掉它会令
     /// 该测试回归。保持 `.all` 仅徒增加载体积而无功能收益。仅此一处配置集中点。
+    /// 已知限制：未载 physics/mhchem/braket/cancel/color 等包，`\ce{}`/`\braket`/`\cancel`/`\color` 等非核心命令会被 noundefined 渲染成红色错误占位 SVG（非 .failed，用户可见）。spec §1/§8 scope 为核心数学，属预期取舍。
     ///
     /// 计算属性（每次 render 新建一份，与修复前内联构造同语义）：
     /// `TeXInputProcessorOptions` 是上游非 `Sendable` 引用类型，不能作 `static let`。
+    /// 注：JS 侧 `tex2svg` 每次调用都 `new TeX(opts)` 并重编译 `digits` 正则（MathJaxSwift 架构固有，见上游 svg.js），与本属性是否缓存无关——缓存仅省一次 JSONEncoder 编码（微秒级），不值得为此破坏不变量/持有非 Sendable 实例字段。
     private var texInputOptions: TeXInputProcessorOptions {
         TeXInputProcessorOptions(
             loadPackages: [
