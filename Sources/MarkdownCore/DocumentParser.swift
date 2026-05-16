@@ -10,8 +10,12 @@ import Markdown
 public struct MarkdownDocument: Sendable, Equatable {
     /// Parse a Markdown source string into a document.
     public init(parsing source: String) {
-        let swiftMarkdownDoc = Markdown.Document(parsing: source)
-        self.parsedBlocks = DocumentParser().parse(source: source, document: swiftMarkdownDoc)
+        let mathSpans = MathScanner.scan(source)
+        let sub = MathSentinel.substitute(source: source, spans: mathSpans)
+        let swiftMarkdownDoc = Markdown.Document(parsing: sub.transformed)
+        let raw = DocumentParser().parse(source: sub.transformed, document: swiftMarkdownDoc)
+        let resolved = MathBackfill.resolve(raw, table: sub.table)
+        self.parsedBlocks = resolved
         self.blocks = self.parsedBlocks.map(\.block)
     }
 
@@ -312,5 +316,127 @@ extension String {
             return nil
         }
         return String.Index(utf8.index(utf8.startIndex, offsetBy: offset), within: self)
+    }
+}
+
+// MARK: - MathBackfill
+
+/// 把哨兵锚就地换回 math 节点，严格保留容器结构（spec §4.2、§11.6）。
+enum MathBackfill {
+    static func resolve(_ blocks: [ParsedBlockNode], table: [MathSentinel.Entry]) -> [ParsedBlockNode] {
+        blocks.flatMap { node -> [ParsedBlockNode] in
+            self.resolveBlock(node.block, table: table).map {
+                ParsedBlockNode(block: $0, sourceRange: node.sourceRange, fingerprint: node.fingerprint)
+            }
+        }
+    }
+
+    private static func resolveBlock(_ block: BlockNode, table: [MathSentinel.Entry]) -> [BlockNode] {
+        switch block {
+        case .paragraph(let inlines):
+            self.splitParagraph(inlines, table: table)
+        case .heading(let level, let content):
+            [.heading(level: level, content: self.resolveInlines(content, table: table, allowBlock: false))]
+        case .blockquote(let inner):
+            [.blockquote(inner.flatMap { self.resolveBlock($0, table: table) })]
+        case .bulletList(let items):
+            [.bulletList(items: items.map { self.resolveListItem($0, table: table) })]
+        case .orderedList(let start, let items):
+            [.orderedList(start: start, items: items.map { self.resolveListItem($0, table: table) })]
+        case .table(let cols, let head, let rows):
+            [.table(
+                columns: cols,
+                head: head.map { TableCell(content: self.resolveInlines($0.content, table: table, allowBlock: false)) },
+                rows: rows.map { $0.map { TableCell(content: self.resolveInlines($0.content, table: table, allowBlock: false)) } }
+            )]
+        case .codeBlock, .thematicBreak, .htmlBlock:
+            [block]
+        case .mathBlock:
+            [block]
+        }
+    }
+
+    private static func resolveListItem(_ item: ListItem, table: [MathSentinel.Entry]) -> ListItem {
+        ListItem(blocks: item.blocks.flatMap { self.resolveBlock($0, table: table) }, checkbox: item.checkbox)
+    }
+
+    private static func splitParagraph(
+        _ inlines: [InlineNode], table: [MathSentinel.Entry]
+    ) -> [BlockNode] {
+        let expanded = self.resolveInlines(inlines, table: table, allowBlock: true)
+        var result: [BlockNode] = []
+        var buffer: [InlineNode] = []
+        func flush() {
+            if !buffer.isEmpty { result.append(.paragraph(buffer)); buffer = [] }
+        }
+        for node in expanded {
+            if node.isBlockMathPlaceholder, case .html(let s) = node {
+                flush()
+                let latex = String(s.dropFirst().dropLast()) // 去掉首尾 U+10FE02
+                result.append(.mathBlock(latex: latex))
+            } else {
+                buffer.append(node)
+            }
+        }
+        flush()
+        if result.isEmpty { result = [.paragraph(expanded.filter { !$0.isBlockMathPlaceholder })] }
+        return result
+    }
+
+    private static func resolveInlines(
+        _ inlines: [InlineNode], table: [MathSentinel.Entry], allowBlock: Bool
+    ) -> [InlineNode] {
+        inlines.flatMap { node -> [InlineNode] in
+            switch node {
+            case .text(let raw):
+                return self.splitText(raw, table: table, allowBlock: allowBlock)
+            case .emphasis(let c): return [.emphasis(self.resolveInlines(c, table: table, allowBlock: allowBlock))]
+            case .strong(let c): return [.strong(self.resolveInlines(c, table: table, allowBlock: allowBlock))]
+            case .strikethrough(let c): return [.strikethrough(self.resolveInlines(c, table: table, allowBlock: allowBlock))]
+            case .link(let d, let t, let c):
+                return [.link(destination: d, title: t, children: self.resolveInlines(c, table: table, allowBlock: allowBlock))]
+            default:
+                return [node]
+            }
+        }
+    }
+
+    private static func splitText(
+        _ raw: String, table: [MathSentinel.Entry], allowBlock: Bool
+    ) -> [InlineNode] {
+        let anchors = MathSentinel.anchorRanges(in: raw).filter { table.indices.contains($0.index) }
+        guard !anchors.isEmpty else {
+            return [.text(MathSentinel.unescapeReservedScalar(raw))]
+        }
+        var out: [InlineNode] = []
+        var cursor = raw.startIndex
+        for anchor in anchors {
+            if cursor < anchor.range.lowerBound {
+                out.append(.text(MathSentinel.unescapeReservedScalar(String(raw[cursor ..< anchor.range.lowerBound]))))
+            }
+            let entry = table[anchor.index]
+            if entry.display, allowBlock {
+                out.append(.blockMathPlaceholder(latex: entry.latex))
+            } else {
+                out.append(.math(latex: entry.latex))
+            }
+            cursor = anchor.range.upperBound
+        }
+        if cursor < raw.endIndex {
+            out.append(.text(MathSentinel.unescapeReservedScalar(String(raw[cursor ..< raw.endIndex]))))
+        }
+        return out
+    }
+}
+
+/// 内部用：标记一个待提升为 BlockNode.mathBlock 的占位 inline（不对外暴露）。
+extension InlineNode {
+    static func blockMathPlaceholder(latex: String) -> InlineNode {
+        .html("\u{10FE02}\(latex)\u{10FE02}")
+    }
+
+    var isBlockMathPlaceholder: Bool {
+        if case .html(let s) = self { return s.hasPrefix("\u{10FE02}") && s.hasSuffix("\u{10FE02}") }
+        return false
     }
 }
