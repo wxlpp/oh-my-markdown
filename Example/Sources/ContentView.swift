@@ -1,4 +1,5 @@
 import MarkdownKit
+import MarkdownMath
 import SwiftUI
 
 // MARK: - ContentView
@@ -70,6 +71,7 @@ private struct RenderTab: View {
             ScrollView {
                 MarkdownText(sampleMarkdown)
                     .markdownStyle(self.preset.renderStyle)
+                    .mathRenderer(self.mathRenderer)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
             }
@@ -90,6 +92,8 @@ private struct RenderTab: View {
     }
 
     @State private var preset: StylePreset = .default
+    // Stored once so the JSContext inside MathJaxRenderer is not rebuilt every body pass.
+    private let mathRenderer = MathJaxRenderer()
 }
 
 // MARK: - EditorTab
@@ -160,6 +164,7 @@ private struct StreamTab: View {
         NavigationStack {
             ScrollView {
                 MarkdownStreamingText(self.streamSource)
+                    .mathRenderer(self.mathRenderer)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
             }
@@ -203,6 +208,8 @@ private struct StreamTab: View {
     }
 
     @State private var streamSource = MarkdownStreamingSource()
+    // Stored once so the JSContext inside MathJaxRenderer is not rebuilt every body pass.
+    private let mathRenderer = MathJaxRenderer()
     @State private var isRunning = false
     @State private var hasOutput = false
     @State private var taskHandle: Task<Void, Never>?
@@ -394,6 +401,24 @@ F -. 叛变 .-> A
 C -- 知己 --> F
 ```
 
+## 数学公式
+
+通过 `MarkdownMath` 接入 MathJax，支持四种 LaTeX 定界符。
+
+行内：质能方程 $E=mc^2$，欧拉恒等式 \\(e^{i\\pi}+1=0\\)，对角线 $\\sqrt{2}\\approx1.414$。
+
+块级（`$$ … $$`）：
+
+$$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
+
+块级（`\\[ … \\]`）：
+
+\\[ \\int_0^1 x^2\\,dx = \\frac{1}{3} \\]
+
+矩阵：
+
+$$\\begin{matrix} a & b \\\\ c & d \\end{matrix}$$
+
 ## 中文支持
 
 完美支持**中文**与 English 混排。TextKit 2 原生支持 Unicode 全字符集，行内断字规则与系统文本视图保持一致。
@@ -485,6 +510,12 @@ private let streamTokens: [String] = {
         }
     }
     ```
+
+    ## 数学公式（流式）
+
+    流式场景下数学公式同样增量渲染。行内：高斯求和 $1+2+\\dots+n=\\frac{n(n+1)}{2}$。块级：
+
+    $$e^{i\\pi}+1=0$$
 
     ## 引用块测试
 
