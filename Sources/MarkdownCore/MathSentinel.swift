@@ -22,7 +22,8 @@ public enum MathSentinel {
         public let range: Range<String.Index>
     }
 
-    /// 把源码中已存在的 sentinel 转义：S → S ESC（ESC 自身不会单独出现）。
+    /// 把源码中已存在的 sentinel 转义：S → S ESC。
+    /// ESC 仅由本类在 S 之后注入；unescape 不依赖此前提——用户文本中孤立的 ESC 原样透传。
     public static func escapeReservedScalar(_ s: String) -> String {
         var out = ""
         out.reserveCapacity(s.count)
@@ -82,7 +83,7 @@ public enum MathSentinel {
                 }
                 var j = afterOpen
                 var digits = ""
-                while j < s.endIndex, s[j].isNumber { digits.append(s[j]); j = s.index(after: j) }
+                while j < s.endIndex, s[j].isASCII, s[j].isNumber { digits.append(s[j]); j = s.index(after: j) }
                 if !digits.isEmpty, j < s.endIndex, s[j] == sentinel, let idx = Int(digits) {
                     anchors.append(Anchor(index: idx, range: i ..< s.index(after: j)))
                     i = s.index(after: j); continue

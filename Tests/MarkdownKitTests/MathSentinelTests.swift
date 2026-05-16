@@ -37,4 +37,38 @@ struct MathSentinelTests {
         let escaped = MathSentinel.escapeReservedScalar(s)
         #expect(MathSentinel.anchorRanges(in: escaped).isEmpty)
     }
+
+    @Test("escape∘unescape 在含 S/ESC 的对抗输入上是精确逆", arguments: [
+        "a\u{10FE01}b",
+        "\u{10FE00}\u{10FE01}",
+        "\u{10FE01}\u{10FE00}",
+        "x\u{10FE00}",
+        "\u{10FE00}\u{10FE00}",
+        "\u{10FE00}\u{10FE01}\u{10FE00}",
+        "\u{10FE01}",
+        "plain text no specials",
+        "\u{10FE00}5\u{10FE00}",
+    ])
+    func escapeUnescapeRoundTrip(_ x: String) {
+        let restored = MathSentinel.unescapeReservedScalar(MathSentinel.escapeReservedScalar(x))
+        #expect(restored == x)
+    }
+
+    @Test("多位数索引锚（idx >= 10）可被定位")
+    func multiDigitAnchor() {
+        let s = "\u{10FE00}42\u{10FE00}"
+        let anchors = MathSentinel.anchorRanges(in: s)
+        #expect(anchors.map(\.index) == [42])
+    }
+
+    @Test("相邻公式 span 之间空切片不崩、锚连续")
+    func adjacentSpans() {
+        let src = "$x$$y$"
+        let spans = MathScanner.scan(src)
+        let result = MathSentinel.substitute(source: src, spans: spans)
+        #expect(result.table.count == spans.count)
+        let anchors = MathSentinel.anchorRanges(in: result.transformed)
+        #expect(anchors.map(\.index) == Array(0 ..< result.table.count))
+        #expect(!result.transformed.contains("$"))
+    }
 }
