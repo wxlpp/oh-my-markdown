@@ -12,6 +12,10 @@ enum SVGRasterizerError: Error { case parseFailed, rasterizeFailed }
 
 /// SVG 字符串 → 颜色注入 → ex 归一化 → SwiftDraw 光栅化 → MathRenderedGlyph。
 ///
+/// **输入契约**：仅支持 MathJax 默认 inline SVG 格式——根 `<svg>` 带数值
+/// `width="<num>ex"` 属性和 `viewBox`。Container/SVG-tag 模式（根 `width="100%"`、
+/// 无 `viewBox`）不受支持，会抛 `.parseFailed`（由 Task 14 配置侧保证不产生此类输出）。
+///
 /// 两条硬约束：
 /// 1. SwiftDraw 不支持 CSS `ex` 单位（`SVG(data:)` 直接返回 nil），喂给 SwiftDraw
 ///    前必须把根 svg 元素 width/height 的 `<num>ex` 改写为 `<num>px`。
@@ -37,8 +41,10 @@ enum SVGRasterizer {
         guard let r = svg.range(of: "height=\"") else { return 2 }
         let tail = svg[r.upperBound...]
         let token = tail.prefix(while: { $0 != "\"" })
-        let numeric = token.replacingOccurrences(of: "ex", with: "")
-        return CGFloat(Double(numeric) ?? 2)
+        // Extract the leading numeric prefix (digits, optional leading dot, optional decimal point)
+        // so that values like ".5ex" parse as 0.5 rather than falling back to 2.
+        let numericPrefix = token.prefix(while: { $0.isNumber || $0 == "." })
+        return CGFloat(Double(numericPrefix) ?? 2)
     }
 
     /// 把根 svg 元素 `width`/`height` 属性里的 `<num>ex` 改写为 `<num>px`。
@@ -55,7 +61,7 @@ enum SVGRasterizer {
         let tagRange = openStart.lowerBound..<openEnd.upperBound
         let tag = String(svg[tagRange])
 
-        let pattern = #"((?:width|height)\s*=\s*")(\d+\.?\d*)ex(")"#
+        let pattern = #"((?:width|height)\s*=\s*")(\d*\.?\d+)ex(")"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return svg }
         let nsTag = tag as NSString
         let rewrittenTag = regex.stringByReplacingMatches(
@@ -87,8 +93,11 @@ enum SVGRasterizer {
         let image = drawing.rasterize(with: targetPointSize, scale: scale)
 
         // 点尺寸契约：
-        // - macOS：SwiftDraw 返回的 NSImage `.size == targetPointSize * scale`（像素），
-        //   显式设回点尺寸；scale× 的位图仍保留为 backing representation。
+        // - macOS：SwiftDraw 的 rasterize(with:scale:) 返回 block-backed NSImage
+        //   （NSCustomImageRep，矢量重绘 handler，无任何 bitmap representation）；
+        //   其 .size 被设为 size×scale（像素）。这里显式改回点尺寸以满足点尺寸契约
+        //   （image.size 必须是点）；Retina 清晰度由 AppKit 按设备 rect 矢量重画保证，
+        //   scale: 参数在 macOS 路径实为冗余（仅影响被覆盖的中间 .size，不产生位图缓存）。
         // - UIKit：rasterize(size:scale:) 已用 UIGraphicsImageRenderer 的 scale 编码
         //   栅格密度，`.size` 已是点尺寸，无需修正。
         #if canImport(AppKit) && !canImport(UIKit)
