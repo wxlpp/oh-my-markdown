@@ -32,6 +32,9 @@ public enum BlockNode: Sendable, Equatable {
     /// A raw HTML block (passed through unchanged).
     case htmlBlock(text: String)
 
+    /// A display-level LaTeX math block (`$$…$$` / `\[…\]`), delimiters stripped.
+    case mathBlock(latex: String)
+
     /// A GFM table.
     case table(columns: [ColumnAlignment], head: [TableCell], rows: [[TableCell]])
 }

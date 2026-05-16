@@ -31,6 +31,9 @@ public enum InlineNode: Sendable, Equatable {
     /// An embedded image.
     case image(source: String, alt: String)
 
+    /// An inline LaTeX math span (`$…$` / `\(…\)`), delimiters stripped.
+    case math(latex: String)
+
     /// Raw inline HTML (passed through unchanged).
     case html(String)
 }

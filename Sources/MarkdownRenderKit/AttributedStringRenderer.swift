@@ -90,6 +90,9 @@ public struct AttributedStringRenderer: @unchecked Sendable {
             self.renderThematicBreak()
         case .htmlBlock(let text):
             NSAttributedString(string: text, attributes: self.bodyAttributes())
+        case .mathBlock(let latex):
+            // Rendering handled by a later task; fall back to the raw LaTeX source.
+            NSAttributedString(string: latex, attributes: self.bodyAttributes())
         case .table(let columns, let head, let rows):
             self.renderTable(columns: columns, head: head, rows: rows)
         }
@@ -618,6 +621,10 @@ public struct AttributedStringRenderer: @unchecked Sendable {
 
         case .html(let raw):
             return NSAttributedString(string: raw, attributes: attributes)
+
+        case .math(let latex):
+            // Rendering handled by a later task; fall back to the raw LaTeX source.
+            return NSAttributedString(string: latex, attributes: attributes)
         }
     }
 
