@@ -87,6 +87,34 @@ struct MathLoadCoordinatorTests {
         #expect(g2 == g1 + 1)
         #expect(await c.isNegativeCached(key("z", gen: g1)) == false)
     }
+
+    @Test("invalidateForScaleChange 清空正/负缓存但不改 generation")
+    func invalidateForScaleChangeClears() async {
+        let counter = CallCounter()
+        let c = MathLoadCoordinator()
+        await c.setRenderer(StubRenderer(outcome: { .rendered(.init(image: pixel(), baselineOffsetEx: 0)) }, counter: counter))
+        let gen = await c.generation
+        _ = await c.loadIfNeeded(key: key("s"), latex: "s", display: false, pointSize: 16, scale: 2, color: .black)
+        await c.drain()
+        #expect(await c.glyph(for: key("s")) != nil)
+        await c.invalidateForScaleChange()
+        #expect(await c.glyph(for: key("s")) == nil)        // 正缓存清空
+        #expect(await c.generation == gen)                  // generation 不变（区别于 setRenderer）
+    }
+
+    @Test("positive 超过上限触发 LRU 逐出")
+    func positiveLRUEviction() async {
+        let counter = CallCounter()
+        let c = MathLoadCoordinator()
+        await c.setRenderer(StubRenderer(outcome: { .rendered(.init(image: pixel(), baselineOffsetEx: 0)) }, counter: counter))
+        // 填超过 cap（cap=256）个不同 key；最早的应被逐出。
+        for i in 0 ..< 300 {
+            _ = await c.loadIfNeeded(key: key("f\(i)"), latex: "f\(i)", display: false, pointSize: 16, scale: 2, color: .black)
+            await c.drain()
+        }
+        #expect(await c.glyph(for: key("f0")) == nil)        // 最早的被逐出
+        #expect(await c.glyph(for: key("f299")) != nil)      // 最近的保留
+    }
 }
 
 #if canImport(UIKit)

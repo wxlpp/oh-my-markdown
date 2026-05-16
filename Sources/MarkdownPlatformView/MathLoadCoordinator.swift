@@ -12,7 +12,19 @@ public actor MathLoadCoordinator {
     private var positive: [MathCacheKey: MathRenderedGlyph] = [:]
     private var negative: Set<MathCacheKey> = []
     private var inFlight: Set<MathCacheKey> = []
-    private var tasks: [Task<Void, Never>] = []
+    private var tasks: [MathCacheKey: Task<Void, Never>] = [:]
+
+    // spec §6：缓存设上限，避免流式长对话内存膨胀。
+    // positive：LRU（lruOrder 末尾 = 最近使用）；negative：计数封顶后整体清空。
+    private let positiveCap = 256
+    private let negativeCap = 1024
+    private var lruOrder: [MathCacheKey] = []
+
+    /// 记录某 key 为最近使用：从 lruOrder 移除旧位置后追加到末尾。
+    private func touchLRU(_ key: MathCacheKey) {
+        if let idx = lruOrder.firstIndex(of: key) { lruOrder.remove(at: idx) }
+        lruOrder.append(key)
+    }
 
     /// 设置/替换渲染器：代际自增并清正/负/loading（spec §6）。
     public func setRenderer(_ r: (any MathRendering)?) {
@@ -21,14 +33,21 @@ public actor MathLoadCoordinator {
         positive.removeAll()
         negative.removeAll()
         inFlight.removeAll()
+        tasks.removeAll()
+        lruOrder.removeAll()
     }
 
     /// scale 变化时清缓存并由调用方用新 rasterScale 重建键。
     public func invalidateForScaleChange() {
         positive.removeAll(); negative.removeAll(); inFlight.removeAll()
+        tasks.removeAll(); lruOrder.removeAll()
     }
 
-    public func glyph(for key: MathCacheKey) -> MathRenderedGlyph? { positive[key] }
+    public func glyph(for key: MathCacheKey) -> MathRenderedGlyph? {
+        guard let glyph = positive[key] else { return nil }
+        touchLRU(key)
+        return glyph
+    }
     public func isNegativeCached(_ key: MathCacheKey) -> Bool { negative.contains(key) }
 
     /// 需要时派发渲染。返回是否真的派发了任务（用于测试与去抖）。
@@ -45,23 +64,37 @@ public actor MathLoadCoordinator {
                 latex: latex, display: display, pointSize: pointSize, scale: scale, color: color)
             await self?.finish(key: key, outcome: outcome)
         }
-        tasks.append(task)
+        tasks[key] = task
         return true
     }
 
     private func finish(key: MathCacheKey, outcome: MathRenderOutcome) {
         inFlight.remove(key)
+        tasks[key] = nil
         switch outcome {
-        case .rendered(let glyph): positive[key] = glyph
-        case .failed: negative.insert(key)
+        case .rendered(let glyph):
+            // 注：被取代的 renderer/代际的迟到完成可能写入一个 key 携带旧
+            // rendererGeneration 的条目；它永不会被读取（查找始终用当前代际），
+            // 并由下面的 LRU 上限自然回收 —— 这是有意为之，勿"修复"。
+            positive[key] = glyph
+            touchLRU(key)
+            if positive.count > positiveCap, let lru = lruOrder.first {
+                positive[lru] = nil
+                lruOrder.removeFirst()
+            }
+        case .failed:
+            if negative.count >= negativeCap { negative.removeAll() }
+            negative.insert(key)
         case .cancelled: break
         }
     }
 
     /// 测试辅助：等所有在途任务结束。
+    /// 每个被等待的任务在其 finish 中会先移除自身的 tasks[key]，
+    /// 故循环每次重读 tasks.first 时该项已消失，循环必然终止（确定性）。
     public func drain() async {
-        let snapshot = tasks
-        tasks.removeAll()
-        for t in snapshot { _ = await t.value }
+        while let entry = tasks.first {
+            _ = await entry.value.value
+        }
     }
 }
