@@ -344,6 +344,14 @@ public final class MarkdownLabelView: UIView {
     private var _lastHeight: CGFloat = 0
     /// Coalesces expensive TextKit height queries during streaming updates.
     private var _heightUpdateTask: Task<Void, Never>?
+    /// Test-only monotonic counter: how many times `resetLayout()` has requested a
+    /// host relayout + deferred height re-measure (the discipline `applyDocument`
+    /// already applies to the streaming incremental path). Async write-back paths
+    /// (image/math glyph resolution → updateContent → resetLayout) must invoke the
+    /// same discipline; the deferred task auto-nils after ~33ms so a transient flag
+    /// would race, hence a durable counter. Pure observation — zero production
+    /// behavior beyond an Int increment.
+    var _hostRelayoutRequestCount = 0
     /// In-flight parse task. Streaming keeps this single-flight so large documents do not
     /// accumulate cancelled full-document parses as tokens arrive.
     private var _parseTask: Task<Void, Never>?
@@ -445,6 +453,14 @@ public final class MarkdownLabelView: UIView {
         self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
         invalidateIntrinsicContentSize()
         setNeedsDisplay()
+        // Mirror applyDocument's host-relayout discipline: async write-back paths
+        // (image/math glyph resolution → updateContent → resetLayout) can shrink
+        // content dramatically. invalidateIntrinsicContentSize() alone does not make
+        // the SwiftUI host re-query our size, so request a host layout pass and a
+        // deferred height re-measure exactly as the streaming incremental path does.
+        setNeedsLayout()
+        self.scheduleDeferredHeightUpdate()
+        self._hostRelayoutRequestCount += 1
         self._pendingTableOverlaySyncStart = nil
         self._syncTableOverlays(from: 0)
     }
@@ -1427,6 +1443,14 @@ public final class MarkdownLabelView: NSView {
     private var _lastHeight: CGFloat = 0
     /// Coalesces expensive TextKit height queries during streaming updates.
     private var _heightUpdateTask: Task<Void, Never>?
+    /// Test-only monotonic counter: how many times `resetLayout()` has requested a
+    /// host relayout + deferred height re-measure (the discipline `applyDocument`
+    /// already applies to the streaming incremental path). Async write-back paths
+    /// (image/math glyph resolution → updateContent → resetLayout) must invoke the
+    /// same discipline; the deferred task auto-nils after ~33ms so a transient flag
+    /// would race, hence a durable counter. Pure observation — zero production
+    /// behavior beyond an Int increment.
+    var _hostRelayoutRequestCount = 0
     /// In-flight parse task. Streaming keeps this single-flight so large documents do not
     /// accumulate cancelled full-document parses as tokens arrive.
     private var _parseTask: Task<Void, Never>?
@@ -1519,6 +1543,14 @@ public final class MarkdownLabelView: NSView {
         self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
         invalidateIntrinsicContentSize()
         needsDisplay = true
+        // Mirror applyDocument's host-relayout discipline: async write-back paths
+        // (image/math glyph resolution → updateContent → resetLayout) can shrink
+        // content dramatically. invalidateIntrinsicContentSize() alone does not make
+        // the SwiftUI host re-query our size, so request a host layout pass and a
+        // deferred height re-measure exactly as the streaming incremental path does.
+        needsLayout = true
+        self.scheduleDeferredHeightUpdate()
+        self._hostRelayoutRequestCount += 1
         self._pendingTableOverlaySyncStart = nil
         self._syncTableOverlays(from: 0)
     }
