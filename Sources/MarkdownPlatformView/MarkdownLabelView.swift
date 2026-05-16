@@ -305,6 +305,7 @@ public final class MarkdownLabelView: UIView {
         }
         self.resetLayout()
         self.triggerImageLoads(in: NSRange(location: 0, length: self._liveString.length))
+        self.triggerMathLoads(in: NSRange(location: 0, length: self._liveString.length))
     }
 
     func offsetOf(_ location: any NSTextLocation) -> Int {
@@ -352,6 +353,12 @@ public final class MarkdownLabelView: UIView {
     private var _imageCache: [String: UIImage] = [:]
     /// Source URLs currently being fetched (prevents duplicate requests).
     private var _imageLoading: Set<String> = []
+    /// Platform-agnostic async math render coordinator (dedup/三态/代际).
+    private let _mathCoordinator = MathLoadCoordinator()
+    /// Injected math renderer; swapping it bumps the coordinator's generation.
+    public var mathRenderer: (any MathRendering)? {
+        didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
+    }
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
     private var _tableOverlays: [Int: (
         scroll: UIScrollView,
@@ -614,6 +621,7 @@ public final class MarkdownLabelView: UIView {
         self._pendingTableOverlaySyncStart = min(self._pendingTableOverlaySyncStart ?? firstChanged, firstChanged)
         setNeedsLayout()
         self.triggerImageLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
+        self.triggerMathLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
     }
 
     // MARK: Link tap
@@ -704,6 +712,59 @@ public final class MarkdownLabelView: UIView {
 
     private func finishImageLoadFailure(source: String) {
         _ = self._imageLoading.remove(source)
+    }
+
+    // MARK: Math loading
+
+    private func triggerMathLoads(in range: NSRange) {
+        guard self.mathRenderer != nil, let str = contentStorage.attributedString else {
+            return
+        }
+        let safe = range.clamped(to: str.length)
+        guard safe.length > 0 else {
+            return
+        }
+        let scale = self.window?.screen.scale ?? UIScreen.main.scale
+        str.enumerateAttribute(.markdownMathSource, in: safe) { value, _, _ in
+            guard
+                let payload = value as? String,
+                let sep = payload.firstIndex(of: "\u{1F}") else {
+                return
+            }
+            let display = payload[payload.startIndex] == "1"
+            let latex = String(payload[payload.index(after: sep)...])
+            let color = self.renderStyle.mathColorOverride ?? self.renderStyle.textColor
+            let pt = MathMetrics.effectivePointSize(
+                textPointSize: self.renderStyle.bodyFont.pointSize,
+                mathScale: self.renderStyle.mathScale
+            )
+            Task { [weak self] in
+                guard let self else {
+                    return
+                }
+                let gen = await self._mathCoordinator.generation
+                let key = MathCacheKey(
+                    latex: latex, display: display, pointSize: pt,
+                    colorHex: MathMetrics.colorHex(color),
+                    rasterScale: scale, rendererGeneration: gen
+                )
+                let dispatched = await self._mathCoordinator.loadIfNeeded(
+                    key: key, latex: latex, display: display,
+                    pointSize: pt, scale: scale, color: color
+                )
+                if dispatched {
+                    await self._mathCoordinator.drain()
+                    if let glyph = await self._mathCoordinator.glyph(for: key) {
+                        await MainActor.run {
+                            self._cachedRenderer?.mathRasterScale = scale
+                            self._cachedRenderer?.mathRendererGeneration = gen
+                            self._cachedRenderer?.mathCache[key] = glyph
+                            self.updateContent()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: Table overlay helpers (iOS)
@@ -1349,6 +1410,12 @@ public final class MarkdownLabelView: NSView {
     private var _imageCache: [String: NSImage] = [:]
     /// Source URLs currently being fetched (prevents duplicate requests).
     private var _imageLoading: Set<String> = []
+    /// Platform-agnostic async math render coordinator (dedup/三态/代际).
+    private let _mathCoordinator = MathLoadCoordinator()
+    /// Injected math renderer; swapping it bumps the coordinator's generation.
+    public var mathRenderer: (any MathRendering)? {
+        didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
+    }
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
     private var _tableOverlays: [Int: (
         scroll: NSScrollView,
@@ -1407,6 +1474,7 @@ public final class MarkdownLabelView: NSView {
         }
         self.resetLayout()
         self.triggerImageLoads(in: NSRange(location: 0, length: self._liveString.length))
+        self.triggerMathLoads(in: NSRange(location: 0, length: self._liveString.length))
     }
 
     private func resetLayout() {
@@ -1602,6 +1670,7 @@ public final class MarkdownLabelView: NSView {
         self._pendingTableOverlaySyncStart = min(self._pendingTableOverlaySyncStart ?? firstChanged, firstChanged)
         needsLayout = true
         self.triggerImageLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
+        self.triggerMathLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
     }
 
     // MARK: Table overlay helpers (macOS)
@@ -1782,6 +1851,59 @@ public final class MarkdownLabelView: NSView {
 
     private func finishImageLoadFailure(source: String) {
         _ = self._imageLoading.remove(source)
+    }
+
+    // MARK: Math loading
+
+    private func triggerMathLoads(in range: NSRange) {
+        guard self.mathRenderer != nil, let str = contentStorage.attributedString else {
+            return
+        }
+        let safe = range.clamped(to: str.length)
+        guard safe.length > 0 else {
+            return
+        }
+        let scale = self.window?.backingScaleFactor ?? 2
+        str.enumerateAttribute(.markdownMathSource, in: safe) { value, _, _ in
+            guard
+                let payload = value as? String,
+                let sep = payload.firstIndex(of: "\u{1F}") else {
+                return
+            }
+            let display = payload[payload.startIndex] == "1"
+            let latex = String(payload[payload.index(after: sep)...])
+            let color = self.renderStyle.mathColorOverride ?? self.renderStyle.textColor
+            let pt = MathMetrics.effectivePointSize(
+                textPointSize: self.renderStyle.bodyFont.pointSize,
+                mathScale: self.renderStyle.mathScale
+            )
+            Task { [weak self] in
+                guard let self else {
+                    return
+                }
+                let gen = await self._mathCoordinator.generation
+                let key = MathCacheKey(
+                    latex: latex, display: display, pointSize: pt,
+                    colorHex: MathMetrics.colorHex(color),
+                    rasterScale: scale, rendererGeneration: gen
+                )
+                let dispatched = await self._mathCoordinator.loadIfNeeded(
+                    key: key, latex: latex, display: display,
+                    pointSize: pt, scale: scale, color: color
+                )
+                if dispatched {
+                    await self._mathCoordinator.drain()
+                    if let glyph = await self._mathCoordinator.glyph(for: key) {
+                        await MainActor.run {
+                            self._cachedRenderer?.mathRasterScale = scale
+                            self._cachedRenderer?.mathRendererGeneration = gen
+                            self._cachedRenderer?.mathCache[key] = glyph
+                            self.updateContent()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func performCopy() {

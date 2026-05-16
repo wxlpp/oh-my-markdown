@@ -1,4 +1,5 @@
 @testable import MarkdownPlatformView
+import MarkdownCore
 import MarkdownRenderKit
 import Testing
 import Foundation
@@ -114,6 +115,40 @@ struct MathLoadCoordinatorTests {
         }
         #expect(await c.glyph(for: key("f0")) == nil)        // 最早的被逐出
         #expect(await c.glyph(for: key("f299")) != nil)      // 最近的保留
+    }
+}
+
+@Suite("Math view wiring")
+struct MathViewWiringTests {
+    @Test("占位属性可被枚举并驱动 coordinator，回写后渲染出附件")
+    func placeholderDrivesCoordinator() async {
+        var renderer = AttributedStringRenderer(style: .default)
+        let attr = renderer.render([.paragraph([.math(latex: "x")])])
+        var payloads: [String] = []
+        attr.enumerateAttribute(.markdownMathSource, in: NSRange(location: 0, length: attr.length)) { v, _, _ in
+            if let p = v as? String { payloads.append(p) }
+        }
+        #expect(payloads == ["0\u{1F}x"])
+
+        let c = MathLoadCoordinator()
+        await c.setRenderer(StubRenderer(outcome: {
+            .rendered(.init(image: pixel(), baselineOffsetEx: 0)) }, counter: CallCounter()))
+        let gen = await c.generation
+        let key = MathCacheKey(latex: "x", display: false,
+                               pointSize: RenderStyle.default.bodyFont.pointSize,
+                               colorHex: MathMetrics.colorHex(RenderStyle.default.textColor),
+                               rasterScale: 1, rendererGeneration: gen)
+        _ = await c.loadIfNeeded(key: key, latex: "x", display: false,
+                                 pointSize: key.pointSize, scale: 1, color: RenderStyle.default.textColor)
+        await c.drain()
+        renderer.mathRendererGeneration = gen
+        renderer.mathCache[key] = await c.glyph(for: key)
+        let attr2 = renderer.render([.paragraph([.math(latex: "x")])])
+        var hasAttachment = false
+        attr2.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attr2.length)) { v, _, _ in
+            if v is NSTextAttachment { hasAttachment = true }
+        }
+        #expect(hasAttachment)
     }
 }
 
