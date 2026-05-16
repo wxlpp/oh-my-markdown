@@ -89,6 +89,13 @@ public actor MathLoadCoordinator {
         }
     }
 
+    /// Await just this key's in-flight render task (if any) then return its glyph.
+    /// Production-safe alternative to `drain()` (which is test-only, awaits ALL tasks).
+    public func awaitGlyph(for key: MathCacheKey) async -> MathRenderedGlyph? {
+        if let t = tasks[key] { _ = await t.value }
+        return glyph(for: key)
+    }
+
     /// 测试辅助：等所有在途任务结束。
     /// 每个被等待的任务在其 finish 中会先移除自身的 tasks[key]，
     /// 故循环每次重读 tasks.first 时该项已消失，循环必然终止（确定性）。

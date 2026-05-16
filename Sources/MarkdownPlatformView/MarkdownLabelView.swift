@@ -357,6 +357,8 @@ public final class MarkdownLabelView: UIView {
     private let _mathCoordinator = MathLoadCoordinator()
     /// Injected math renderer; swapping it bumps the coordinator's generation.
     public var mathRenderer: (any MathRendering)? {
+        // setRenderer 异步派发；落地前发生的渲染会显示 latex 占位，并在下次
+        // updateContent/relayout 时解析（有意为之的最终一致性）。
         didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
     }
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
@@ -725,6 +727,9 @@ public final class MarkdownLabelView: UIView {
             return
         }
         let scale = self.window?.screen.scale ?? UIScreen.main.scale
+        // 同步枚举收集原始请求（latex/display/color/pt），代际相关的 key 构造
+        // 推迟到下面那个唯一的 Task 内一次性完成（generation 受 actor 隔离）。
+        var raw: [(latex: String, display: Bool, color: PlatformColor, pt: CGFloat)] = []
         str.enumerateAttribute(.markdownMathSource, in: safe) { value, _, _ in
             guard
                 let payload = value as? String,
@@ -738,31 +743,52 @@ public final class MarkdownLabelView: UIView {
                 textPointSize: self.renderStyle.bodyFont.pointSize,
                 mathScale: self.renderStyle.mathScale
             )
-            Task { [weak self] in
-                guard let self else {
-                    return
-                }
-                let gen = await self._mathCoordinator.generation
+            raw.append((latex: latex, display: display, color: color, pt: pt))
+        }
+        guard !raw.isEmpty else {
+            return
+        }
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            // 一次读取代际，用同一 gen 构造所有 key（保持与原实现一致的键公式）。
+            let gen = await self._mathCoordinator.generation
+            let requests: [(key: MathCacheKey, latex: String, display: Bool,
+                            color: PlatformColor, pt: CGFloat)] = raw.map {
                 let key = MathCacheKey(
-                    latex: latex, display: display, pointSize: pt,
-                    colorHex: MathMetrics.colorHex(color),
+                    latex: $0.latex, display: $0.display, pointSize: $0.pt,
+                    colorHex: MathMetrics.colorHex($0.color),
                     rasterScale: scale, rendererGeneration: gen
                 )
-                let dispatched = await self._mathCoordinator.loadIfNeeded(
-                    key: key, latex: latex, display: display,
-                    pointSize: pt, scale: scale, color: color
+                return (key: key, latex: $0.latex, display: $0.display,
+                        color: $0.color, pt: $0.pt)
+            }
+            // 先派发全部渲染（去重由 coordinator 负责）。
+            for r in requests {
+                await self._mathCoordinator.loadIfNeeded(
+                    key: r.key, latex: r.latex, display: r.display,
+                    pointSize: r.pt, scale: scale, color: r.color
                 )
-                if dispatched {
-                    await self._mathCoordinator.drain()
-                    if let glyph = await self._mathCoordinator.glyph(for: key) {
-                        await MainActor.run {
-                            self._cachedRenderer?.mathRasterScale = scale
-                            self._cachedRenderer?.mathRendererGeneration = gen
-                            self._cachedRenderer?.mathCache[key] = glyph
-                            self.updateContent()
-                        }
-                    }
+            }
+            // 仅 await 各自 key 的在途任务，收集解析出的字形。
+            var resolved: [(key: MathCacheKey, glyph: MathRenderedGlyph)] = []
+            for r in requests {
+                if let glyph = await self._mathCoordinator.awaitGlyph(for: r.key) {
+                    resolved.append((key: r.key, glyph: glyph))
                 }
+            }
+            guard !resolved.isEmpty else {
+                return
+            }
+            // 一次性合并回写并仅触发一次 updateContent（镜像图片加载纪律）。
+            await MainActor.run {
+                self._cachedRenderer?.mathRasterScale = scale
+                self._cachedRenderer?.mathRendererGeneration = gen
+                for entry in resolved {
+                    self._cachedRenderer?.mathCache[entry.key] = entry.glyph
+                }
+                self.updateContent()
             }
         }
     }
@@ -1414,6 +1440,8 @@ public final class MarkdownLabelView: NSView {
     private let _mathCoordinator = MathLoadCoordinator()
     /// Injected math renderer; swapping it bumps the coordinator's generation.
     public var mathRenderer: (any MathRendering)? {
+        // setRenderer 异步派发；落地前发生的渲染会显示 latex 占位，并在下次
+        // updateContent/relayout 时解析（有意为之的最终一致性）。
         didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
     }
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
@@ -1864,6 +1892,9 @@ public final class MarkdownLabelView: NSView {
             return
         }
         let scale = self.window?.backingScaleFactor ?? 2
+        // 同步枚举收集原始请求（latex/display/color/pt），代际相关的 key 构造
+        // 推迟到下面那个唯一的 Task 内一次性完成（generation 受 actor 隔离）。
+        var raw: [(latex: String, display: Bool, color: PlatformColor, pt: CGFloat)] = []
         str.enumerateAttribute(.markdownMathSource, in: safe) { value, _, _ in
             guard
                 let payload = value as? String,
@@ -1877,31 +1908,52 @@ public final class MarkdownLabelView: NSView {
                 textPointSize: self.renderStyle.bodyFont.pointSize,
                 mathScale: self.renderStyle.mathScale
             )
-            Task { [weak self] in
-                guard let self else {
-                    return
-                }
-                let gen = await self._mathCoordinator.generation
+            raw.append((latex: latex, display: display, color: color, pt: pt))
+        }
+        guard !raw.isEmpty else {
+            return
+        }
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            // 一次读取代际，用同一 gen 构造所有 key（保持与原实现一致的键公式）。
+            let gen = await self._mathCoordinator.generation
+            let requests: [(key: MathCacheKey, latex: String, display: Bool,
+                            color: PlatformColor, pt: CGFloat)] = raw.map {
                 let key = MathCacheKey(
-                    latex: latex, display: display, pointSize: pt,
-                    colorHex: MathMetrics.colorHex(color),
+                    latex: $0.latex, display: $0.display, pointSize: $0.pt,
+                    colorHex: MathMetrics.colorHex($0.color),
                     rasterScale: scale, rendererGeneration: gen
                 )
-                let dispatched = await self._mathCoordinator.loadIfNeeded(
-                    key: key, latex: latex, display: display,
-                    pointSize: pt, scale: scale, color: color
+                return (key: key, latex: $0.latex, display: $0.display,
+                        color: $0.color, pt: $0.pt)
+            }
+            // 先派发全部渲染（去重由 coordinator 负责）。
+            for r in requests {
+                await self._mathCoordinator.loadIfNeeded(
+                    key: r.key, latex: r.latex, display: r.display,
+                    pointSize: r.pt, scale: scale, color: r.color
                 )
-                if dispatched {
-                    await self._mathCoordinator.drain()
-                    if let glyph = await self._mathCoordinator.glyph(for: key) {
-                        await MainActor.run {
-                            self._cachedRenderer?.mathRasterScale = scale
-                            self._cachedRenderer?.mathRendererGeneration = gen
-                            self._cachedRenderer?.mathCache[key] = glyph
-                            self.updateContent()
-                        }
-                    }
+            }
+            // 仅 await 各自 key 的在途任务，收集解析出的字形。
+            var resolved: [(key: MathCacheKey, glyph: MathRenderedGlyph)] = []
+            for r in requests {
+                if let glyph = await self._mathCoordinator.awaitGlyph(for: r.key) {
+                    resolved.append((key: r.key, glyph: glyph))
                 }
+            }
+            guard !resolved.isEmpty else {
+                return
+            }
+            // 一次性合并回写并仅触发一次 updateContent（镜像图片加载纪律）。
+            await MainActor.run {
+                self._cachedRenderer?.mathRasterScale = scale
+                self._cachedRenderer?.mathRendererGeneration = gen
+                for entry in resolved {
+                    self._cachedRenderer?.mathCache[entry.key] = entry.glyph
+                }
+                self.updateContent()
             }
         }
     }

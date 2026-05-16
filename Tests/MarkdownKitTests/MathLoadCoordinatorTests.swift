@@ -116,6 +116,24 @@ struct MathLoadCoordinatorTests {
         #expect(await c.glyph(for: key("f0")) == nil)        // 最早的被逐出
         #expect(await c.glyph(for: key("f299")) != nil)      // 最近的保留
     }
+
+    @Test("awaitGlyph 仅等该 key 的任务即可拿到字形（无需 drain）")
+    func awaitGlyphPerKey() async {
+        let counter = CallCounter()
+        let c = MathLoadCoordinator()
+        await c.setRenderer(StubRenderer(outcome: {
+            .rendered(.init(image: pixel(), baselineOffsetEx: 0)) }, counter: counter))
+        var keys: [MathCacheKey] = []
+        for i in 0 ..< 5 {
+            let k = key("g\(i)")
+            keys.append(k)
+            _ = await c.loadIfNeeded(key: k, latex: "g\(i)", display: false, pointSize: 16, scale: 2, color: .black)
+        }
+        for k in keys {
+            #expect(await c.awaitGlyph(for: k) != nil)   // 不调用 drain，按 key 等待即得字形
+        }
+        #expect(await counter.count == 5)
+    }
 }
 
 @Suite("Math view wiring")
