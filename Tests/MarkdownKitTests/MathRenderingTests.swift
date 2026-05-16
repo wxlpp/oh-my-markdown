@@ -20,5 +20,13 @@ struct MathRenderingTypeTests {
                                      colorHex: "#000", rasterScale: 2, rendererGeneration: 1))
         #expect(base != MathCacheKey(latex: "x", display: false, pointSize: 16,
                                      colorHex: "#000", rasterScale: 2, rendererGeneration: 2))
+        #expect(base != MathCacheKey(latex: "y", display: false, pointSize: 16,
+                                     colorHex: "#000", rasterScale: 2, rendererGeneration: 1))
+        #expect(base != MathCacheKey(latex: "x", display: true, pointSize: 16,
+                                     colorHex: "#000", rasterScale: 2, rendererGeneration: 1))
+        #expect(base != MathCacheKey(latex: "x", display: false, pointSize: 16,
+                                     colorHex: "#111", rasterScale: 2, rendererGeneration: 1))
+        #expect(base != MathCacheKey(latex: "x", display: false, pointSize: 16,
+                                     colorHex: "#000", rasterScale: 3, rendererGeneration: 1))
     }
 }

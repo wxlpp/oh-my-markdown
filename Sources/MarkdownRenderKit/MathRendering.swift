@@ -8,11 +8,14 @@ import AppKit
 
 extension NSAttributedString.Key {
     /// 未渲染数学占位标记，载荷为 "<display 0|1>\u{1F}<latex>"，对标 .markdownImageSource。
+    /// 规范格式：Task 8/11 的编解码必须与此一致，此注释是唯一权威来源。
     public static let markdownMathSource = NSAttributedString.Key("MarkdownKit.mathSource")
 }
 
+// UIImage/NSImage are safe for concurrent read; @unchecked Sendable is intentional
+// (same rationale as RenderStyle / AttributedStringRenderer in this module).
 /// 渲染好的公式字形。
-public struct MathRenderedGlyph: Sendable {
+public struct MathRenderedGlyph: @unchecked Sendable {
     public init(image: PlatformImage, baselineOffsetEx: CGFloat) {
         self.image = image
         self.baselineOffsetEx = baselineOffsetEx
@@ -69,7 +72,7 @@ public enum MathMetrics {
         #elseif canImport(AppKit)
         (color.usingColorSpace(.sRGB) ?? color).getRed(&r, green: &g, blue: &b, alpha: &a)
         #endif
-        func h(_ v: CGFloat) -> String { String(format: "%02X", Int((v * 255).rounded())) }
+        func h(_ v: CGFloat) -> String { String(format: "%02X", min(255, max(0, Int((v * 255).rounded())))) }
         return "#\(h(r))\(h(g))\(h(b))\(h(a))"
     }
 }
