@@ -66,11 +66,15 @@ case mathBlock(latex: String)   // 块级：$$…$$、\[…\]
    - `\$` 转义视为字面美元，不作定界符
    - 定界符未配对 → 整体当字面文本（流式中途半截公式靠此优雅降级）
    - display 由定界符类型决定：`$$` / `\[\]` ⇒ 块级；`$` / `\(\)` ⇒ 行内
-2. 每段数学替换为私有区 Unicode 哨兵标记，标记携带 **内容散列**（非全局计数器，保证流式 prefix/suffix 不冲突）
+2. **哨兵编码（防伪造）**：保留一个固定私有区标量 `U+10FE00`（SPUA-B）作哨兵字符。每段数学分配一个递增索引，存入 `index → (latex, display)` 旁路表；替换文本 = `哨兵标量 + 索引数字 + 哨兵标量`。哨兵字符**不携带 latex 内容**，只是定位锚。
+   - 替换前先扫描原始 source：若用户文本本身已含该保留标量，逐个转义为一个不冲突的占位转义序列，IR 构建完成后再还原。保证「能存活进 IR 的哨兵」一定由 `MathScanner` 注入，用户文本无法伪造或碰撞。
 3. swift-markdown 正常解析替换后的源码
-4. 回填：遍历 IR，哨兵文本 → `.math` / `.mathBlock`；当某段落内容恰好只含一个块级哨兵时，解包为顶层 `BlockNode.mathBlock`
-5. 块级公式出现在段落中间（前后有文字）时：拆分所在段落，块级公式独立成 `BlockNode.mathBlock`
-6. `MarkdownDocument.parsingAppend(to:previousSource:)`（增量流式路径）对重解析的 suffix 同样跑 `MathScanner`；哨兵基于内容散列，prefix/suffix 间不冲突
+4. **就地回填（保留容器结构）**：递归遍历 IR 树（`paragraph` / `blockquote` 内层 / `ListItem.blocks` / 嵌套列表 / 表格单元格），把哨兵锚换回数学节点：
+   - 行内哨兵 → 原位 `InlineNode.math`
+   - 块级哨兵：当其所在段落「仅含该一个块级哨兵」时，**用 `BlockNode.mathBlock` 原位替换该段落节点**——在其父容器（blockquote / list item / 顶层）的 `children` 中替换，**绝不上提到顶层、绝不重排兄弟节点**
+   - 块级哨兵出现在段落中间（前后有文字）时：在**当前父容器内**就地把该段落拆成 `[前段落, mathBlock, 后段落]`，顺序与嵌套层级保持不变
+   - 块级定界符出现在只能容纳 `[InlineNode]` 的上下文（表格单元格）时：降级为行内 `InlineNode.math`（`BlockNode` 无法进入 `TableCell`）
+5. `MarkdownDocument.parsingAppend(to:previousSource:)`（增量流式路径）对重解析的 suffix 同样跑完整 `MathScanner`（含哨兵转义/还原与就地回填）；索引旁路表按本次解析作用域局部分配，不跨 prefix/suffix 复用
 
 ### 4.3 共享定界符扫描
 
@@ -164,7 +168,9 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 ## 10. 测试
 
 - **MathScanner**：四定界符；`\$` 转义；代码块/行内代码内不识别；未配对当字面；`\(` / `\[` 存活；块/行内分类；多行 `$$`
-- **IR / 增量**：`.math` / `.mathBlock` 位置正确；`parsingAppend` 在 prefix/tail 含公式时仍正确；哨兵散列无冲突
+- **容器保留（高优先级）**：块级公式在列表项内、块引用内、嵌套列表内、块引用套列表内——均原位成为该容器子块，兄弟节点顺序与嵌套层级不变、不上提；表格单元格内的块定界符降级为行内 `.math`；段落中间的块级公式就地拆为前/公式/后三块且留在原父容器
+- **哨兵防伪造**：源码本身含保留标量 `U+10FE00`、含形似 `哨兵+数字+哨兵` 的文本、含其它私有区字符时，均不得被误判为数学节点；转义/还原后用户文本字节级不变
+- **IR / 增量**：`.math` / `.mathBlock` 位置正确；`parsingAppend` 在 prefix/tail 含公式时仍正确；增量重解析窗口覆盖完整公式
 - **RenderKit**：空缓存 → 占位 + 属性存在；命中 → attachment 带基线 bounds；`mathRenderer == nil` 回落路径
 - **MarkdownMath**（独立 gated target）：已知公式返回非空且尺寸为正；非法公式返回非空（MathJax 错误 SVG）；SVG 颜色注入生效
 - **编辑器**：高亮只覆盖定界符区段
@@ -174,7 +180,9 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 1. **SwiftDraw 对 MathJax SVG 的还原度**（`<use>/<defs>` / 字形 path / `currentColor`）——实现第一步即用真实 MathJax SVG 样本做验证 spike。不达标的回退：手解析 MathJax SVG 几何（工作量大）或换光栅化器
 2. SVG `vertical-align` 解析驱动行内基线对齐的准确性
 3. 流式中途半截 `$…$`：scanner 见未配对 → 暂作字面文本，闭合定界符到达后成公式（短暂闪烁，可接受）
-4. `parsingAppend` 与 `MathScanner` 交互：必须保证哨兵基于内容散列，prefix/suffix 不冲突，且增量重解析窗口覆盖完整公式
+4. `parsingAppend` 与 `MathScanner` 交互：增量重解析窗口必须覆盖完整公式；索引旁路表按解析作用域局部分配，不跨 prefix/suffix 复用
+5. **容器结构破坏（已在 4.2 设计中规避）**：块级公式回填必须就地、保留父容器与兄弟顺序，绝不上提到顶层——实现须以嵌套场景测试为准入门槛
+6. **哨兵伪造/碰撞（已在 4.2 设计中规避）**：保留标量 + 替换前转义已有出现 + 还原，确保用户文本无法跨越解析器信任边界
 
 ## 12. 验收标准
 
@@ -183,5 +191,7 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 - 非法公式显示 MathJax 红色错误输出
 - 未引入 `MarkdownMath` 时全库编译通过，公式降级为原始文本
 - `MarkdownEditor` 中四种定界符按 `mathTokenColor` 高亮，源码保持纯文本
+- 列表项 / 块引用 / 嵌套列表内的块级公式渲染在原容器内、文档结构不错位
+- 源码含保留哨兵标量或形似哨兵的文本时不被误渲染为公式、文本无损
 - 流式追加含公式的文本不崩、最终渲染正确
 - 现有图片 / 表格 / 列表等渲染与增量解析行为不回归
