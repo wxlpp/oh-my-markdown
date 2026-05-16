@@ -104,11 +104,13 @@ extension NSAttributedString.Key {
     // 编码 latex + display 标志，对标 .markdownImageSource
 }
 
-struct MathCacheKey: Hashable {           // latex + display + pointSize + colorHex
+struct MathCacheKey: Hashable {
     let latex: String
     let display: Bool
     let pointSize: CGFloat
     let colorHex: String
+    let rasterScale: CGFloat       // 屏幕 scale，跨显示器/外接屏不复用错分辨率字形
+    let rendererGeneration: Int    // 渲染器代际，换实例/从失败恢复后强制失效
 }
 
 struct MathRenderedGlyph: Sendable {
@@ -120,7 +122,9 @@ struct MathRenderedGlyph: Sendable {
 var mathCache: [MathCacheKey: MathRenderedGlyph] = [:]
 ```
 
-样式 / 动态字体变化 ⇒ `pointSize` / `colorHex` 变 ⇒ key 变 ⇒ 自动重渲染（与图片缓存同思路）。
+- 样式 / 动态字体变化 ⇒ `pointSize` / `colorHex` 变 ⇒ key 变 ⇒ 自动重渲染（与图片缓存同思路）
+- 显示器 scale 变化 ⇒ `rasterScale` 变 ⇒ key 变，不复用旧分辨率位图
+- `rendererGeneration` 由平台层维护：每次 `mathRenderer` 被设置/替换时自增；写入缓存（含负缓存）时一并带上，使旧 renderer 的正/负缓存条目自然失效，避免「换 renderer 或从失败恢复后仍显示陈旧字形/陈旧回落文本」
 
 ### 5.2 渲染规则
 
@@ -132,11 +136,22 @@ var mathCache: [MathCacheKey: MathRenderedGlyph] = [:]
 ### 5.3 注入协议
 
 ```swift
+public enum MathRenderOutcome: Sendable {
+    case rendered(MathRenderedGlyph)   // 成功（含 MathJax 错误 SVG —— 算成功，会进正缓存）
+    case failed                        // 确定性硬失败：init 抛错 / JS 崩 / SVG 光栅化失败 ⇒ 负缓存
+    case cancelled                     // 瞬态取消（视图复用等）⇒ 不写任何缓存，允许后续重试
+}
+
 public protocol MathRendering: Sendable {
     func render(latex: String, display: Bool,
-                pointSize: CGFloat, color: PlatformColor) async -> MathRenderedGlyph?
+                pointSize: CGFloat, scale: CGFloat,
+                color: PlatformColor) async -> MathRenderOutcome
 }
 ```
+
+- 返回 `MathRenderOutcome` 而非 `Optional`：平台层据此**精确**决定写正缓存 / 写负缓存 / 不缓存，消除「取消与硬失败不可区分」导致的误负缓存或无限重试
+- 实现内部应 `Task.checkCancellation()`；被取消返回 `.cancelled`，确定性失败返回 `.failed`
+- `scale` 入参由平台层传屏幕 scale，与 `MathCacheKey.rasterScale` 对应
 
 RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 
@@ -144,21 +159,24 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 
 完全对标现有 `triggerImageLoads / loadImage / finishImageLoad`：
 
-- `triggerMathLoads(in:)` 枚举 `.markdownMathSource` → 去重（`_mathLoading` 集合）→ `await mathRenderer.render(...)` → 填 `mathCache` → `updateContent()` 重渲染
+- `triggerMathLoads(in:)` 枚举 `.markdownMathSource` → 去重（`_mathLoading` 集合）→ `await mathRenderer.render(...)` → 按 `MathRenderOutcome` 分派（见 6.1）→ `updateContent()` 重渲染
 - 持有 `var mathRenderer: (any MathRendering)?`，默认 `nil`
   - `nil` 时 `triggerMathLoads` **直接 early-out**（不进枚举循环、不派发任务），占位保持原始 latex 文本（不引入 MathJax 也能编译运行）
+  - 维护单调自增的 `_rendererGeneration`：`mathRenderer` 每次被设置/替换时自增，并**清空 `mathCache`、负缓存、`_mathLoading`**（双保险：generation 进缓存键 + 切换即清），保证换 renderer / 从失败恢复后不显示陈旧字形或陈旧回落文本
+- 显示器 scale 变化时同样清理并以新 `rasterScale` 重渲染
 - `mathCache` 设上限（计数封顶 / LRU），避免流式长对话内存膨胀
 
 ### 6.1 失败的负缓存 / 退避（不可无限重试）
 
 现有图片失败路径只把 source 移出 loading 集合、不记失败态，导致每次 `updateContent()`/流式 pass 都重试。镜像到 MathJax 会把一次依赖失败放大成成百次 JavaScriptCore + SVG 工作。规则（必须实现并测试）：
 
-- 区分失败类型：
-  - **确定性硬失败**（`MathJax()` init 抛错、JS 崩溃、SVG 光栅化失败）→ 按 `MathCacheKey` 写入**负缓存**，后续 `triggerMathLoads` 跳过该 key，不再派发；占位回落原始 latex 文本
-  - **瞬态取消**（视图复用导致的 `Task` 取消）→ 不写负缓存，允许后续重试
-- `MathJax()` init 抛错应只发生一次并被记住（实例级 `failed` 标志），不每个公式各抛一次
+- 按 `MathRenderOutcome` 分派（类型由协议显式给出，平台层不再靠 `nil` 猜测）：
+  - `.rendered` → 写 `mathCache`（含 MathJax 错误 SVG，算成功）
+  - `.failed`（确定性硬失败）→ 按 `MathCacheKey` 写入**负缓存**，后续 `triggerMathLoads` 跳过该 key 不再派发；占位回落原始 latex 文本
+  - `.cancelled`（瞬态取消）→ 不写任何缓存，允许后续重试
+- `MathJax()` init 抛错应只发生一次并被记住（实例级 `failed` 标志），后续直接返回 `.failed`，不每个公式各抛一次
 - 注意：LaTeX 语法错误**不算失败**——MathJax 返回错误 SVG，渲染成功并正常进 `mathCache`（对应已确认的「展示 MathJax 错误输出」）
-- 负缓存与样式键一致：`pointSize` / `colorHex` 变化产生新 key，给一次重新尝试的机会
+- 负缓存键即 `MathCacheKey`：`pointSize` / `colorHex` / `rasterScale` / `rendererGeneration` 任一变化 ⇒ 新 key ⇒ 给一次重新尝试的机会（renderer 切换/恢复时负缓存随 generation 失效）
 
 ## 7. MarkdownKit（SwiftUI）
 
@@ -175,10 +193,11 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 
 `MathJaxRenderer: MathRendering`：
 
-- 持有共享 `MathJax` 实例（懒加载）；**`MathJax()` init 抛错或 JS 硬失败** → `render` 返回 `nil` → 占位回落原始 latex 文本
-- `tex2svg(latex, conversionOptions: .init(display: display), inputOptions: .init(loadPackages: .all), outputOptions:)`
-- **LaTeX 语法错误**：MathJax 自身把错误渲染进 SVG（不抛错）→ 直接光栅化展示其红色错误输出
-- SVG 后处理注入文字色（`currentColor` / root `color`）→ 解析 `ex` / `viewBox` / `vertical-align` → 按 `pointSize` 换算像素 → SwiftDraw 按屏幕 scale 光栅化 → `PlatformImage` + 基线偏移
+- 持有共享 `MathJax` 实例（懒加载）；**`MathJax()` init 抛错或 JS 硬失败** → 实例级 `failed` 标志置位，`render` 返回 `.failed`（不每个公式各抛一次）→ 占位回落原始 latex 文本
+- 收到取消（`Task.checkCancellation()` 抛出 / `Task.isCancelled`）→ 返回 `.cancelled`，不污染负缓存
+- `tex2svg(latex, conversionOptions: .init(display: display), inputOptions: .init(loadPackages: .all), outputOptions:)`；成功（含 MathJax 错误 SVG）→ `.rendered(MathRenderedGlyph)`
+- **LaTeX 语法错误**：MathJax 自身把错误渲染进 SVG（不抛错）→ 算成功，直接光栅化展示其红色错误输出
+- SVG 后处理注入文字色（`currentColor` / root `color`）→ 解析 `ex` / `viewBox` / `vertical-align` → 按 `pointSize` 换算像素 → SwiftDraw 按入参 `scale` 光栅化失败则 `.failed` → 否则 `PlatformImage` + 基线偏移
 
 ## 9. 编辑器 token 高亮
 
@@ -195,7 +214,8 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 - **哨兵防伪造**：源码本身含保留标量 `U+10FE00`、含形似 `哨兵+数字+哨兵` 的文本、含其它私有区字符时，均不得被误判为数学节点；转义/还原后用户文本字节级不变
 - **IR / 增量**：`.math` / `.mathBlock` 位置正确；`parsingAppend` 在 prefix/tail 含公式时仍正确
 - **增量边界（高优先级）**：开界符在被保留 prefix 块、闭界符在追加文本时，增量结果须与全量解析一致（前移重解析起点或全量回退）；跨多个 block 的 `$$…$$` 在逐 chunk 流式追加下最终渲染正确；代码围栏内的 `$$` 不触发误判
-- **失败负缓存（高优先级）**：确定性硬失败的公式在后续多次 `updateContent()`/流式 pass 中**不被重复派发**（断言派发次数有上限）；`MathJax()` init 抛错全程只发生一次；瞬态取消后仍可重试；样式键变化后允许重新尝试
+- **失败负缓存（高优先级）**：`.failed` 公式在后续多次 `updateContent()`/流式 pass 中**不被重复派发**（断言派发次数有上限）；`.cancelled` 不写负缓存、后续仍重试；`MathJax()` init 抛错全程只发生一次；用桩 renderer 分别返回 `.failed`/`.cancelled` 验证分派正确
+- **缓存失效（高优先级）**：替换 `mathRenderer` 实例后 `_rendererGeneration` 自增且正/负/loading 缓存被清，从「失败 renderer」换到「正常 renderer」后陈旧回落文本消失、公式重渲染；`rasterScale` 变化产生新 key、不复用旧分辨率位图
 - **RenderKit**：空缓存 → 占位 + 属性存在；命中 → attachment 带基线 bounds；`mathRenderer == nil` 回落路径
 - **MarkdownMath**（独立 gated target）：已知公式返回非空且尺寸为正；非法公式返回非空（MathJax 错误 SVG）；SVG 颜色注入生效
 - **编辑器**：高亮只覆盖定界符区段
@@ -206,9 +226,10 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 2. SVG `vertical-align` 解析驱动行内基线对齐的准确性
 3. 流式中途半截 `$…$`：scanner 见未配对 → 暂作字面文本，闭合定界符到达后成公式（短暂闪烁，可接受）
 4. **增量解析跨保留块漏判（已在 4.3 设计中规避）**：开界符在 prefix、闭界符在 suffix 时必须前移重解析起点或全量回退——实现须以「跨多 block 流式 $$」测试为准入门槛
-5. **硬失败无限重试（已在 6.1 设计中规避）**：确定性失败须负缓存，区分瞬态取消；实现须以「失败公式流式不重复派发」测试为准入门槛
-6. **容器结构破坏（已在 4.2 设计中规避）**：块级公式回填必须就地、保留父容器与兄弟顺序，绝不上提到顶层——实现须以嵌套场景测试为准入门槛
-7. **哨兵伪造/碰撞（已在 4.2 设计中规避）**：保留标量 + 替换前转义已有出现 + 还原，确保用户文本无法跨越解析器信任边界
+5. **硬失败无限重试 / 失败分类丢失（已在 5.3 + 6.1 设计中规避）**：协议返回 `MathRenderOutcome` 显式区分 `.failed`/`.cancelled`，平台层据此精确缓存；实现须以「失败公式流式不重复派发」「取消后可重试」测试为准入门槛
+6. **缓存身份过窄 / 陈旧复用（已在 5.1 + 6 设计中规避）**：`rasterScale` + `rendererGeneration` 进键，且换 renderer / scale 变化即清缓存；实现须以「换 renderer 后恢复」「跨 scale 不复用」测试为准入门槛
+7. **容器结构破坏（已在 4.2 设计中规避）**：块级公式回填必须就地、保留父容器与兄弟顺序，绝不上提到顶层——实现须以嵌套场景测试为准入门槛
+8. **哨兵伪造/碰撞（已在 4.2 设计中规避）**：保留标量 + 替换前转义已有出现 + 还原，确保用户文本无法跨越解析器信任边界
 
 ## 12. 验收标准
 
@@ -220,6 +241,7 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 - 列表项 / 块引用 / 嵌套列表内的块级公式渲染在原容器内、文档结构不错位
 - 源码含保留哨兵标量或形似哨兵的文本时不被误渲染为公式、文本无损
 - 跨多个块的 `$$…$$` 在逐 chunk 流式下最终渲染与全量解析一致
-- 渲染器硬失败的公式不在流式中被反复重试（派发次数有上限）
+- 渲染器硬失败的公式不在流式中被反复重试（派发次数有上限），取消的公式后续仍能成功
+- 替换 `mathRenderer`（含从失败恢复）后陈旧回落文本/字形清除并以新 renderer 重渲染
 - 流式追加含公式的文本不崩、最终渲染正确
 - 现有图片 / 表格 / 列表等渲染与增量解析行为不回归
