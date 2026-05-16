@@ -39,6 +39,8 @@ struct MathEditorHighlightTests {
         #expect(color(out, at: dollarIdx) == style.mathTokenColor)
         #expect(color(out, at: dollarIdx + 1) == style.mathTokenColor)  // span 内
         #expect(color(out, at: 0) != style.mathTokenColor)              // emoji 不着
+        let spaceIdx = (src as NSString).range(of: " $x^2$").location  // emoji 后那个空格（NSString index=2）
+        #expect(color(out, at: spaceIdx) != style.mathTokenColor)       // 空格不在公式区间——buggy 会误染，fixed 不染
     }
 
     @Test("CJK 前缀后的 $y$ 仍正确着色")
