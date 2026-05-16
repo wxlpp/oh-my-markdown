@@ -94,3 +94,14 @@ private func makePixel() -> PlatformImage {
     let i = NSImage(size: .init(width: 4, height: 4)); i.lockFocus(); i.unlockFocus(); return i
 }
 #endif
+
+@Suite("RenderStyle math fields")
+struct RenderStyleMathTests {
+    @Test("默认值：mathScale=1，mathColorOverride=nil，mathTokenColor 非空")
+    func defaults() {
+        let s = RenderStyle.default
+        #expect(s.mathScale == 1.0)
+        #expect(s.mathColorOverride == nil)
+        _ = s.mathTokenColor
+    }
+}

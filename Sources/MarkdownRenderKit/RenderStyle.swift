@@ -144,6 +144,14 @@ public struct RenderStyle: @unchecked Sendable {
     public var mathScale: CGFloat = 1.0
     /// Optional color override for rendered math; falls back to `textColor` when nil.
     public var mathColorOverride: PlatformColor?
+    /// 编辑器中数学定界符 token 的高亮色。
+    public var mathTokenColor: PlatformColor = {
+        #if canImport(UIKit)
+        return UIColor.systemTeal
+        #elseif canImport(AppKit)
+        return NSColor.systemTeal
+        #endif
+    }()
 
     public func isSemanticallyEqual(to other: RenderStyle) -> Bool {
         self.bodyFont.isEqual(other.bodyFont)
@@ -174,6 +182,7 @@ public struct RenderStyle: @unchecked Sendable {
                 default: return false
                 }
             }()
+            && self.mathTokenColor.isEqual(other.mathTokenColor)
     }
 
     /// Returns a copy with `quoteIndent` increased, used for nested blockquotes.
