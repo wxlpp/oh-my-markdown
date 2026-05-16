@@ -35,6 +35,16 @@ public struct MarkdownText: View {
     private let source: String
 }
 
+// MARK: - Helpers
+
+private func isSameMathRenderer(_ a: (any MathRendering)?, _ b: (any MathRendering)?) -> Bool {
+    switch (a, b) {
+    case (nil, nil): return true
+    case let (x?, y?): return (x as AnyObject) === (y as AnyObject)
+    default: return false
+    }
+}
+
 // MARK: - UIViewRepresentable
 
 #if canImport(UIKit)
@@ -43,6 +53,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     final class Coordinator {
         var lastSource = ""
         var lastStyle: RenderStyle?
+        var lastMathRenderer: (any MathRendering)?
     }
 
     let source: String
@@ -67,7 +78,10 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
             uiView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
         }
-        uiView.mathRenderer = self.mathRenderer
+        if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
+            uiView.mathRenderer = self.mathRenderer
+            context.coordinator.lastMathRenderer = self.mathRenderer
+        }
         let old = context.coordinator.lastSource
         guard old != self.source else {
             return
@@ -98,6 +112,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     final class Coordinator {
         var lastSource = ""
         var lastStyle: RenderStyle?
+        var lastMathRenderer: (any MathRendering)?
     }
 
     let source: String
@@ -117,7 +132,10 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
             nsView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
         }
-        nsView.mathRenderer = self.mathRenderer
+        if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
+            nsView.mathRenderer = self.mathRenderer
+            context.coordinator.lastMathRenderer = self.mathRenderer
+        }
         let old = context.coordinator.lastSource
         guard old != self.source else {
             return

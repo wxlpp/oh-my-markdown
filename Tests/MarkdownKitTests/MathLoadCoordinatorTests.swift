@@ -117,6 +117,15 @@ struct MathLoadCoordinatorTests {
         #expect(await c.glyph(for: key("f299")) != nil)      // 最近的保留
     }
 
+    @Test("setRenderer 同实例两次仍各自 bump generation（故守卫必须在 representable 层）")
+    func setRendererNotIdempotent() async {
+        let c = MathLoadCoordinator()
+        let r = StubRenderer(outcome: { .failed }, counter: CallCounter())
+        await c.setRenderer(r); let g1 = await c.generation
+        await c.setRenderer(r); let g2 = await c.generation
+        #expect(g2 == g1 + 1)
+    }
+
     @Test("awaitGlyph 仅等该 key 的任务即可拿到字形（无需 drain）")
     func awaitGlyphPerKey() async {
         let counter = CallCounter()

@@ -78,12 +78,23 @@ public struct MarkdownStreamingText: View {
     private let source: MarkdownStreamingSource
 }
 
+// MARK: - Helpers
+
+private func isSameMathRenderer(_ a: (any MathRendering)?, _ b: (any MathRendering)?) -> Bool {
+    switch (a, b) {
+    case (nil, nil): return true
+    case let (x?, y?): return (x as AnyObject) === (y as AnyObject)
+    default: return false
+    }
+}
+
 #if canImport(UIKit)
 private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     final class Coordinator {
         var listenerID: UUID?
         var currentSource: MarkdownStreamingSource?
         var lastStyle: RenderStyle?
+        var lastMathRenderer: (any MathRendering)?
     }
 
     let source: MarkdownStreamingSource
@@ -115,7 +126,10 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
             uiView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
         }
-        uiView.mathRenderer = self.mathRenderer
+        if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
+            uiView.mathRenderer = self.mathRenderer
+            context.coordinator.lastMathRenderer = self.mathRenderer
+        }
         if context.coordinator.currentSource !== self.source {
             self.attachListener(to: uiView, context: context)
         }
@@ -154,6 +168,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         var listenerID: UUID?
         var currentSource: MarkdownStreamingSource?
         var lastStyle: RenderStyle?
+        var lastMathRenderer: (any MathRendering)?
     }
 
     let source: MarkdownStreamingSource
@@ -181,7 +196,10 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
             nsView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
         }
-        nsView.mathRenderer = self.mathRenderer
+        if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
+            nsView.mathRenderer = self.mathRenderer
+            context.coordinator.lastMathRenderer = self.mathRenderer
+        }
         if context.coordinator.currentSource !== self.source {
             self.attachListener(to: nsView, context: context)
         }
