@@ -2254,6 +2254,11 @@ git commit -m "feat(renderkit): 编辑器复用 MathScanner 做数学 token 高�
 
 spec §12 验收。
 
+> ⚠️ **Task 14 评审强制补测（本任务必须加）：**
+> - **G2**：`display: true` 块级公式经真实 `MathJaxRenderer.render` → `.rendered`，断言尺寸/`baselineOffsetEx` 合理（现有契约 3 只覆盖 `display:false`）。
+> - **G3**：coordinator + 真实 renderer 集成——`setRenderer` 切换代际时大量在途 `render` 被取消的行为（取消粗粒度 I2：被取消的 `tex2svg` 仍跑完才返回 `.cancelled`，验证不污染新代际、不崩）。
+> - 注：C1 的并发回归守卫（同一 `MathJaxRenderer` 实例并发 N 个 `render` 不串味/不崩）已在 Task 14 修复时随 G1 落地，本任务无需重复，只需确认全量回归仍含该用例且绿。
+
 **Files:**
 - Test: `Tests/MarkdownMathTests/MathJaxRendererTests.swift`（追加端到端）
 
