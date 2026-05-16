@@ -1,4 +1,5 @@
 import Foundation
+import MarkdownCore
 
 #if canImport(UIKit)
 import UIKit
@@ -48,6 +49,7 @@ public struct MarkdownSourceHighlighter: Sendable {
 
         self.applyLineHighlights(to: result, source: source, skipping: codeBlocks)
         self.applyInlineHighlights(to: result, source: source, skipping: codeBlocks)
+        self.applyMathHighlights(to: result, source: source)
 
         // Preserve paragraph spacing while keeping editor typography compact.
         result.addAttribute(.paragraphStyle, value: self.paragraphStyle(), range: fullRange)
@@ -294,6 +296,32 @@ public struct MarkdownSourceHighlighter: Sendable {
             }
             self.applyFontTransform(to: result, range: match.range) { $0.italic() }
         }
+    }
+
+    private func applyMathHighlights(to result: NSMutableAttributedString, source: String) {
+        let ns = source as NSString
+        let spans = MathScanner.scan(source)
+        for span in spans {
+            let lower = utf16Index(ns, utf8Offset: span.range.lowerBound)
+            let upper = utf16Index(ns, utf8Offset: span.range.upperBound)
+            guard lower >= 0, upper > lower, upper <= ns.length else { continue }
+            result.addAttribute(.foregroundColor, value: self.style.mathTokenColor,
+                                range: NSRange(location: lower, length: upper - lower))
+        }
+    }
+
+    private func utf16Index(_ ns: NSString, utf8Offset: Int) -> Int {
+        var u8 = 0
+        var i = 0
+        while i < ns.length {
+            let c = ns.character(at: i)
+            let s = String(utf16CodeUnits: [c], count: 1)
+            let bytes = s.utf8.count
+            if u8 >= utf8Offset { return i }
+            u8 += bytes
+            i += 1
+        }
+        return u8 >= utf8Offset ? i : -1
     }
 
     private func applyFontTransform(
