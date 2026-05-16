@@ -47,6 +47,11 @@ private func markdownBlocksMatch(
 /// pairs. Same correct form used by `MarkdownCore`'s internal `utf8Index(at:)`
 /// (`String.Index(_:within:)` on the UTF-8 view), not a code-unit-by-code-unit
 /// walk which would mis-handle multi-byte scalars.
+///
+/// Complexity: `String.UTF8View` is not random-access, so `utf8.index(_:offsetBy:)`
+/// is O(byteOffset). On the copy path this is called exactly twice per copy
+/// operation (once for lowerByte, once for upperByte) and is not a hot path —
+/// the cost is intentionally accepted here; do not call in a loop or hot path.
 private func utf8StringIndex(in source: String, at byteOffset: Int) -> String.Index? {
     guard byteOffset >= 0, byteOffset <= source.utf8.count else {
         return nil
@@ -131,6 +136,13 @@ private func markdownSourceForRenderedSelection(
 
     // Continuous original-source span: first overlapped block's lowerBound to
     // last overlapped block's upperBound. Preserves original block separators.
+    //
+    // Known block-level limitation: if the first or last overlapped block has
+    // `sourceRange == nil` (e.g. blocks injected via `setBlocks` without a
+    // Markdown source), the *entire* selection — including any middle blocks that
+    // do carry a sourceRange — falls back to rendered plain text (all-or-nothing,
+    // determined by the boundary blocks). Per-block mixed restoration is deferred
+    // to a future version.
     guard
         let lowerByte = parsedBlocks[lower].sourceRange?.lowerBound,
         let upperByte = parsedBlocks[upper].sourceRange?.upperBound,
@@ -1528,10 +1540,11 @@ public final class MarkdownLabelView: NSView {
         super.keyDown(with: event)
     }
 
-    /// Standard first-responder copy action (Edit menu / `cmd+C`). Mirrors the
-    /// iOS `copy(_:)` override so both platforms expose one symmetric entry point.
+    /// AppKit first-responder copy entry point (Edit menu / `cmd+C`); mirrors the
+    /// iOS copy entry point (not an NSView override — NSView has no `copy(_:)`).
+    /// `@objc` is sufficient for responder-chain dispatch; `public` is not needed.
     @objc
-    public func copy(_: Any?) {
+    func copy(_: Any?) {
         self.performCopy()
     }
 
