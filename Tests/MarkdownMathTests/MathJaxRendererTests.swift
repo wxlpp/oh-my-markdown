@@ -148,4 +148,21 @@ struct MathJaxRendererTests {
             #expect(abs(sg.image.size.height - cg.image.size.height) < 1.0)
         }
     }
+
+    // MARK: - Task-14b：核心公式渲染契约（loadPackages/digits 配置修复）
+
+    @Test("核心 LaTeX 公式均 .rendered（loadPackages 配置修复）")
+    func contractCoreFormulasRender() async {
+        let r = MathJaxRenderer()
+        let formulas = ["\\sum_{i=1}^n i", "\\lim_{x\\to 0} f(x)", "\\int_0^1 x\\,dx",
+                        "\\frac{a}{b}", "\\sqrt{2}", "x^2+1", "\\vec{v}",
+                        "\\alpha+\\beta", "e^{i\\pi}+1=0",
+                        "\\begin{matrix}a&b\\\\c&d\\end{matrix}"]
+        for f in formulas {
+            let out = await r.render(latex: f, display: false, pointSize: 16, scale: 2, color: .black)
+            guard case .rendered = out else {
+                Issue.record("核心公式应 .rendered 但得 \(out): \(f)"); continue
+            }
+        }
+    }
 }
