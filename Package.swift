@@ -17,8 +17,11 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.7.3"),
-        .package(url: "https://github.com/colinc86/MathJaxSwift.git", branch: "main"),
-        .package(url: "https://github.com/swhitty/SwiftDraw.git", branch: "main"),
+        // MathJaxSwift: locked revision 00e9c3df… is upstream tag v3.5.0 → semver pin.
+        .package(url: "https://github.com/colinc86/MathJaxSwift.git", .upToNextMajor(from: "3.5.0")),
+        // SwiftDraw: locked revision is a bare `main` commit with no semver tag pointing
+        // at it; switching to a version range would change Package.resolved. Pin exactly.
+        .package(url: "https://github.com/swhitty/SwiftDraw.git", revision: "4d09d0311f3f116927e7c86b2a9d3d7fe148cc86"),
     ],
     targets: [
         // MARK: - MarkdownCore
