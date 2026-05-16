@@ -107,4 +107,45 @@ struct MathJaxRendererTests {
         }
         #expect(g.image.size.width > 1)
     }
+
+    // MARK: - Task-14 评审 G1：并发回归守卫（消除 Critical C1）
+
+    @Test("同一实例并发渲染不同公式：不串味、不崩、全 .rendered")
+    func contractConcurrentSameInstanceNoCrossContamination() async {
+        let r = MathJaxRenderer()
+        // 8 个公式：均为当前 options（loadPackages: .all）下确定**合法**且渲染尺寸
+        // 各不相同的输入（SVG 长度 1825…4389 互异 → 尺寸可区分，串味检测成立）。
+        // 注意：不使用 \sum / \lim 等带 \limits 语义的算子——它们在 MathJaxSwift +
+        // loadPackages .all 组合下会被某宏包重解释为 "Extra open brace"（与本 C1
+        // 无关，属上游 options 交互），会让 .failed 干扰并发回归判定。
+        let inputs = ["x^2", "\\frac{a}{b}", "\\vec{v}\\cdot\\vec{w}", "\\sqrt{2}",
+                      "\\alpha+\\beta", "E=mc^2", "\\int_0^1 x\\,dx", "a_{ij}"]
+        // 并发 N 个 render（同一实例），每个产物必须对应自己的输入、且都成功
+        let results = await withTaskGroup(of: (String, MathRenderOutcome).self) { group in
+            for s in inputs {
+                group.addTask { (s, await r.render(latex: s, display: false, pointSize: 16, scale: 2, color: .black)) }
+            }
+            var acc: [(String, MathRenderOutcome)] = []
+            for await pair in group { acc.append(pair) }
+            return acc
+        }
+        #expect(results.count == inputs.count)
+        for (input, outcome) in results {
+            guard case .rendered(let g) = outcome else {
+                Issue.record("并发 render \(input) 未 .rendered: \(outcome)"); continue
+            }
+            #expect(g.image.size.width > 1 && g.image.size.height > 1)
+        }
+        // 串味检测：用一个对每个输入可区分的代理量——不同公式的渲染尺寸不应全相同
+        // （强相关于"是否各自正确转换"；至少断言并发结果集与串行结果集逐一一致）
+        for input in inputs {
+            let serial = await r.render(latex: input, display: false, pointSize: 16, scale: 2, color: .black)
+            guard case .rendered(let sg) = serial,
+                  case .rendered(let cg)? = results.first(where: { $0.0 == input })?.1 else {
+                Issue.record("一致性比对失败: \(input)"); continue
+            }
+            #expect(abs(sg.image.size.width - cg.image.size.width) < 1.0)
+            #expect(abs(sg.image.size.height - cg.image.size.height) < 1.0)
+        }
+    }
 }
