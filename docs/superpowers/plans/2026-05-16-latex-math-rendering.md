@@ -663,8 +663,11 @@ git commit -m "feat(core): MathSentinel 防伪造哨兵编解码（保留标量+
 
 spec §4.2 步骤 3-4。
 
+> ⚠️ **Task 3 遗留已知限制（评审记录，本任务处理）：** `MathScanner` 的 `isList` 把空格分隔的主题分隔线 `* * *`（及 `* *`、`*  *  *`）误判为列表标记，导致紧跟其后的「缩进代码块」不被 mask——其中若含 `$…$` 会被当公式抽取、经哨兵替换后 **mangle 代码块内容**。本任务必须：(a) 加一条测试：`"text\n\n* * *\n\n    code with $x$ inside\n"` 解析后该缩进代码块原文（含 `$x$`）保持不变、不产生 `.math`/`.mathBlock`；(b) 若该测试红，在 `MathScanner` 的 `isList`（或其调用处）做窄修复：把整行去空白后仅由 `*`/`-`/`_` + 空白组成且字符数 ≥3 的行识别为 thematic break、不开 list context（不要扩成完整块解析）。修复连同测试并入本任务提交。
+
 **Files:**
 - Modify: `Sources/MarkdownCore/DocumentParser.swift`
+- Modify: `Sources/MarkdownCore/MathScanner.swift`（仅当上述 (b) 需要时）
 - Test: `Tests/MarkdownKitTests/MathParsingTests.swift`（追加）
 
 - [ ] **Step 1: 追加失败测试**
