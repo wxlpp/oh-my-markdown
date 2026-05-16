@@ -638,7 +638,11 @@ public struct AttributedStringRenderer: @unchecked Sendable {
     }
 
     private func effectiveMathPointSize() -> CGFloat {
-        let base = (self.style.bodyFont as PlatformFont).pointSize
+        // Known limitation: math size is anchored to bodyFont unconditionally. Inline $x$
+        // inside a heading will size off body, not the heading run font. Threading the
+        // active run font through renderInline would be a larger refactor; inline math in
+        // headings is uncommon enough that this trade-off is accepted.
+        let base = self.style.bodyFont.pointSize
         return MathMetrics.effectivePointSize(textPointSize: base, mathScale: self.style.mathScale)
     }
 

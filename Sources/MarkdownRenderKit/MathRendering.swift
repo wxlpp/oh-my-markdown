@@ -20,6 +20,10 @@ public struct MathRenderedGlyph: @unchecked Sendable {
         self.image = image
         self.baselineOffsetEx = baselineOffsetEx
     }
+    /// 已渲染位图。**契约**：`size` 必须是「点」单位（= 目标文本空间渲染尺寸），
+    /// 不是像素——栅格密度由平台图像 scale/backing 编码，绝不体现在 `size` 上。
+    /// `AttributedStringRenderer` 直接把 `image.size` 用作 `NSTextAttachment.bounds`；
+    /// 若返回像素尺寸，行内公式会在 Retina 上放大 scale 倍。MarkdownMath 的 SVGRasterizer 须遵守。
     public let image: PlatformImage
     /// 由 SVG vertical-align 解析得到的基线偏移（ex 单位，正值=下移）。
     public let baselineOffsetEx: CGFloat

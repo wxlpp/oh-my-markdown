@@ -59,7 +59,7 @@ struct MathAttributedRenderingTests {
         let key = MathCacheKey(
             latex: "x^2", display: false,
             pointSize: MathMetrics.effectivePointSize(
-                textPointSize: (RenderStyle.default.bodyFont as PlatformFont).pointSize,
+                textPointSize: RenderStyle.default.bodyFont.pointSize,
                 mathScale: 1.0
             ),
             colorHex: MathMetrics.colorHex(
@@ -69,10 +69,17 @@ struct MathAttributedRenderingTests {
         r.mathCache[key] = MathRenderedGlyph(image: img, baselineOffsetEx: 0.5)
         let s = r.render([.paragraph([.math(latex: "x^2")])])
         var hasAttachment = false
+        var capturedAttachment: NSTextAttachment?
         s.enumerateAttribute(.attachment, in: NSRange(location: 0, length: s.length)) { v, _, _ in
-            if v is NSTextAttachment { hasAttachment = true }
+            if let a = v as? NSTextAttachment { hasAttachment = true; capturedAttachment = a }
         }
         #expect(hasAttachment)
+        // 基线公式 pin（Task 8 评审）：bounds.y == -baselineOffsetEx * effectivePointSize * 0.5
+        let expectedPt = MathMetrics.effectivePointSize(
+            textPointSize: RenderStyle.default.bodyFont.pointSize, mathScale: 1.0)
+        if let att = capturedAttachment {
+            #expect(abs(att.bounds.origin.y - (-0.5 * expectedPt * 0.5)) < 0.001)
+        }
     }
 }
 
