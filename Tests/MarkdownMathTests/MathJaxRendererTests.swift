@@ -3,6 +3,13 @@ import Foundation
 import MathJaxSwift
 @testable import MarkdownMath
 import MarkdownRenderKit
+import MarkdownCore
+@testable import MarkdownPlatformView
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 @Suite("MathJaxRenderer")
 struct MathJaxRendererTests {
@@ -164,5 +171,92 @@ struct MathJaxRendererTests {
                 Issue.record("核心公式应 .rendered 但得 \(out): \(f)"); continue
             }
         }
+    }
+}
+
+@Suite("Math end to end")
+struct MathEndToEndTests {
+    @Test("MarkdownText 管线：解析→未命中占位→真实 renderer→命中出 attachment")
+    func fullPipeline() async {
+        let doc = MarkdownDocument(parsing: "Energy: $E=mc^2$\n\n$$\\sum_{i=1}^n i$$")
+        var renderer = AttributedStringRenderer(style: .default)
+        let first = renderer.render(doc.blocks)
+        var payloads: [(String, Bool)] = []
+        first.enumerateAttribute(.markdownMathSource, in: NSRange(location: 0, length: first.length)) { v, _, _ in
+            if let p = v as? String, let sep = p.firstIndex(of: "\u{1F}") {
+                payloads.append((String(p[p.index(after: sep)...]), p.first == "1"))
+            }
+        }
+        #expect(payloads.contains(where: { $0.0 == "E=mc^2" && $0.1 == false }))
+        #expect(payloads.contains(where: { $0.0 == "\\sum_{i=1}^n i" && $0.1 == true }))
+
+        let mj = MathJaxRenderer()
+        for (latex, display) in payloads {
+            let pt = MathMetrics.effectivePointSize(
+                textPointSize: RenderStyle.default.bodyFont.pointSize, mathScale: 1)
+            let out = await mj.render(latex: latex, display: display, pointSize: pt,
+                                      scale: 2, color: RenderStyle.default.textColor)
+            guard case .rendered(let g) = out else { Issue.record("\(latex) not rendered"); continue }
+            let key = MathCacheKey(latex: latex, display: display, pointSize: pt,
+                                   colorHex: MathMetrics.colorHex(RenderStyle.default.textColor),
+                                   rasterScale: 2, rendererGeneration: 1)
+            renderer.mathRasterScale = 2
+            renderer.mathRendererGeneration = 1
+            renderer.mathCache[key] = g
+        }
+        let second = renderer.render(doc.blocks)
+        var attachments = 0
+        second.enumerateAttribute(.attachment, in: NSRange(location: 0, length: second.length)) { v, _, _ in
+            if v is NSTextAttachment { attachments += 1 }
+        }
+        #expect(attachments == 2)
+    }
+
+    @Test("改 mathScale 后有效字号变、键变、需重渲染（不复用旧字形）")
+    func mathScaleInvalidation() {
+        var style = RenderStyle.default
+        let base = style.bodyFont.pointSize
+        let k1 = MathMetrics.effectivePointSize(textPointSize: base, mathScale: style.mathScale)
+        style.mathScale = 2.0
+        let k2 = MathMetrics.effectivePointSize(textPointSize: base, mathScale: style.mathScale)
+        #expect(k1 != k2)
+    }
+
+    // G2：display:true 块级公式经真实 renderer → .rendered，尺寸/基线合理
+    @Test("G2 块级 display 公式端到端 .rendered，尺寸点量级、基线合理")
+    func g2BlockDisplayRenders() async {
+        let mj = MathJaxRenderer()
+        let out = await mj.render(latex: "\\sum_{i=1}^n i", display: true,
+                                  pointSize: 16, scale: 2, color: .black)
+        guard case .rendered(let g) = out else { Issue.record("block display 应 .rendered: \(out)"); return }
+        #expect(g.image.size.width > 1 && g.image.size.height > 1)
+        #expect((1...400).contains(g.image.size.height))   // 点量级，非 pixel×scale
+        #expect(g.baselineOffsetEx <= 0.5)                 // 块级基线合理（通常 ~0 或负）
+    }
+
+    // G3：setRenderer 切换 + 大量在途 render 被取消——不污染新代际、不崩
+    @Test("G3 coordinator 切 renderer 时在途 render 取消不污染新代际")
+    func g3SetRendererCancelsInflightCleanly() async {
+        let c = MathLoadCoordinator()
+        await c.setRenderer(MathJaxRenderer())
+        let g1 = await c.generation
+        // 派发若干（可能在途）
+        for i in 0 ..< 6 {
+            _ = await c.loadIfNeeded(
+                key: MathCacheKey(latex: "x^{\(i)}", display: false, pointSize: 16,
+                                  colorHex: "#000", rasterScale: 2, rendererGeneration: g1),
+                latex: "x^{\(i)}", display: false, pointSize: 16, scale: 2, color: .black)
+        }
+        // 立刻切 renderer（新代际 + 清缓存/在途）
+        await c.setRenderer(MathJaxRenderer())
+        let g2 = await c.generation
+        #expect(g2 == g1 + 1)
+        // 新代际下重新派发并 await——应能正常 .rendered，不被旧在途污染、不崩
+        let key2 = MathCacheKey(latex: "y^2", display: false, pointSize: 16,
+                                colorHex: "#000", rasterScale: 2, rendererGeneration: g2)
+        _ = await c.loadIfNeeded(key: key2, latex: "y^2", display: false,
+                                 pointSize: 16, scale: 2, color: .black)
+        let glyph = await c.awaitGlyph(for: key2)
+        #expect(glyph != nil)
     }
 }

@@ -82,7 +82,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MarkdownMathTests",
-            dependencies: ["MarkdownMath", "MarkdownCore", "MarkdownRenderKit"]
+            dependencies: ["MarkdownMath", "MarkdownCore", "MarkdownRenderKit", "MarkdownPlatformView"]
         ),
     ]
 )
