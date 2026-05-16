@@ -1241,9 +1241,11 @@ private func makePixel() -> PlatformImage {
 - [ ] **Step 2: 运行验证失败**
 
 Run: `swift test --filter "Math attributed rendering"`
-Expected: FAIL（`.math` 未处理，无属性/附件）。
+Expected: FAIL（**注意**：`.math`/`.mathBlock` 在 Task 2 已作为「原样输出 latex 文本」的存根存在，所以这里不是编译失败，而是**行为失败**——占位文本无 `.markdownMathSource` 属性、命中缓存也不出 `NSTextAttachment`）。
 
-- [ ] **Step 3: 加 mathCache 与渲染分支**
+- [ ] **Step 3: 加 mathCache 与渲染分支（替换 Task 2 存根，不是新增 case）**
+
+> ⚠️ Task 2 已在 inline switch（`.html` 之前）与 block switch（`.table` 之前）各加了一个 `.math`/`.mathBlock` **存根 case**（`NSAttributedString(string: latex, ...)` 原样回退）。本步骤是**就地替换这两个存根 case 的实现体**，**不要新增 case**（重复 case 会编译报错）。位置：inline 存根约在 `renderInline` 的 `.html` 分支前、block 存根约在 `renderBlock` 的 `.table` 分支前。
 
 `AttributedStringRenderer.swift`，在 `public var imageCache` 声明后追加：
 
@@ -1255,14 +1257,14 @@ Expected: FAIL（`.math` 未处理，无属性/附件）。
     public var mathRendererGeneration: Int = 0
 ```
 
-在 inline 渲染 `switch` 里 `.html` 分支之前加入 `.math` 处理（紧贴 `case .image` 风格）：
+把 Task 2 的 inline `.math` 存根（`.html` 分支前那个 `case .math(let latex): return NSAttributedString(string: latex, ...)`）的实现体**替换**为：
 
 ```swift
         case .math(let latex):
             return self.renderMath(latex: latex, display: false, baseAttributes: attributes)
 ```
 
-在 block 渲染 `switch`（`renderBlock`）里 `.table` 之前加入：
+把 Task 2 的 block `.mathBlock` 存根（`renderBlock` 里 `.table` 分支前那个 `case .mathBlock(let latex):` 原样回退）的实现体**替换**为：
 
 ```swift
         case .mathBlock(let latex):
