@@ -1,31 +1,39 @@
 import Testing
 import Foundation
-import MathJaxSwift
-import SwiftDraw
+@testable import MarkdownMath
+import MarkdownRenderKit
 
-@Suite("SwiftDraw × MathJax spike")
-struct SVGRasterizerSpikeTests {
-    @Test("tex2svg 产出可被 SwiftDraw 光栅化为非空位图")
-    func mathjaxSVGRasterizes() async throws {
-        let mathjax = try MathJax(preferredOutputFormat: .svg)
-        let svg = try await mathjax.tex2svg("x^2 + \\frac{a}{b}")
-        #expect(svg.contains("<svg"))
+@Suite("SVGRasterizer")
+struct SVGRasterizerUnitTests {
+    private let sample = """
+    <svg xmlns="http://www.w3.org/2000/svg" width="2.5ex" height="1.2ex" \
+    viewBox="0 -442 1041 466" style="vertical-align: -0.25ex;"><g fill="currentColor">\
+    <rect x="0" y="0" width="100" height="100"/></g></svg>
+    """
 
-        // MathJax emits `ex` CSS units for width/height (e.g. "7.64ex").
-        // SwiftDraw does not support `ex` units and returns nil; normalise to `px`
-        // before handing off. This pre-processing is part of the real rasteriser
-        // pipeline (Task 13 SVGRasterizer) — verified here as part of the spike.
-        let normalisedSVG = svg.replacingOccurrences(
-            of: #"(\d+\.?\d*)ex"#,
-            with: "$1px",
-            options: .regularExpression
-        )
+    @Test("注入颜色：currentColor 被替换为指定 hex")
+    func colorInjection() {
+        let out = SVGRasterizer.injectColor(into: sample, hex: "#FF0000")
+        #expect(!out.contains("currentColor"))
+        #expect(out.contains("#FF0000"))
+    }
 
-        let data = try #require(normalisedSVG.data(using: .utf8))
-        let drawing = try #require(SVG(data: data))
-        // On macOS (AppKit), SwiftDraw exposes rasterize(with:scale:) -> NSImage.
-        let image = drawing.rasterize(with: nil, scale: 2.0)
-        #expect(image.size.width > 1)
-        #expect(image.size.height > 1)
+    @Test("解析 vertical-align(ex) 为基线偏移")
+    func parseBaseline() {
+        #expect(SVGRasterizer.parseVerticalAlignEx(sample) == -0.25)
+    }
+
+    @Test("光栅化产出非退化位图 + 基线 + 点尺寸契约")
+    func rasterize() throws {
+        let glyph = try SVGRasterizer.rasterize(
+            svg: sample, hex: "#000000", pointSize: 16, scale: 2)
+        #expect(glyph.image.size.width > 1)
+        #expect(glyph.baselineOffsetEx == -0.25)
+        let glyph1x = try SVGRasterizer.rasterize(
+            svg: sample, hex: "#000000", pointSize: 16, scale: 1)
+        #expect(abs(glyph.image.size.height - glyph1x.image.size.height) < 0.5)
+        let glyphBig = try SVGRasterizer.rasterize(
+            svg: sample, hex: "#000000", pointSize: 32, scale: 2)
+        #expect(glyphBig.image.size.height > glyph.image.size.height)
     }
 }
