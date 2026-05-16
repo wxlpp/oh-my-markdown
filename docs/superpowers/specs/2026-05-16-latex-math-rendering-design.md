@@ -107,7 +107,7 @@ extension NSAttributedString.Key {
 struct MathCacheKey: Hashable {
     let latex: String
     let display: Bool
-    let pointSize: CGFloat
+    let pointSize: CGFloat         // **有效**字号 = 文本字号 × RenderStyle.mathScale
     let colorHex: String
     let rasterScale: CGFloat       // 屏幕 scale，跨显示器/外接屏不复用错分辨率字形
     let rendererGeneration: Int    // 渲染器代际，换实例/从失败恢复后强制失效
@@ -122,7 +122,8 @@ struct MathRenderedGlyph: Sendable {
 var mathCache: [MathCacheKey: MathRenderedGlyph] = [:]
 ```
 
-- 样式 / 动态字体变化 ⇒ `pointSize` / `colorHex` 变 ⇒ key 变 ⇒ 自动重渲染（与图片缓存同思路）
+- **有效字号契约**：渲染器与缓存只认 `pointSize`，其值统一为 `文本字号 × RenderStyle.mathScale`，在「键计算」与「调用 `render`」两处**用同一公式、同一处算出**。`mathScale` 不单独进 key，也不进协议——它在入口就被折进 `pointSize`，从根上杜绝「改 `mathScale` 但 key 不变」的陈旧复用
+- 样式 / 动态字体 / `mathScale` 变化 ⇒ 有效 `pointSize` 变 ⇒ key 变 ⇒ 自动重渲染（与图片缓存同思路）
 - 显示器 scale 变化 ⇒ `rasterScale` 变 ⇒ key 变，不复用旧分辨率位图
 - `rendererGeneration` 由平台层维护：每次 `mathRenderer` 被设置/替换时自增；写入缓存（含负缓存）时一并带上，使旧 renderer 的正/负缓存条目自然失效，避免「换 renderer 或从失败恢复后仍显示陈旧字形/陈旧回落文本」
 
@@ -143,6 +144,7 @@ public enum MathRenderOutcome: Sendable {
 }
 
 public protocol MathRendering: Sendable {
+    // pointSize 已是「有效字号」（文本字号 × mathScale）；scale 为屏幕光栅化 scale
     func render(latex: String, display: Bool,
                 pointSize: CGFloat, scale: CGFloat,
                 color: PlatformColor) async -> MathRenderOutcome
@@ -204,7 +206,7 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 - `MarkdownSourceHighlighter` 复用 `MathScanner` 共享定界符扫描，对四种形式只染色（像 inline code），不渲染
 - `RenderStyle` 新增：
   - `mathTokenColor`（编辑器高亮色）
-  - `mathScale`（默认 1.0）
+  - `mathScale`（默认 1.0）—— **仅在渲染入口折进有效 `pointSize`**（见 5.1 有效字号契约），不单独进缓存键/协议；改它即改有效字号、key 变、自动重渲染
   - `mathColorOverride`（nil → 用 `textColor`）
 
 ## 10. 测试
@@ -215,7 +217,7 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 - **IR / 增量**：`.math` / `.mathBlock` 位置正确；`parsingAppend` 在 prefix/tail 含公式时仍正确
 - **增量边界（高优先级）**：开界符在被保留 prefix 块、闭界符在追加文本时，增量结果须与全量解析一致（前移重解析起点或全量回退）；跨多个 block 的 `$$…$$` 在逐 chunk 流式追加下最终渲染正确；代码围栏内的 `$$` 不触发误判
 - **失败负缓存（高优先级）**：`.failed` 公式在后续多次 `updateContent()`/流式 pass 中**不被重复派发**（断言派发次数有上限）；`.cancelled` 不写负缓存、后续仍重试；`MathJax()` init 抛错全程只发生一次；用桩 renderer 分别返回 `.failed`/`.cancelled` 验证分派正确
-- **缓存失效（高优先级）**：替换 `mathRenderer` 实例后 `_rendererGeneration` 自增且正/负/loading 缓存被清，从「失败 renderer」换到「正常 renderer」后陈旧回落文本消失、公式重渲染；`rasterScale` 变化产生新 key、不复用旧分辨率位图
+- **缓存失效（高优先级）**：替换 `mathRenderer` 实例后 `_rendererGeneration` 自增且正/负/loading 缓存被清，从「失败 renderer」换到「正常 renderer」后陈旧回落文本消失、公式重渲染；`rasterScale` 变化产生新 key、不复用旧分辨率位图；**改 `RenderStyle.mathScale` 后有效 `pointSize` 变、key 变、公式按新尺寸重渲染（不复用旧字形）**，并断言键计算与 `render` 入参用的是同一有效字号
 - **RenderKit**：空缓存 → 占位 + 属性存在；命中 → attachment 带基线 bounds；`mathRenderer == nil` 回落路径
 - **MarkdownMath**（独立 gated target）：已知公式返回非空且尺寸为正；非法公式返回非空（MathJax 错误 SVG）；SVG 颜色注入生效
 - **编辑器**：高亮只覆盖定界符区段
@@ -227,7 +229,7 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 3. 流式中途半截 `$…$`：scanner 见未配对 → 暂作字面文本，闭合定界符到达后成公式（短暂闪烁，可接受）
 4. **增量解析跨保留块漏判（已在 4.3 设计中规避）**：开界符在 prefix、闭界符在 suffix 时必须前移重解析起点或全量回退——实现须以「跨多 block 流式 $$」测试为准入门槛
 5. **硬失败无限重试 / 失败分类丢失（已在 5.3 + 6.1 设计中规避）**：协议返回 `MathRenderOutcome` 显式区分 `.failed`/`.cancelled`，平台层据此精确缓存；实现须以「失败公式流式不重复派发」「取消后可重试」测试为准入门槛
-6. **缓存身份过窄 / 陈旧复用（已在 5.1 + 6 设计中规避）**：`rasterScale` + `rendererGeneration` 进键，且换 renderer / scale 变化即清缓存；实现须以「换 renderer 后恢复」「跨 scale 不复用」测试为准入门槛
+6. **缓存身份过窄 / 陈旧复用（已在 5.1 + 6 设计中规避）**：`rasterScale` + `rendererGeneration` 进键，`mathScale` 折进有效 `pointSize`，且换 renderer / scale 变化即清缓存；实现须以「换 renderer 后恢复」「跨 scale 不复用」「改 mathScale 重渲染」测试为准入门槛
 7. **容器结构破坏（已在 4.2 设计中规避）**：块级公式回填必须就地、保留父容器与兄弟顺序，绝不上提到顶层——实现须以嵌套场景测试为准入门槛
 8. **哨兵伪造/碰撞（已在 4.2 设计中规避）**：保留标量 + 替换前转义已有出现 + 还原，确保用户文本无法跨越解析器信任边界
 
@@ -243,5 +245,6 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 - 跨多个块的 `$$…$$` 在逐 chunk 流式下最终渲染与全量解析一致
 - 渲染器硬失败的公式不在流式中被反复重试（派发次数有上限），取消的公式后续仍能成功
 - 替换 `mathRenderer`（含从失败恢复）后陈旧回落文本/字形清除并以新 renderer 重渲染
+- 改 `RenderStyle.mathScale` 后公式按新尺寸重渲染，不复用旧 scale 的缓存字形
 - 流式追加含公式的文本不崩、最终渲染正确
 - 现有图片 / 表格 / 列表等渲染与增量解析行为不回归
