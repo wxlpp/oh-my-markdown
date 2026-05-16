@@ -15,25 +15,25 @@ public enum MathSentinel {
     /// 变换串↔原始源码的字节区间对应（单调、覆盖整条变换串）。
     /// 非锚段为仿射：`original = transformedStart 内的偏移 + originalStart`（同长，逐字节 1:1）。
     /// 锚段：变换串里的 `S<idx>S` 整体对应原始公式区间 `originalStart ..< originalEnd`。
-    public struct Segment: Sendable, Equatable {
-        public let transformedStart: Int
-        public let transformedEnd: Int
-        public let originalStart: Int
-        public let originalEnd: Int
-        public let isAnchor: Bool
+    struct Segment: Sendable, Equatable {
+        let transformedStart: Int
+        let transformedEnd: Int
+        let originalStart: Int
+        let originalEnd: Int
+        let isAnchor: Bool
     }
 
     public struct SubstituteResult: Sendable {
         public let transformed: String
         public let table: [Entry]
         /// 按 transformedStart 升序、首尾相接、覆盖 `[0, transformed.utf8.count]` 的分段表。
-        public let segments: [Segment]
+        let segments: [Segment]
 
         /// 把变换串里的 UTF-8 字节偏移映射回原始源码的 UTF-8 字节偏移（单调非降）。
         /// 仿射段内 1:1 平移；落在锚内部时夹到该公式原始区间的对应端
         /// （`atUpperBound == false` → 取原始下界；`true` → 取原始上界），
         /// 使「跨锚的块区间」在原始空间仍完整覆盖公式源码字节。
-        public func originalByteOffset(forTransformed offset: Int, atUpperBound: Bool) -> Int {
+        func originalByteOffset(forTransformed offset: Int, atUpperBound: Bool) -> Int {
             guard let last = segments.last else { return offset }
             if offset <= 0 { return self.segments.first?.originalStart ?? 0 }
             if offset >= last.transformedEnd { return last.originalEnd }
