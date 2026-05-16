@@ -110,7 +110,7 @@ public enum MathScanner {
     /// 供增量边界判定复用同一套代码区规则。
     /// 返回 UTF-8 字节索引的 `[Bool]`，长度 == `Array(source.utf8).count`，
     /// 与 `MathSpan.range`（UTF-8 字节偏移）索引对齐。
-    public static func debugCodeMask(source: String) -> [Bool] {
+    public static func codeRegionMask(source: String) -> [Bool] {
         self.codeRegionMask(source: source, byteCount: Array(source.utf8).count)
     }
 

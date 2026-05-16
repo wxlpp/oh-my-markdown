@@ -10,13 +10,18 @@ import Markdown
 public struct MarkdownDocument: Sendable, Equatable {
     /// Parse a Markdown source string into a document.
     public init(parsing source: String) {
+        self.parsedBlocks = Self.parsePipeline(source)
+        self.blocks = self.parsedBlocks.map(\.block)
+    }
+
+    /// 数学感知解析管线：扫描 → 哨兵替换 → swift-markdown 解析 → 数学回填。
+    /// `init(parsing:)` 与增量尾窗重解析共用此管线，保证两路语义完全一致。
+    private static func parsePipeline(_ source: String) -> [ParsedBlockNode] {
         let mathSpans = MathScanner.scan(source)
         let sub = MathSentinel.substitute(source: source, spans: mathSpans)
         let swiftMarkdownDoc = Markdown.Document(parsing: sub.transformed)
         let raw = DocumentParser().parse(source: sub.transformed, document: swiftMarkdownDoc)
-        let resolved = MathBackfill.resolve(raw, table: sub.table)
-        self.parsedBlocks = resolved
-        self.blocks = self.parsedBlocks.map(\.block)
+        return MathBackfill.resolve(raw, table: sub.table)
     }
 
     public init(parsedBlocks: [ParsedBlockNode]) {
@@ -56,11 +61,7 @@ public struct MarkdownDocument: Sendable, Equatable {
         let suffix = String(newSource[suffixStart...])
         // 与 init(parsing:) 同一管线：扫描 → 哨兵替换 → 解析 → 回填，使重解析的尾窗
         // 也能识别数学（前缀已确认无未闭合开界符，故按块边界切出的尾窗对数学自洽）。
-        let suffixSpans = MathScanner.scan(suffix)
-        let suffixSub = MathSentinel.substitute(source: suffix, spans: suffixSpans)
-        let suffixDoc = Markdown.Document(parsing: suffixSub.transformed)
-        let suffixRaw = DocumentParser().parse(source: suffixSub.transformed, document: suffixDoc)
-        let reparsedTail = MathBackfill.resolve(suffixRaw, table: suffixSub.table)
+        let reparsedTail = Self.parsePipeline(suffix)
             .map { parsed in
                 ParsedBlockNode(
                     block: parsed.block,
@@ -87,12 +88,23 @@ public struct MarkdownDocument: Sendable, Equatable {
     /// previousSource 末尾是否处于「数学定界符未闭合」状态。
     /// 复用 MathScanner 的代码区/转义规则：若存在任何开界符但 scan 未把它配成 span，
     /// 说明闭合符尚未出现，追加文本可能闭合它 → 必须全量。
+    /// 保守性：任何裸露未配对的 `$` / `\(` / `\[`（包括 `price $5` 这类非数学散文）
+    /// 都会保守地强制全量重解析——符合 spec §4.3，并非最小化。
     static func previousSourceHasOpenMathDelimiter(_ source: String) -> Bool {
-        let spans = MathScanner.scan(source)
         let bytes = Array(source.utf8)
-        let covered = spans.map(\.range)
-        func isCovered(_ i: Int) -> Bool { covered.contains { $0.contains(i) } }
-        let mask = MathScanner.debugCodeMask(source: source)
+        // 廉价早退：既无 `$`(0x24) 也无 `\`(0x5C) 时不可能有任何数学开界符，
+        // 直接返回，避免常见无数学流式场景为重扫描/掩码付费。
+        if !bytes.contains(0x24), !bytes.contains(0x5C) { return false }
+        let spans = MathScanner.scan(source)
+        // 单次预计算覆盖掩码：把 O(spans) 的逐字节命中折成 O(1) 查表。
+        var coveredMask = [Bool](repeating: false, count: bytes.count)
+        for span in spans {
+            for x in span.range where x >= 0 && x < coveredMask.count {
+                coveredMask[x] = true
+            }
+        }
+        func isCovered(_ i: Int) -> Bool { coveredMask[i] }
+        let mask = MathScanner.codeRegionMask(source: source)
         var i = 0
         while i < bytes.count {
             if mask[i] { i += 1; continue }

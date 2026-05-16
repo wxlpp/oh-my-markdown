@@ -150,4 +150,12 @@ struct MathIncrementalBoundaryTests {
         let incremental = MarkdownDocument(parsing: prev).parsingAppend(to: next, previousSource: prev)
         #expect(incremental.blocks == MarkdownDocument(parsing: next).blocks)
     }
+
+    @Test("跨保留块的 \\[ \\] 流式追加，增量 == 全量")
+    func crossBlockBracketStreaming() {
+        let prev = "intro\n\n\\[\n\\frac{a}{b}\n"
+        let next = prev + "\\frac{c}{d}\n\\]\n\ntail"
+        let incremental = MarkdownDocument(parsing: prev).parsingAppend(to: next, previousSource: prev)
+        #expect(incremental.blocks == MarkdownDocument(parsing: next).blocks)
+    }
 }
