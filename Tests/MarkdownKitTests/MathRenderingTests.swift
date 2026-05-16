@@ -46,6 +46,46 @@ struct MathAttributedRenderingTests {
         #expect(found)
     }
 
+    // Bug 3: baselineOffsetEx is always negative in practice (MathJax convention).
+    // A negative baselineOffsetEx means the glyph sits below the text baseline,
+    // so bounds.origin.y must also be negative (NSTextAttachment: negative y = sink down).
+    // The fix is to pass-through the sign directly: y = baselineOffsetEx * exToPoints.
+    @Test("负 baselineOffsetEx → bounds.origin.y 为负（公式下沉，符号不反置）")
+    func baselineSignPassthrough() {
+        var r = AttributedStringRenderer(style: .default)
+        let img = makePixel()
+        let effectivePt = MathMetrics.effectivePointSize(
+            textPointSize: RenderStyle.default.bodyFont.pointSize,
+            mathScale: 1.0
+        )
+        let key = MathCacheKey(
+            latex: "x", display: false,
+            pointSize: effectivePt,
+            colorHex: MathMetrics.colorHex(
+                RenderStyle.default.mathColorOverride ?? RenderStyle.default.textColor
+            ),
+            rasterScale: 1, rendererGeneration: 0
+        )
+        // Negative baselineOffsetEx mirrors real MathJax output (e.g. "x" → -0.025 ex)
+        r.mathCache[key] = MathRenderedGlyph(image: img, baselineOffsetEx: -0.5)
+        let s = r.render([.paragraph([.math(latex: "x")])])
+        var capturedAttachment: NSTextAttachment?
+        s.enumerateAttribute(.attachment, in: NSRange(location: 0, length: s.length)) { v, _, _ in
+            if let a = v as? NSTextAttachment { capturedAttachment = a }
+        }
+        guard let att = capturedAttachment else {
+            Issue.record("No NSTextAttachment found — cache miss")
+            return
+        }
+        // With correct sign pass-through: y = -0.5 * (effectivePt * 0.5) < 0 (glyph sinks)
+        // Buggy code negates again: y = -(-0.5) * exToPoints = +positive → fails < 0
+        #expect(att.bounds.origin.y < 0, "bounds.origin.y must be negative (glyph sinks below baseline)")
+        let exToPoints = effectivePt * 0.5
+        let expectedY = -0.5 * exToPoints   // baselineOffsetEx * exToPoints
+        #expect(abs(att.bounds.origin.y - expectedY) < 0.001,
+                "y should equal baselineOffsetEx * exToPoints = \(expectedY), got \(att.bounds.origin.y)")
+    }
+
     @Test("命中缓存 → NSTextAttachment，基线按 baselineOffsetEx 下移")
     func attachmentWhenHit() {
         var r = AttributedStringRenderer(style: .default)
@@ -74,11 +114,13 @@ struct MathAttributedRenderingTests {
             if let a = v as? NSTextAttachment { hasAttachment = true; capturedAttachment = a }
         }
         #expect(hasAttachment)
-        // 基线公式 pin（Task 8 评审）：bounds.y == -baselineOffsetEx * effectivePointSize * 0.5
+        // 基线公式 pin（Bug 3 修复后）：bounds.y == baselineOffsetEx * effectivePointSize * 0.5（同号透传）
         let expectedPt = MathMetrics.effectivePointSize(
             textPointSize: RenderStyle.default.bodyFont.pointSize, mathScale: 1.0)
         if let att = capturedAttachment {
-            #expect(abs(att.bounds.origin.y - (-0.5 * expectedPt * 0.5)) < 0.001)
+            // After Bug 3 fix: y = baselineOffsetEx * exToPoints (sign pass-through, no negation).
+            // baselineOffsetEx=0.5 (positive = glyph sits above baseline) → y = +0.5 * exToPoints > 0.
+            #expect(abs(att.bounds.origin.y - (0.5 * expectedPt * 0.5)) < 0.001)
         }
     }
 }

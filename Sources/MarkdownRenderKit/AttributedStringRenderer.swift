@@ -669,7 +669,7 @@ public struct AttributedStringRenderer: @unchecked Sendable {
             let exToPoints = self.effectiveMathPointSize() * 0.5
             attachment.bounds = CGRect(
                 x: 0,
-                y: -glyph.baselineOffsetEx * exToPoints,
+                y: glyph.baselineOffsetEx * exToPoints,
                 width: sz.width,
                 height: sz.height
             )
