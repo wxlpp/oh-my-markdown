@@ -72,31 +72,31 @@ struct MathParsingIntegrationTests {
             MarkdownDocument(parsing: "[txt $$lx$$](https://e.com)"),
             MarkdownDocument(parsing: "*$$only$$*"),
         ]
-        // 收集整棵 IR 里所有 InlineNode，断言：无任何 .html 含 U+10FE02 哨兵；至少出现一个 .math。
+        /// 收集整棵 IR 里所有 InlineNode，断言：无任何 .html 含 U+10FE02 哨兵；至少出现一个 .math。
         func inlines(_ b: BlockNode) -> [InlineNode] {
             switch b {
-            case .paragraph(let n), .heading(_, let n): return n.flatMap(flatten)
-            case .blockquote(let bs): return bs.flatMap(inlines)
+            case .paragraph(let n), .heading(_, let n): n.flatMap(flatten)
+            case .blockquote(let bs): bs.flatMap(inlines)
             case .bulletList(let items), .orderedList(_, let items):
-                return items.flatMap { $0.blocks.flatMap(inlines) }
+                items.flatMap { $0.blocks.flatMap(inlines) }
             case .table(_, let head, let rows):
-                return head.flatMap { $0.content.flatMap(flatten) }
+                head.flatMap { $0.content.flatMap(flatten) }
                     + rows.flatMap { $0.flatMap { $0.content.flatMap(flatten) } }
-            default: return []
+            default: []
             }
         }
         func flatten(_ n: InlineNode) -> [InlineNode] {
             switch n {
-            case .emphasis(let c), .strong(let c), .strikethrough(let c): return [n] + c.flatMap(flatten)
-            case .link(_, _, let c): return [n] + c.flatMap(flatten)
-            default: return [n]
+            case .emphasis(let c), .strong(let c), .strikethrough(let c): [n] + c.flatMap(flatten)
+            case .link(_, _, let c): [n] + c.flatMap(flatten)
+            default: [n]
             }
         }
         for doc in docs {
             let all = doc.blocks.flatMap(inlines)
-            let hasSentinelHTML = all.contains { if case .html(let s) = $0 { return s.unicodeScalars.contains("\u{10FE02}") } else { return false } }
+            let hasSentinelHTML = all.contains { if case .html(let s) = $0 { s.unicodeScalars.contains("\u{10FE02}") } else { false } }
             #expect(!hasSentinelHTML)
-            let hasMath = all.contains { if case .math = $0 { return true } else { return false } }
+            let hasMath = all.contains { if case .math = $0 { true } else { false } }
             #expect(hasMath)
         }
     }
@@ -157,5 +157,40 @@ struct MathIncrementalBoundaryTests {
         let next = prev + "\\frac{c}{d}\n\\]\n\ntail"
         let incremental = MarkdownDocument(parsing: prev).parsingAppend(to: next, previousSource: prev)
         #expect(incremental.blocks == MarkdownDocument(parsing: next).blocks)
+    }
+}
+
+@Suite("Math incremental sourceRange offset")
+struct MathIncrementalSourceRangeTests {
+    @Test("前置保留块含闭合行内公式后追加：增量 == 全量 (case 1)")
+    func preservedBlockInlineMathThenAppend() {
+        let prev = "para with $a$ inline\n\nlast para"
+        let next = prev + " more"
+        let inc = MarkdownDocument(parsing: prev).parsingAppend(to: next, previousSource: prev)
+        #expect(inc.blocks == MarkdownDocument(parsing: next).blocks)
+    }
+
+    @Test("前置保留块含公式后追加块级公式：增量 == 全量 (case 2)")
+    func preservedBlockInlineMathThenBlockAppend() {
+        let prev = "done $a$ ok\n\npara two"
+        let next = prev + "\n\n$$\nx"
+        let inc = MarkdownDocument(parsing: prev).parsingAppend(to: next, previousSource: prev)
+        #expect(inc.blocks == MarkdownDocument(parsing: next).blocks)
+    }
+
+    @Test("多个前置保留块各含公式后追加：增量 == 全量")
+    func multiplePreservedMathBlocks() {
+        let prev = "a $x$ one\n\nb $yy$ two\n\nc \\(z\\) three\n\ntail"
+        let next = prev + " appended"
+        let inc = MarkdownDocument(parsing: prev).parsingAppend(to: next, previousSource: prev)
+        #expect(inc.blocks == MarkdownDocument(parsing: next).blocks)
+    }
+
+    @Test("无公式的前置块（回归保护，不得破坏既有增量）")
+    func noMathPreservedStillIncrementalCorrect() {
+        let prev = "# Title\n\nplain prefix paragraph\n\nlast"
+        let next = prev + " more"
+        let inc = MarkdownDocument(parsing: prev).parsingAppend(to: next, previousSource: prev)
+        #expect(inc.blocks == MarkdownDocument(parsing: next).blocks)
     }
 }

@@ -21,7 +21,38 @@ public struct MarkdownDocument: Sendable, Equatable {
         let sub = MathSentinel.substitute(source: source, spans: mathSpans)
         let swiftMarkdownDoc = Markdown.Document(parsing: sub.transformed)
         let raw = DocumentParser().parse(source: sub.transformed, document: swiftMarkdownDoc)
-        return MathBackfill.resolve(raw, table: sub.table)
+        // swift-markdown 在「变换串」上解析，sourceRange/fingerprint 都是变换串字节空间。
+        // 但 init(parsing:) 与 parsingAppend 都按「原始源码」消费这些区间
+        // （reparseStart / utf8Index / offset(byUTF8:) / hasPrefix / 尾窗切片）。
+        // 哨兵替换会改变字节长度（行内 `$a$` 3 字节 → `S0S` 9 字节；用户文本里的
+        // U+10FE00 也会 +4 转义），故此处把每个 sourceRange 映回原始源码字节空间，
+        // 并据此从「原始源码」重算 fingerprint，保证两路与 spec §4.3 自洽。
+        let mapped = Self.mapToOriginalSpace(raw, sub: sub, originalSource: source)
+        return MathBackfill.resolve(mapped, table: sub.table)
+    }
+
+    /// 把 raw 解析块的 `sourceRange`（变换串字节空间）映回原始源码字节空间，
+    /// 并用原始源码切片重算 `fingerprint`（原始空间区间 ↔ 原始源码，自洽）。
+    private static func mapToOriginalSpace(
+        _ raw: [ParsedBlockNode],
+        sub: MathSentinel.SubstituteResult,
+        originalSource: String
+    ) -> [ParsedBlockNode] {
+        let originalMapper = SourceRangeMapper(source: originalSource)
+        return raw.map { node in
+            guard let xfRange = node.sourceRange else { return node }
+            let lower = sub.originalByteOffset(forTransformed: xfRange.lowerBound, atUpperBound: false)
+            let upper = sub.originalByteOffset(forTransformed: xfRange.upperBound, atUpperBound: true)
+            guard lower <= upper else {
+                return ParsedBlockNode(block: node.block, sourceRange: nil, fingerprint: nil)
+            }
+            let origRange = MarkdownSourceRange(lowerBound: lower, upperBound: upper)
+            return ParsedBlockNode(
+                block: node.block,
+                sourceRange: origRange,
+                fingerprint: originalMapper.fingerprint(in: origRange)
+            )
+        }
     }
 
     public init(parsedBlocks: [ParsedBlockNode]) {
@@ -103,13 +134,17 @@ public struct MarkdownDocument: Sendable, Equatable {
                 coveredMask[x] = true
             }
         }
-        func isCovered(_ i: Int) -> Bool { coveredMask[i] }
+        func isCovered(_ i: Int) -> Bool {
+            coveredMask[i]
+        }
         let mask = MathScanner.codeRegionMask(source: source)
         var i = 0
         while i < bytes.count {
             if mask[i] { i += 1; continue }
             var bs = 0, k = i - 1
-            while k >= 0, bytes[k] == 0x5C { bs += 1; k -= 1 }
+            while k >= 0, bytes[k] == 0x5C {
+                bs += 1; k -= 1
+            }
             let escaped = bs % 2 == 1
             if !escaped, !isCovered(i) {
                 if bytes[i] == 0x24 { return true }
