@@ -30,3 +30,60 @@ struct MathRenderingTypeTests {
                                      colorHex: "#000", rasterScale: 3, rendererGeneration: 1))
     }
 }
+
+import MarkdownCore
+
+@Suite("Math attributed rendering")
+struct MathAttributedRenderingTests {
+    @Test("未命中缓存 → 占位文本带 markdownMathSource 属性")
+    func placeholderWhenMiss() {
+        let r = AttributedStringRenderer(style: .default)
+        let s = r.render([.paragraph([.text("a "), .math(latex: "x^2")])])
+        var found = false
+        s.enumerateAttribute(.markdownMathSource, in: NSRange(location: 0, length: s.length)) { v, _, _ in
+            if let payload = v as? String { #expect(payload == "0\u{1F}x^2"); found = true }
+        }
+        #expect(found)
+    }
+
+    @Test("命中缓存 → NSTextAttachment，基线按 baselineOffsetEx 下移")
+    func attachmentWhenHit() {
+        var r = AttributedStringRenderer(style: .default)
+        let img = makePixel()
+        // Derive the key's pointSize/colorHex from the actual `.default` style via the
+        // same public formula the renderer uses, instead of hardcoding 16. On the macOS
+        // (AppKit) host build `.default.bodyFont` is size 15, not 16, so a hardcoded-16
+        // key would never match the renderer's size-15-derived key and this test would
+        // fail on macOS. This keeps the assertion strict (cache hit ⇒ attachment) while
+        // being host-independent. See Task 8 plan "default-font test-robustness".
+        let key = MathCacheKey(
+            latex: "x^2", display: false,
+            pointSize: MathMetrics.effectivePointSize(
+                textPointSize: (RenderStyle.default.bodyFont as PlatformFont).pointSize,
+                mathScale: 1.0
+            ),
+            colorHex: MathMetrics.colorHex(
+                RenderStyle.default.mathColorOverride ?? RenderStyle.default.textColor
+            ),
+            rasterScale: 1, rendererGeneration: 0)
+        r.mathCache[key] = MathRenderedGlyph(image: img, baselineOffsetEx: 0.5)
+        let s = r.render([.paragraph([.math(latex: "x^2")])])
+        var hasAttachment = false
+        s.enumerateAttribute(.attachment, in: NSRange(location: 0, length: s.length)) { v, _, _ in
+            if v is NSTextAttachment { hasAttachment = true }
+        }
+        #expect(hasAttachment)
+    }
+}
+
+#if canImport(UIKit)
+import UIKit
+private func makePixel() -> PlatformImage {
+    UIGraphicsImageRenderer(size: .init(width: 4, height: 4)).image { _ in }
+}
+#elseif canImport(AppKit)
+import AppKit
+private func makePixel() -> PlatformImage {
+    let i = NSImage(size: .init(width: 4, height: 4)); i.lockFocus(); i.unlockFocus(); return i
+}
+#endif

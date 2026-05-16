@@ -136,6 +136,15 @@ public struct RenderStyle: @unchecked Sendable {
     /// Additional head indent applied inside blockquotes (points).
     public var quoteIndent: CGFloat
 
+    // MARK: Math
+
+    /// Multiplier applied to the body point size to derive the math glyph size.
+    /// (Task 9 will own full math styling; this minimal pair is added early so the
+    /// renderer's math-key computation can compile — see Task 8 ordering note.)
+    public var mathScale: CGFloat = 1.0
+    /// Optional color override for rendered math; falls back to `textColor` when nil.
+    public var mathColorOverride: PlatformColor?
+
     public func isSemanticallyEqual(to other: RenderStyle) -> Bool {
         self.bodyFont.isEqual(other.bodyFont)
             && self.codeFont.isEqual(other.codeFont)
@@ -157,6 +166,14 @@ public struct RenderStyle: @unchecked Sendable {
             && self.headingBorderColor.isEqual(other.headingBorderColor)
             && self.paragraphSpacing == other.paragraphSpacing
             && self.quoteIndent == other.quoteIndent
+            && self.mathScale == other.mathScale
+            && {
+                switch (self.mathColorOverride, other.mathColorOverride) {
+                case (nil, nil): return true
+                case let (l?, r?): return l.isEqual(r)
+                default: return false
+                }
+            }()
     }
 
     /// Returns a copy with `quoteIndent` increased, used for nested blockquotes.

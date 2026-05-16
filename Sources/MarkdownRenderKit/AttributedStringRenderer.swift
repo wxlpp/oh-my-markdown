@@ -57,6 +57,11 @@ public struct AttributedStringRenderer: @unchecked Sendable {
     public let separator: NSAttributedString
     /// Cache of loaded images, keyed by source URL string. Updated by MarkdownLabelView after async load.
     public var imageCache: [String: PlatformImage] = [:]
+    /// 渲染好的公式字形缓存，键含有效字号/颜色/scale/renderer 代际。平台层填充。
+    public var mathCache: [MathCacheKey: MathRenderedGlyph] = [:]
+    /// 当前光栅化 scale 与 renderer 代际，参与缓存键（平台层设置）。
+    public var mathRasterScale: CGFloat = 1
+    public var mathRendererGeneration: Int = 0
 
     /// Render an array of top-level blocks.
     public func render(_ blocks: [BlockNode]) -> NSAttributedString {
@@ -91,8 +96,7 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         case .htmlBlock(let text):
             NSAttributedString(string: text, attributes: self.bodyAttributes())
         case .mathBlock(let latex):
-            // Rendering handled by a later task; fall back to the raw LaTeX source.
-            NSAttributedString(string: latex, attributes: self.bodyAttributes())
+            self.renderMathBlock(latex: latex)
         case .table(let columns, let head, let rows):
             self.renderTable(columns: columns, head: head, rows: rows)
         }
@@ -623,9 +627,66 @@ public struct AttributedStringRenderer: @unchecked Sendable {
             return NSAttributedString(string: raw, attributes: attributes)
 
         case .math(let latex):
-            // Rendering handled by a later task; fall back to the raw LaTeX source.
-            return NSAttributedString(string: latex, attributes: attributes)
+            return self.renderMath(latex: latex, display: false, baseAttributes: attributes)
         }
+    }
+
+    // MARK: - Math rendering
+
+    private func mathPayload(latex: String, display: Bool) -> String {
+        "\(display ? "1" : "0")\u{1F}\(latex)"
+    }
+
+    private func effectiveMathPointSize() -> CGFloat {
+        let base = (self.style.bodyFont as PlatformFont).pointSize
+        return MathMetrics.effectivePointSize(textPointSize: base, mathScale: self.style.mathScale)
+    }
+
+    private func mathColor() -> PlatformColor {
+        self.style.mathColorOverride ?? self.style.textColor
+    }
+
+    private func renderMath(
+        latex: String,
+        display: Bool,
+        baseAttributes: [NSAttributedString.Key: Any]
+    ) -> NSAttributedString {
+        let key = MathCacheKey(
+            latex: latex, display: display,
+            pointSize: self.effectiveMathPointSize(),
+            colorHex: MathMetrics.colorHex(self.mathColor()),
+            rasterScale: self.mathRasterScale,
+            rendererGeneration: self.mathRendererGeneration
+        )
+        if let glyph = self.mathCache[key] {
+            let attachment = NSTextAttachment()
+            attachment.image = glyph.image
+            let sz = glyph.image.size
+            let exToPoints = self.effectiveMathPointSize() * 0.5
+            attachment.bounds = CGRect(
+                x: 0,
+                y: -glyph.baselineOffsetEx * exToPoints,
+                width: sz.width,
+                height: sz.height
+            )
+            return NSAttributedString(attachment: attachment)
+        }
+        var a = baseAttributes
+        a[.font] = self.style.codeFont
+        a[.foregroundColor] = self.style.secondaryTextColor
+        a[.markdownMathSource] = self.mathPayload(latex: latex, display: display)
+        return NSAttributedString(string: latex, attributes: a)
+    }
+
+    private func renderMathBlock(latex: String) -> NSAttributedString {
+        let para = NSMutableParagraphStyle()
+        para.alignment = .center
+        para.paragraphSpacing = self.style.paragraphSpacing
+        let base = self.bodyAttributes().merging([.paragraphStyle: para]) { _, new in new }
+        let body = self.renderMath(latex: latex, display: true, baseAttributes: base)
+        let m = NSMutableAttributedString(attributedString: body)
+        m.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: m.length))
+        return m
     }
 
     // MARK: - Attribute helpers
