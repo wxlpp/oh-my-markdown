@@ -22,8 +22,7 @@ struct SVGRasterizerSpikeTests {
         )
 
         let data = try #require(normalisedSVG.data(using: .utf8))
-        let optionalDrawing = SVG(data: data)
-        let drawing = try #require(optionalDrawing)
+        let drawing = try #require(SVG(data: data))
         // On macOS (AppKit), SwiftDraw exposes rasterize(with:scale:) -> NSImage.
         let image = drawing.rasterize(with: nil, scale: 2.0)
         #expect(image.size.width > 1)
