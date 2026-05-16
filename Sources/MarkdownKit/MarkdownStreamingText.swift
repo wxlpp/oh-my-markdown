@@ -69,10 +69,11 @@ public struct MarkdownStreamingText: View {
     }
 
     public var body: some View {
-        _MarkdownStreamingTextRepresentable(source: self.source, style: self.style)
+        _MarkdownStreamingTextRepresentable(source: self.source, style: self.style, mathRenderer: self.mathRenderer)
     }
 
     @Environment(\.markdownStyle) private var style
+    @Environment(\.markdownMathRenderer) private var mathRenderer
 
     private let source: MarkdownStreamingSource
 }
@@ -87,6 +88,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
 
     let source: MarkdownStreamingSource
     let style: RenderStyle
+    let mathRenderer: (any MathRendering)?
 
     static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
         coordinator.currentSource?.removeListener(coordinator.listenerID)
@@ -113,6 +115,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
             uiView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
         }
+        uiView.mathRenderer = self.mathRenderer
         if context.coordinator.currentSource !== self.source {
             self.attachListener(to: uiView, context: context)
         }
@@ -155,6 +158,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
 
     let source: MarkdownStreamingSource
     let style: RenderStyle
+    let mathRenderer: (any MathRendering)?
 
     static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
         coordinator.currentSource?.removeListener(coordinator.listenerID)
@@ -177,6 +181,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
             nsView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
         }
+        nsView.mathRenderer = self.mathRenderer
         if context.coordinator.currentSource !== self.source {
             self.attachListener(to: nsView, context: context)
         }

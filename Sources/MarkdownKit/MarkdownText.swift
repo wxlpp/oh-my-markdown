@@ -26,10 +26,11 @@ public struct MarkdownText: View {
     }
 
     public var body: some View {
-        _MarkdownTextRepresentable(source: self.source, style: self.style)
+        _MarkdownTextRepresentable(source: self.source, style: self.style, mathRenderer: self.mathRenderer)
     }
 
     @Environment(\.markdownStyle) private var style
+    @Environment(\.markdownMathRenderer) private var mathRenderer
 
     private let source: String
 }
@@ -46,6 +47,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
 
     let source: String
     let style: RenderStyle
+    let mathRenderer: (any MathRendering)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -65,6 +67,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
             uiView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
         }
+        uiView.mathRenderer = self.mathRenderer
         let old = context.coordinator.lastSource
         guard old != self.source else {
             return
@@ -99,6 +102,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
 
     let source: String
     let style: RenderStyle
+    let mathRenderer: (any MathRendering)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -113,6 +117,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
             nsView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
         }
+        nsView.mathRenderer = self.mathRenderer
         let old = context.coordinator.lastSource
         guard old != self.source else {
             return

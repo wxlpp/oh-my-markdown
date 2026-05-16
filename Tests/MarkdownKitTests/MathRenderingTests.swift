@@ -105,3 +105,21 @@ struct RenderStyleMathTests {
         #expect(s.mathTokenColor != s.textColor)
     }
 }
+
+import MarkdownKit
+import SwiftUI
+
+@Suite("SwiftUI math renderer env")
+struct MathRendererEnvTests {
+    @Test("环境值默认 nil，设置后可取回")
+    func envValue() {
+        var env = EnvironmentValues()
+        #expect(env.markdownMathRenderer == nil)
+        struct Dummy: MathRendering {
+            func render(latex: String, display: Bool, pointSize: CGFloat,
+                        scale: CGFloat, color: PlatformColor) async -> MathRenderOutcome { .failed }
+        }
+        env.markdownMathRenderer = Dummy()
+        #expect(env.markdownMathRenderer != nil)
+    }
+}
