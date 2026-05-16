@@ -1,0 +1,40 @@
+@testable import MarkdownCore
+import Testing
+
+@Suite("MathSentinel")
+struct MathSentinelTests {
+    @Test("替换后用哨兵锚替掉公式区段，旁路表可还原")
+    func substituteAndLookup() {
+        let src = "a $x^2$ b $$y$$ c"
+        let spans = MathScanner.scan(src)
+        let result = MathSentinel.substitute(source: src, spans: spans)
+        #expect(!result.transformed.contains("$"))
+        #expect(result.table.count == 2)
+        #expect(result.table[0].latex == "x^2")
+        #expect(result.table[0].display == false)
+        #expect(result.table[1].latex == "y")
+        #expect(result.table[1].display == true)
+        let anchors = MathSentinel.anchorRanges(in: result.transformed)
+        #expect(anchors.map(\.index) == [0, 1])
+    }
+
+    @Test("源码本身含保留标量时被转义、还原后字节级不变")
+    func spoofingEscaped() {
+        let evil = "text \u{10FE00}0\u{10FE00} pretending to be an anchor $z$ end"
+        let spans = MathScanner.scan(evil)
+        let result = MathSentinel.substitute(source: evil, spans: spans)
+        #expect(result.table.count == 1)
+        #expect(result.table[0].latex == "z")
+        let anchors = MathSentinel.anchorRanges(in: result.transformed)
+        #expect(anchors.count == 1)
+        let restored = MathSentinel.unescapeReservedScalar(result.transformed)
+        #expect(restored.contains("\u{10FE00}0\u{10FE00} pretending"))
+    }
+
+    @Test("形似 哨兵+数字+哨兵 但无对应旁路表项 → 不算锚")
+    func lookalikeNotAnchor() {
+        let s = "\u{10FE00}99\u{10FE00}"
+        let escaped = MathSentinel.escapeReservedScalar(s)
+        #expect(MathSentinel.anchorRanges(in: escaped).isEmpty)
+    }
+}
