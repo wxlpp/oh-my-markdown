@@ -50,7 +50,7 @@
 - Create: `Sources/MarkdownMath/MarkdownMath.swift`
 - Test: `Tests/MarkdownMathTests/SVGRasterizerTests.swift`（本任务仅放 spike 用例）
 
-- [ ] **Step 1: 加依赖与新 target/library（先用 branch 去险，后续 Task 15 收尾时再 pin）**
+- [ ] **Step 1: 加依赖与新 target/library（先用 branch 去险，后续 Task 14 Step 5 再 pin）**
 
 `Package.swift` 的 `dependencies` 数组追加：
 
