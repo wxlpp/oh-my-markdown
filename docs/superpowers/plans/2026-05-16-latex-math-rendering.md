@@ -1849,6 +1849,8 @@ git commit -m "feat(kit): SwiftUI .mathRenderer(_:) 修饰符与环境注入"
 
 spec §8。SVG 字符串 → 颜色注入 → 解析 ex/viewBox/vertical-align → SwiftDraw 光栅化 → `PlatformImage` + 基线。
 
+> ⚠️ **点尺寸契约（Task 8 评审强制）：** 返回的 `MathRenderedGlyph.image` 的 `.size` **必须是「点」单位**（= 目标文本空间渲染尺寸），**不是像素**。`AttributedStringRenderer` 直接拿 `image.size` 当 `NSTextAttachment.bounds`，所以若 `.size` 等于 `pointSize×scale`（像素），行内公式会在 Retina 上放大 scale 倍。SwiftDraw `rasterize(with:scale:)` 产出 `size×scale` 像素位图但应把结果图像 `.size` 报告为**点** `size`（UIImage 用 `scale:` 初始化；NSImage 显式设 `.size = 点尺寸`）——实现必须保证这一点，并由上面 `rasterize()` 测试的「size 与 scale 无关、随 pointSize 增长」断言守住。
+
 **Files:**
 - Create: `Sources/MarkdownMath/SVGRasterizer.swift`
 - Test: `Tests/MarkdownMathTests/SVGRasterizerTests.swift`（追加，替换 spike 文件中的占位 suite 为正式 suite）
@@ -1881,12 +1883,23 @@ struct SVGRasterizerUnitTests {
         #expect(SVGRasterizer.parseVerticalAlignEx(sample) == -0.25)
     }
 
-    @Test("光栅化产出非退化位图 + 基线")
+    @Test("光栅化产出非退化位图 + 基线 + 点尺寸契约")
     func rasterize() throws {
         let glyph = try SVGRasterizer.rasterize(
             svg: sample, hex: "#000000", pointSize: 16, scale: 2)
         #expect(glyph.image.size.width > 1)
         #expect(glyph.baselineOffsetEx == -0.25)
+        // 契约（Task 8 评审）：image.size 必须是「点」单位（= 目标渲染文本空间尺寸），
+        // 不是像素；栅格密度由平台图像的 scale/backing 编码，绝不体现在 size 上。
+        // AttributedStringRenderer 直接把 image.size 当 NSTextAttachment.bounds，
+        // 若这里返回像素尺寸（pointSize×scale）行内公式会在 Retina 上放大 scale 倍。
+        // 断言 size 与目标点高成比例、且不随 scale 翻倍：
+        let glyph1x = try SVGRasterizer.rasterize(
+            svg: sample, hex: "#000000", pointSize: 16, scale: 1)
+        #expect(abs(glyph.image.size.height - glyph1x.image.size.height) < 0.5)   // size 与 scale 无关（点单位）
+        let glyphBig = try SVGRasterizer.rasterize(
+            svg: sample, hex: "#000000", pointSize: 32, scale: 2)
+        #expect(glyphBig.image.size.height > glyph.image.size.height)             // size 随 pointSize 增长
     }
 }
 ```
