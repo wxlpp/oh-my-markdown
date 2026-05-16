@@ -107,6 +107,11 @@ public enum MathScanner {
     private static func codeRegionMask(source: String, byteCount: Int) -> [Bool] {
         var mask = [Bool](repeating: false, count: byteCount)
         let ns = source as NSString
+        // UTF-16 码元偏移 → UTF-8 字节前缀和表：u8[k] = source 前 k 个 UTF-16 码元的 UTF-8 字节数。
+        // 索引必须是 UTF-16 码元偏移，且需对齐到字符边界（不可落在代理对中间）。
+        let u8 = utf16ToUTF8PrefixSum(source: source, utf16Length: ns.length)
+        @inline(__always) func u8at(_ utf16Loc: Int) -> Int { u8[min(max(utf16Loc, 0), ns.length)] }
+
         var loc = 0
         // 围栏代码块（``` 或 ~~~，缩进 ≤3）。
         while loc < ns.length {
@@ -116,7 +121,7 @@ public enum MathScanner {
             let content = indent <= 3 ? String(line.dropFirst(indent)) : line
             if let f = content.first, f == "`" || f == "~", content.prefix(while: { $0 == f }).count >= 3 {
                 let fenceCount = content.prefix(while: { $0 == f }).count
-                let start = utf8Offset(ns, lineRange.location)
+                let start = u8at(lineRange.location)
                 var cursor = lineRange.upperBound
                 var end = byteCount
                 while cursor < ns.length {
@@ -125,12 +130,12 @@ public enum MathScanner {
                     let li = l.prefix(while: { $0 == " " }).count
                     let lc = li <= 3 ? String(l.dropFirst(li)) : l
                     if lc.allSatisfy({ $0 == f || $0 == " " }), lc.prefix(while: { $0 == f }).count >= fenceCount {
-                        end = utf8Offset(ns, r.upperBound)
+                        end = u8at(r.upperBound)
                         cursor = r.upperBound
                         break
                     }
                     cursor = r.upperBound
-                    end = utf8Offset(ns, r.upperBound)
+                    end = u8at(r.upperBound)
                 }
                 for x in start ..< min(end, byteCount) { mask[x] = true }
                 loc = cursor
@@ -138,15 +143,32 @@ public enum MathScanner {
             }
             loc = lineRange.upperBound
         }
-        // 缩进代码块（行首 ≥4 空格且非列表续行；保守：整行 4 空格起）。
+        // 缩进代码块（行首 ≥4 空格）。
+        // 廉价启发：4 空格缩进行只有在「不处于列表上下文」时才算缩进代码块；
+        // 列表续行（列表项内的缩进续行）不是 CommonMark 代码块，不能屏蔽其中的公式。
+        // 列表上下文：遇到列表标记行（`^\s{0,3}([-+*]|\d{1,9}[.)])\s`）即开启，
+        // 跨空行与缩进续行保持，直到出现一行 indent 0 的非空、非列表行才结束。
         loc = 0
+        var listContext = false
         while loc < ns.length {
             let lineRange = ns.lineRange(for: NSRange(location: loc, length: 0))
             let raw = ns.substring(with: lineRange)
             let body = raw.trimmingCharacters(in: .newlines)
-            if body.hasPrefix("    "), !body.trimmingCharacters(in: .whitespaces).isEmpty {
-                let s = utf8Offset(ns, lineRange.location)
-                let e = utf8Offset(ns, lineRange.upperBound)
+            let trimmed = body.trimmingCharacters(in: .whitespaces)
+            let isBlank = trimmed.isEmpty
+            let leadingSpaces = body.prefix(while: { $0 == " " }).count
+
+            if isList(body) {
+                listContext = true
+            } else if !isBlank, leadingSpaces == 0 {
+                // indent 0 的非空、非列表行 → 退出列表上下文。
+                listContext = false
+            }
+            // 空行与缩进续行：保持当前 listContext 不变。
+
+            if body.hasPrefix("    "), !isBlank, !listContext {
+                let s = u8at(lineRange.location)
+                let e = u8at(lineRange.upperBound)
                 for x in s ..< min(e, byteCount) { mask[x] = true }
             }
             loc = lineRange.upperBound
@@ -155,15 +177,58 @@ public enum MathScanner {
         let codeSpan = try! NSRegularExpression(pattern: "(`+)(?:(?!\\1).)*\\1")
         codeSpan.enumerateMatches(in: source, range: NSRange(location: 0, length: ns.length)) { m, _, _ in
             guard let m else { return }
-            let s = utf8Offset(ns, m.range.location)
-            let e = utf8Offset(ns, m.range.location + m.range.length)
+            let s = u8at(m.range.location)
+            let e = u8at(m.range.location + m.range.length)
             for x in s ..< min(e, byteCount) { mask[x] = true }
         }
         return mask
     }
 
-    private static func utf8Offset(_ ns: NSString, _ utf16Loc: Int) -> Int {
-        let prefix = ns.substring(to: min(utf16Loc, ns.length))
-        return prefix.utf8.count
+    /// 该行是否是无序/有序列表标记行：`^\s{0,3}([-+*]|\d{1,9}[.)])\s`。
+    private static func isList(_ line: String) -> Bool {
+        let scalars = Array(line.unicodeScalars)
+        var idx = 0
+        var leading = 0
+        while idx < scalars.count, scalars[idx] == " ", leading < 4 { idx += 1; leading += 1 }
+        if leading > 3 { return false }
+        guard idx < scalars.count else { return false }
+        let c = scalars[idx]
+        if c == "-" || c == "+" || c == "*" {
+            idx += 1
+        } else if c >= "0", c <= "9" {
+            var digits = 0
+            while idx < scalars.count, scalars[idx] >= "0", scalars[idx] <= "9", digits < 9 {
+                idx += 1; digits += 1
+            }
+            guard idx < scalars.count, scalars[idx] == "." || scalars[idx] == ")" else { return false }
+            idx += 1
+        } else {
+            return false
+        }
+        // 标记后必须紧跟空白（空格/制表符），或为行尾（空列表项）。
+        guard idx < scalars.count else { return true }
+        let n = scalars[idx]
+        return n == " " || n == "\t"
+    }
+
+    /// 构建 UTF-16 码元 → UTF-8 字节的前缀和表，长度为 utf16Length + 1，O(n) 一次遍历。
+    /// 每个 Unicode 标量推进 `String(scalar).utf16.count` 个 UTF-16 索引并累加
+    /// `String(scalar).utf8.count` 字节；表索引为 UTF-16 码元偏移、须字符对齐。
+    private static func utf16ToUTF8PrefixSum(source: String, utf16Length: Int) -> [Int] {
+        var table = [Int](repeating: 0, count: utf16Length + 1)
+        var u16Index = 0
+        var byteSum = 0
+        for scalar in source.unicodeScalars {
+            let u16 = String(scalar).utf16.count
+            let u8 = String(scalar).utf8.count
+            // 标量内部各 UTF-16 索引共享同一前缀字节数（边界处取该标量起始字节和）。
+            for k in 0 ..< u16 where u16Index + k < table.count {
+                table[u16Index + k] = byteSum
+            }
+            u16Index += u16
+            byteSum += u8
+        }
+        if u16Index < table.count { table[u16Index] = byteSum }
+        return table
     }
 }

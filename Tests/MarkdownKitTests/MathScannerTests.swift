@@ -64,4 +64,23 @@ struct MathScannerTests {
         #expect(r.map(\.latex) == ["a", "b", "c"])
         #expect(r.map(\.display) == [false, true, false])
     }
+
+    @Test("多字节字符前后偏移正确（UTF-8 字节区间往返）")
+    func multibyteRoundTrip() {
+        let s = "汉字 $x^2$ 🎉 \\(a\\) 尾"
+        let bytes = Array(s.utf8)
+        let r = MathScanner.scan(s)
+        #expect(r.count == 2)
+        #expect(String(decoding: bytes[r[0].range], as: UTF8.self) == "$x^2$")
+        #expect(r[0].latex == "x^2")
+        #expect(String(decoding: bytes[r[1].range], as: UTF8.self) == "\\(a\\)")
+        #expect(r[1].latex == "a")
+    }
+
+    @Test("列表项内 4 空格续行不是代码块，公式仍识别")
+    func listContinuationNotCode() {
+        let r = MathScanner.scan("- item\n\n    $x^2$ still in list\n")
+        #expect(r.count == 1)
+        #expect(r[0].latex == "x^2")
+    }
 }
