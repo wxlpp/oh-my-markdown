@@ -648,7 +648,9 @@ public final class MarkdownLabelView: UIView {
         self._heightUpdateTask = nil
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         let newHeight = ceil(layoutManager.usageBoundsForTextContainer.height)
-        self._mkLog("deferredReMeasure: old=\(self._lastHeight) new=\(newHeight) grew=\(abs(newHeight - self._lastHeight) > 0.5)")
+        if abs(newHeight - self._lastHeight) > 0.5 {
+            self._mkLog("deferredReMeasure: old=\(self._lastHeight) new=\(newHeight) grew=true")
+        }
         if abs(newHeight - self._lastHeight) > 0.5 {
             self._lastHeight = newHeight
             invalidateIntrinsicContentSize()
@@ -927,7 +929,9 @@ public final class MarkdownLabelView: UIView {
             )
             raw.append((latex: latex, display: display, color: color, pt: pt))
         }
-        self._mkLog("triggerMathLoads: range=\(range) safeLen=\(safe.length) mathSources=\(raw.count) rendererSet=\(self.mathRenderer != nil)")
+        if !raw.isEmpty {
+            self._mkLog("triggerMathLoads: range=\(range) safeLen=\(safe.length) mathSources=\(raw.count) rendererSet=\(self.mathRenderer != nil)")
+        }
         guard !raw.isEmpty else {
             return
         }
