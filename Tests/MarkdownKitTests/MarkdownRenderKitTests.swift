@@ -235,9 +235,12 @@ struct MarkdownRenderKitTests {
         | A | \(longText) |
         """)
 
+        let tableBlock = try #require(document.blocks.first)
         let renderer = AttributedStringRenderer(style: .default, availableWidth: 180)
         let rendered = renderer.render(document.blocks)
-        _ = try #require(rendered.attribute(.markdownTableNaturalWidth, at: 0, effectiveRange: nil) as? CGFloat)
+        let naturalWidth = try #require(
+            rendered.attribute(.markdownTableNaturalWidth, at: 0, effectiveRange: nil) as? CGFloat
+        )
 
         // The overflow table reservation collapsed to ONE invisible NBSP whose
         // paragraph style pins min == max line height to the table's *true*
@@ -261,14 +264,25 @@ struct MarkdownRenderKitTests {
         )
         // Markers preserved so platform overlay positioning / decoration skip still work.
         #expect(rendered.attribute(.markdownTableColumns, at: 0, effectiveRange: nil) as? Int == 2)
-        // The single height source of truth: the reserved forced line-height
-        // exactly equals the `markdownTableNaturalHeight` attribute the overlay
-        // reads — constructive equality, asserted directly on the contract.
-        let trueHeight = try #require(
-            rendered.attribute(.markdownTableNaturalHeight, at: 0, effectiveRange: nil) as? CGFloat
+        // Constructive-equality contract, asserted directly against the single
+        // height source of truth — `TableMeasurement.height` — instead of a
+        // proxy attribute. The reserved forced line-height must exactly equal
+        // `TableMeasurement.height` of the full (non-overflow) table string the
+        // platform overlay's `TableContentView` lays out, at the same natural
+        // width. We reconstruct that exact input the way the platform layer does
+        // (`AttributedStringRenderer(availableWidth: naturalWidth).renderBlock`),
+        // so this pins the same arithmetic on the same TextKit 2 layout the
+        // overlay uses — no attribute, no platform write-back. If anyone changes
+        // `overflowTablePlaceholder` to reserve a height other than
+        // `TableMeasurement.height`, this assertion goes red.
+        let overlayRenderer = AttributedStringRenderer(style: .default, availableWidth: naturalWidth)
+        let fullTableString = overlayRenderer.renderBlock(tableBlock)
+        let constructiveHeight = TableMeasurement.height(
+            of: fullTableString,
+            naturalWidth: naturalWidth
         )
-        #expect(trueHeight > 0)
-        #expect(para.maximumLineHeight == trueHeight)
+        #expect(constructiveHeight > 0)
+        #expect(para.maximumLineHeight == constructiveHeight)
     }
 
     @Test("Renderer reuses image cache when source URL has already been loaded")

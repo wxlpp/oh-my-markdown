@@ -29,12 +29,6 @@ extension NSAttributedString.Key {
     /// height are constructively equal — no platform write-back needed.
     public static let markdownOverflowTablePlaceholder
         = NSAttributedString.Key("MarkdownKit.overflowTablePlaceholder")
-    /// True (overlay-equal) rendered height of an overflowing table, computed by
-    /// `TableMeasurement.height` at render time and reused verbatim by the
-    /// platform layer to size the scroll overlay (single height source of truth —
-    /// see `MarkdownLabelView._syncTableOverlays`).
-    public static let markdownTableNaturalHeight
-        = NSAttributedString.Key("MarkdownKit.tableNaturalHeight")
 }
 
 // MARK: - TableMeasurement
@@ -538,14 +532,6 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         result.addAttribute(
             .markdownOverflowTablePlaceholder,
             value: true,
-            range: NSRange(location: 0, length: result.length)
-        )
-        // The single height source of truth: the platform overlay reads this
-        // verbatim to size the scroll view, so reservation == overlay by
-        // construction (no independent re-measure on the platform side).
-        result.addAttribute(
-            .markdownTableNaturalHeight,
-            value: trueTableHeight,
             range: NSRange(location: 0, length: result.length)
         )
         return result

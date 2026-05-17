@@ -1009,15 +1009,6 @@ public final class MarkdownLabelView: UIView {
             return
         }
 
-        // Overlay heights measured this pass, keyed by block index. The overlay's
-        // `TableContentView` (the single height source of truth — laid out at the
-        // table's natural width, independent of the main stack) is constructed by
-        // the create / update-in-place branches below for their own purposes; we
-        // reuse the height already computed there to write it back into the
-        // placeholder, so there is no extra full-table layout for the write-back.
-        // The actual splice is deferred until after the loop: mutating
-        // `_liveString` mid-loop would invalidate `decorations.blockFrameUnion`
-        // for the tables visited afterwards (stale geometry → misplaced overlay).
         // The reserved height in the main stack is already correct by
         // construction: `AttributedStringRenderer.overflowTablePlaceholder` and
         // the overlay's `TableContentView` both size off the *same*
