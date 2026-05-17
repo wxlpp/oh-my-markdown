@@ -495,6 +495,14 @@ public final class MarkdownLabelView: UIView {
     /// after ~33ms so a transient flag would race, hence a durable counter. Zero
     /// production behavior beyond an Int increment at the primitive's entry.
     var _deferredHeightScheduleCount = 0
+    /// TEMP DIAGNOSTIC (Bug 1 systematic-debugging Phase 1.4). Remove after root cause
+    /// is pinned. Pure logging, zero production behavior. Toggle off by setting false.
+    nonisolated(unsafe) static var _mkLayoutDebug = true
+    func _mkLog(_ msg: @autoclosure () -> String) {
+        #if DEBUG
+        if Self._mkLayoutDebug { print("[MK-LAYOUT] \(msg())") }
+        #endif
+    }
     /// In-flight parse task. Streaming keeps this single-flight so large documents do not
     /// accumulate cancelled full-document parses as tokens arrive.
     private var _parseTask: Task<Void, Never>?
@@ -594,6 +602,7 @@ public final class MarkdownLabelView: UIView {
         self._heightUpdateTask?.cancel()
         self._heightUpdateTask = nil
         self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
+        self._mkLog("resetLayout: docHeight=\(self._lastHeight) blocks=\(self.blocks.count)")
         invalidateIntrinsicContentSize()
         setNeedsDisplay()
         // Mirror applyDocument's host-relayout discipline: async write-back paths
@@ -628,6 +637,7 @@ public final class MarkdownLabelView: UIView {
         self._heightUpdateTask = nil
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         let newHeight = ceil(layoutManager.usageBoundsForTextContainer.height)
+        self._mkLog("deferredReMeasure: old=\(self._lastHeight) new=\(newHeight) grew=\(abs(newHeight - self._lastHeight) > 0.5)")
         if abs(newHeight - self._lastHeight) > 0.5 {
             self._lastHeight = newHeight
             invalidateIntrinsicContentSize()
@@ -906,6 +916,7 @@ public final class MarkdownLabelView: UIView {
             )
             raw.append((latex: latex, display: display, color: color, pt: pt))
         }
+        self._mkLog("triggerMathLoads: range=\(range) safeLen=\(safe.length) mathSources=\(raw.count) rendererSet=\(self.mathRenderer != nil)")
         guard !raw.isEmpty else {
             return
         }
@@ -1029,6 +1040,7 @@ public final class MarkdownLabelView: UIView {
                 let tableStr = renderer.renderBlock(block)
                 existing.content.update(tableString: tableStr)
                 let newH = existing.content.frame.height
+                self._mkLog("tableOverlay[update] block=\(i) reservedH=\(blockFrame.height) overlayH=\(newH) delta=\(newH - blockFrame.height)")
                 existing.scroll.contentSize = CGSize(width: naturalWidth, height: newH)
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
@@ -1058,6 +1070,7 @@ public final class MarkdownLabelView: UIView {
                 naturalWidth: naturalWidth
             )
             let scrollH = contentView.frame.height
+            self._mkLog("tableOverlay[create] block=\(i) reservedH=\(blockFrame.height) overlayH=\(scrollH) delta=\(scrollH - blockFrame.height)")
             let scrollView = UIScrollView(frame: CGRect(
                 x: 0,
                 y: blockFrame.minY - 8,
@@ -1611,6 +1624,14 @@ public final class MarkdownLabelView: NSView {
     /// after ~33ms so a transient flag would race, hence a durable counter. Zero
     /// production behavior beyond an Int increment at the primitive's entry.
     var _deferredHeightScheduleCount = 0
+    /// TEMP DIAGNOSTIC (Bug 1 systematic-debugging Phase 1.4). Remove after root cause
+    /// is pinned. Pure logging, zero production behavior. Toggle off by setting false.
+    nonisolated(unsafe) static var _mkLayoutDebug = true
+    func _mkLog(_ msg: @autoclosure () -> String) {
+        #if DEBUG
+        if Self._mkLayoutDebug { print("[MK-LAYOUT] \(msg())") }
+        #endif
+    }
     /// In-flight parse task. Streaming keeps this single-flight so large documents do not
     /// accumulate cancelled full-document parses as tokens arrive.
     private var _parseTask: Task<Void, Never>?
