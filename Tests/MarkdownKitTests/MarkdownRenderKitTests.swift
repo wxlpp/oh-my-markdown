@@ -226,7 +226,7 @@ struct MarkdownRenderKitTests {
         #expect(naturalWidth > 180)
     }
 
-    @Test("Overflow table uses lightweight placeholder in the main text layout")
+    @Test("Overflow table uses a single forced-line-height placeholder in the main text layout")
     func overflowTableUsesLightweightPlaceholder() throws {
         let longText = "This cell has enough text to require a wider natural table column."
         let document = MarkdownDocument(parsing: """
@@ -239,8 +239,27 @@ struct MarkdownRenderKitTests {
         let rendered = renderer.render(document.blocks)
         _ = try #require(rendered.attribute(.markdownTableNaturalWidth, at: 0, effectiveRange: nil) as? CGFloat)
 
+        // The overflow table reservation collapsed to ONE invisible NBSP whose
+        // paragraph style pins min == max line height; the platform layer
+        // rewrites that single value to the overlay's measured height (single
+        // height source of truth). No cell text leaks into the main stack, and
+        // there are no NBSP placeholder rows / newlines.
         #expect(rendered.string.contains(longText) == false)
-        #expect(rendered.string.split(separator: "\n", omittingEmptySubsequences: false).count == 2)
+        #expect(rendered.length == 1)
+        #expect(rendered.string == "\u{00A0}")
+        // Reserved height = a precise forced line-height (no font-leading slack),
+        // which the platform write-back later overwrites with the overlay height.
+        let para = try #require(
+            rendered.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        )
+        #expect(para.maximumLineHeight > 0)
+        #expect(para.maximumLineHeight == para.minimumLineHeight)
+        // The marker the platform layer keys on to locate & resize this block.
+        #expect(
+            rendered.attribute(.markdownOverflowTablePlaceholder, at: 0, effectiveRange: nil) as? Bool == true
+        )
+        // Markers preserved so platform overlay positioning / decoration skip still work.
+        #expect(rendered.attribute(.markdownTableColumns, at: 0, effectiveRange: nil) as? Int == 2)
     }
 
     @Test("Renderer reuses image cache when source URL has already been loaded")

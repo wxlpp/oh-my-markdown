@@ -326,6 +326,17 @@ public final class MarkdownLabelView: UIView {
         ]
     }
 
+    /// Test-support: the laid-out frame union of the block at `index` in the
+    /// *main* TextKit 2 stack — i.e. the vertical space the block actually
+    /// reserves in the document flow. Read-only forwarder to the private
+    /// `decorations.blockFrameUnion`; mirrors `_selectEntireDocumentForTesting`.
+    /// The observed quantity is driven by real TextKit2 layout (which depends
+    /// on placeholder attachment bounds), not a decoupled counter.
+    func _blockFrameUnionForTesting(at index: Int) -> CGRect? {
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        return self.decorations.blockFrameUnion(at: index)
+    }
+
     /// Maps a rendered selection range to the original Markdown source it
     /// covers (block-level). Shared between platforms via the file-scope
     /// `markdownSourceForRenderedSelection`.
@@ -971,6 +982,67 @@ public final class MarkdownLabelView: UIView {
         self.decorations.tableNaturalWidth(at: blockIndex)
     }
 
+    /// Writes the overlay's measured height back into the wide-table placeholder
+    /// so the height reserved in the *main* TextKit stack exactly equals the
+    /// overlay height (single height source of truth). Without this the reserved
+    /// height (placeholder algorithm) and the overlay height (`TableContentView`
+    /// at natural width) are computed by two unrelated algorithms that never
+    /// agree, permanently overlapping the block below the table (Bug 1 wide-table
+    /// sub-symptom).
+    ///
+    /// The placeholder reserves space via a forced-line-height paragraph (same
+    /// precise technique as `renderThematicBreak`); its `min/maximumLineHeight`
+    /// is the single value to rewrite. Mirrors the async math / image write-back
+    /// form: splice a fresh run (new paragraph-style instance) into the canonical
+    /// store and re-push it through `NSTextContentStorage`, exactly like
+    /// `applyDocument`'s incremental splice. The `> 0.5` guard makes the steady
+    /// state a fixed point (no rewrite once equal) so there is no relayout jitter.
+    ///
+    /// Returns `true` iff it mutated the placeholder (caller relays out once).
+    private func _writeBackOverflowTableHeight(blockIndex: Int, overlayHeight: CGFloat) -> Bool {
+        guard
+            blockIndex < self.blockStarts.count,
+            overlayHeight > 0 else {
+            return false
+        }
+        let start = self.blockStarts[blockIndex]
+        guard start < self._liveString.length else {
+            return false
+        }
+        var placeholderRange = NSRange(location: NSNotFound, length: 0)
+        guard
+            self._liveString.attribute(
+                .markdownOverflowTablePlaceholder,
+                at: start,
+                effectiveRange: &placeholderRange
+            ) as? Bool == true,
+            placeholderRange.location != NSNotFound,
+            let oldPara = self._liveString.attribute(
+                .paragraphStyle,
+                at: start,
+                effectiveRange: nil
+            ) as? NSParagraphStyle else {
+            return false
+        }
+        guard abs(oldPara.maximumLineHeight - overlayHeight) > 0.5 else {
+            return false // already converged — fixed point, no jitter
+        }
+        // Fresh paragraph-style instance pinning the line height to the overlay's
+        // measured height; the existing run attributes (1pt clear font, table
+        // markers, overflow-placeholder marker) are preserved verbatim.
+        var attrs = self._liveString.attributes(at: start, effectiveRange: nil)
+        let newPara = (oldPara.mutableCopy() as! NSMutableParagraphStyle)
+        newPara.minimumLineHeight = overlayHeight
+        newPara.maximumLineHeight = overlayHeight
+        attrs[.paragraphStyle] = newPara.copy() as! NSParagraphStyle
+        let replacement = NSMutableAttributedString(string: "\u{00A0}", attributes: attrs)
+        self._liveString.replaceCharacters(in: placeholderRange, with: replacement)
+        self.contentStorage.performEditingTransaction {
+            self.contentStorage.attributedString = self._liveString
+        }
+        return true
+    }
+
     /// Creates, repositions, or removes UIScrollView overlays for tables that overflow the view width.
     private func _syncTableOverlays(from startIndex: Int) {
         let startIndex = max(0, min(startIndex, blocks.count))
@@ -993,6 +1065,46 @@ public final class MarkdownLabelView: UIView {
         guard startIndex < self.blocks.count else {
             return
         }
+
+        // Write-back pre-pass: for every wide table, measure the overlay's true
+        // height (the single source of truth — `TableContentView` at natural
+        // width, independent of the main layout) and stamp it into the
+        // placeholder attachment so the main stack reserves exactly that height.
+        var didWriteBackTableHeight = false
+        for i in startIndex ..< self.blocks.count {
+            guard case .table = self.blocks[i] else {
+                continue
+            }
+            let nw = self._tableNaturalWidth(at: i)
+            guard nw > viewWidth + 0.5 else {
+                continue
+            }
+            let probe = AttributedStringRenderer(style: renderStyle, availableWidth: nw)
+            let probeView = TableContentView(
+                tableString: probe.renderBlock(self.blocks[i]),
+                style: renderStyle,
+                naturalWidth: nw
+            )
+            if self._writeBackOverflowTableHeight(blockIndex: i, overlayHeight: probeView.frame.height) {
+                didWriteBackTableHeight = true
+            }
+        }
+        if didWriteBackTableHeight {
+            // Reuse resetLayout's host-relayout discipline so the placeholder's
+            // new height propagates: re-ensure layout, re-measure intrinsic size,
+            // ask the host to re-query, schedule the deferred re-measure, and
+            // sync overlays again on the next pass against corrected geometry.
+            self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+            self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
+            invalidateIntrinsicContentSize()
+            setNeedsDisplay()
+            setNeedsLayout()
+            self.scheduleDeferredHeightUpdate()
+            self._pendingTableOverlaySyncStart = min(
+                self._pendingTableOverlaySyncStart ?? startIndex, startIndex
+            )
+        }
+
         for i in startIndex ..< self.blocks.count {
             let block = self.blocks[i]
             guard case .table = block else {
@@ -1579,6 +1691,16 @@ public final class MarkdownLabelView: NSView {
         self.selectAll(nil)
     }
 
+    /// Test-support: the laid-out frame union of the block at `index` in the
+    /// *main* TextKit 2 stack. Mirrors the iOS seam so the headless wide-table
+    /// overlap regression test drives both platforms symmetrically. The
+    /// observed quantity is driven by real TextKit2 layout (which depends on
+    /// placeholder attachment bounds), not a decoupled counter.
+    func _blockFrameUnionForTesting(at index: Int) -> CGRect? {
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        return self.decorations.blockFrameUnion(at: index)
+    }
+
     public func setMarkdown(_ source: String) {
         self._parseSerial += 1
         self._parseTask?.cancel()
@@ -1922,6 +2044,58 @@ public final class MarkdownLabelView: NSView {
         self.decorations.tableNaturalWidth(at: blockIndex)
     }
 
+    /// Writes the overlay's measured height back into the wide-table placeholder
+    /// so the height reserved in the *main* TextKit stack exactly equals the
+    /// overlay height (single height source of truth). The placeholder reserves
+    /// space via a forced-line-height paragraph (same precise technique as
+    /// `renderThematicBreak`); its `min/maximumLineHeight` is the single value to
+    /// rewrite. Mirrors the iOS seam and the async math / image write-back form:
+    /// splice a fresh run (new paragraph-style instance) into the canonical store
+    /// and re-push it through `NSTextContentStorage`, exactly like
+    /// `applyDocument`'s incremental splice. The `> 0.5` guard makes the steady
+    /// state a fixed point so there is no relayout jitter.
+    /// Returns `true` iff it mutated the placeholder (caller relays out once).
+    private func _writeBackOverflowTableHeight(blockIndex: Int, overlayHeight: CGFloat) -> Bool {
+        guard
+            blockIndex < self.blockStarts.count,
+            overlayHeight > 0 else {
+            return false
+        }
+        let start = self.blockStarts[blockIndex]
+        guard start < self._liveString.length else {
+            return false
+        }
+        var placeholderRange = NSRange(location: NSNotFound, length: 0)
+        guard
+            self._liveString.attribute(
+                .markdownOverflowTablePlaceholder,
+                at: start,
+                effectiveRange: &placeholderRange
+            ) as? Bool == true,
+            placeholderRange.location != NSNotFound,
+            let oldPara = self._liveString.attribute(
+                .paragraphStyle,
+                at: start,
+                effectiveRange: nil
+            ) as? NSParagraphStyle else {
+            return false
+        }
+        guard abs(oldPara.maximumLineHeight - overlayHeight) > 0.5 else {
+            return false // already converged — fixed point, no jitter
+        }
+        var attrs = self._liveString.attributes(at: start, effectiveRange: nil)
+        let newPara = (oldPara.mutableCopy() as! NSMutableParagraphStyle)
+        newPara.minimumLineHeight = overlayHeight
+        newPara.maximumLineHeight = overlayHeight
+        attrs[.paragraphStyle] = newPara.copy() as! NSParagraphStyle
+        let replacement = NSMutableAttributedString(string: "\u{00A0}", attributes: attrs)
+        self._liveString.replaceCharacters(in: placeholderRange, with: replacement)
+        self.contentStorage.performEditingTransaction {
+            self.contentStorage.attributedString = self._liveString
+        }
+        return true
+    }
+
     private func _syncTableOverlays(from startIndex: Int) {
         let startIndex = max(0, min(startIndex, blocks.count))
         let stale = self._tableOverlays.keys.filter { i -> Bool in
@@ -1942,6 +2116,45 @@ public final class MarkdownLabelView: NSView {
         guard startIndex < self.blocks.count else {
             return
         }
+
+        // Write-back pre-pass (symmetric with iOS): for every wide table, measure
+        // the overlay's true height (single source of truth — `TableContentView`
+        // at natural width, independent of the main layout) and stamp it into the
+        // placeholder attachment so the main stack reserves exactly that height.
+        var didWriteBackTableHeight = false
+        for i in startIndex ..< self.blocks.count {
+            guard case .table = self.blocks[i] else {
+                continue
+            }
+            let nw = self._tableNaturalWidth(at: i)
+            guard nw > viewWidth + 0.5 else {
+                continue
+            }
+            let probe = AttributedStringRenderer(style: renderStyle, availableWidth: nw)
+            let probeView = TableContentView(
+                tableString: probe.renderBlock(self.blocks[i]),
+                style: renderStyle,
+                naturalWidth: nw
+            )
+            if self._writeBackOverflowTableHeight(blockIndex: i, overlayHeight: probeView.frame.height) {
+                didWriteBackTableHeight = true
+            }
+        }
+        if didWriteBackTableHeight {
+            // Reuse resetLayout's host-relayout discipline so the placeholder's
+            // new height propagates (AppKit primitives), then sync overlays again
+            // on the next pass against corrected geometry.
+            self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+            self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+            needsLayout = true
+            self.scheduleDeferredHeightUpdate()
+            self._pendingTableOverlaySyncStart = min(
+                self._pendingTableOverlaySyncStart ?? startIndex, startIndex
+            )
+        }
+
         for i in startIndex ..< self.blocks.count {
             let block = self.blocks[i]
             guard case .table = block else {

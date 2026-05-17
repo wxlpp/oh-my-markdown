@@ -21,6 +21,14 @@ extension NSAttributedString.Key {
     public static let markdownTableNaturalWidth = NSAttributedString.Key("MarkdownKit.tableNaturalWidth")
     /// Natural widths for each rendered table column, used by platform views to draw separators.
     public static let markdownTableColumnWidths = NSAttributedString.Key("MarkdownKit.tableColumnWidths")
+    /// Marks the single transparent placeholder attachment that reserves vertical
+    /// space for an overflowing (horizontally-scrolling) table. The real table is
+    /// drawn by the platform scroll overlay; the platform layer writes the overlay's
+    /// measured height back into this attachment's `bounds` so the reserved height
+    /// in the main TextKit stack exactly equals the overlay height (single height
+    /// source of truth — see `MarkdownLabelView._syncTableOverlays`).
+    public static let markdownOverflowTablePlaceholder
+        = NSAttributedString.Key("MarkdownKit.overflowTablePlaceholder")
 }
 
 // MARK: - AttributedStringRenderer
@@ -436,42 +444,70 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         return result
     }
 
+    /// A single invisible placeholder that reserves vertical space for an
+    /// overflowing (horizontally-scrolling) table. The real table is drawn by
+    /// the platform scroll overlay (`TableContentView` at natural width); the
+    /// reserved height here would otherwise be computed by a *different*
+    /// algorithm (one NBSP line per row) than the overlay's own layout, and the
+    /// two never agree — the block below the table is then permanently overlapped
+    /// by the overlay's excess (or leaves a gap). Collapsing the reservation to
+    /// one forced-line-height line gives the platform layer a single value to
+    /// rewrite to the overlay's *measured* height (single height source of
+    /// truth), so the reserved height exactly equals the overlay height.
     private func overflowTablePlaceholder(
         columns: Int,
         rows: Int,
         columnWidths: [CGFloat],
         naturalTableWidth: CGFloat,
-        headerAttributes: [NSAttributedString.Key: Any],
-        bodyAttributes: [NSAttributedString.Key: Any]
+        headerAttributes _: [NSAttributedString.Key: Any],
+        bodyAttributes _: [NSAttributedString.Key: Any]
     )
         -> NSAttributedString {
-        let result = NSMutableAttributedString()
-        var headerAttrs = headerAttributes
-        headerAttrs[.foregroundColor] = PlatformColor.clear
-        let header = NSMutableAttributedString(string: "\u{00A0}", attributes: headerAttrs)
+        // Conservative initial reservation; the platform layer rewrites this to
+        // the overlay's exact measured height on the next layout pass. Anchored
+        // to body line height × (rows + 1) + the overlay chrome inset (16) so the
+        // very first pre-write-back frame is in the right ballpark.
+        let lineHeight = self.style.bodyFont.ascender - self.style.bodyFont.descender
+        let initialHeight = ceil(lineHeight * CGFloat(rows + 1)) + 16
+
+        // Reserve the height via a single forced-line-height paragraph (the exact
+        // technique `renderThematicBreak` uses for a precise reservation): one
+        // invisible NBSP in a 1pt clear font whose paragraph style pins
+        // minimum == maximum line height. This makes the laid-out fragment height
+        // *exactly* the requested value (no font asc/descent/leading slack —
+        // which is why an attachment's `bounds` alone was ~3pt off), giving the
+        // platform layer one single value to rewrite to the overlay's measured
+        // height (single height source of truth).
+        let para = NSMutableParagraphStyle()
+        para.lineSpacing = 0
+        para.paragraphSpacing = 0
+        para.paragraphSpacingBefore = 0
+        para.minimumLineHeight = initialHeight
+        para.maximumLineHeight = initialHeight
+
+        let result = NSMutableAttributedString(
+            string: "\u{00A0}",
+            attributes: [
+                .font: PlatformFont.systemFont(ofSize: 1),
+                .foregroundColor: PlatformColor.clear,
+                .paragraphStyle: para.copy() as! NSParagraphStyle,
+            ]
+        )
+        // Keep the existing table marker attributes so the platform layer can
+        // still locate this table block (overlay positioning, decorations skip,
+        // column separators). section 0 keeps it a single logical row group.
         self.applyTableAttributes(
-            to: header,
+            to: result,
             section: 0,
             columns: columns,
             columnWidths: columnWidths,
             naturalTableWidth: naturalTableWidth
         )
-        result.append(header)
-
-        var rowAttrs = bodyAttributes
-        rowAttrs[.foregroundColor] = PlatformColor.clear
-        for rowIndex in 0 ..< rows {
-            result.append(NSAttributedString(string: "\n", attributes: rowAttrs))
-            let row = NSMutableAttributedString(string: "\u{00A0}", attributes: rowAttrs)
-            self.applyTableAttributes(
-                to: row,
-                section: rowIndex + 1,
-                columns: columns,
-                columnWidths: columnWidths,
-                naturalTableWidth: naturalTableWidth
-            )
-            result.append(row)
-        }
+        result.addAttribute(
+            .markdownOverflowTablePlaceholder,
+            value: true,
+            range: NSRange(location: 0, length: result.length)
+        )
         return result
     }
 
@@ -702,4 +738,5 @@ public struct AttributedStringRenderer: @unchecked Sendable {
             .paragraphStyle: self.bodyParagraph,
         ]
     }
+
 }
