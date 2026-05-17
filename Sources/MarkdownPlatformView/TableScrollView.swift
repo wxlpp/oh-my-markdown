@@ -35,8 +35,17 @@ final class TableContentView: UIView {
 
         self.textContainer.size = CGSize(width: naturalWidth, height: .greatestFiniteMagnitude)
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-        let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
-        frame = CGRect(x: 0, y: 0, width: naturalWidth, height: textH + 16)
+        // Height is the single source of truth shared with the main-stack
+        // reservation: `TableMeasurement.height` runs the *same* arithmetic on
+        // the *same* table string at the *same* natural width that
+        // `AttributedStringRenderer.overflowTablePlaceholder` used, so the
+        // overlay frame and the reserved height are constructively equal.
+        frame = CGRect(
+            x: 0,
+            y: 0,
+            width: naturalWidth,
+            height: TableMeasurement.height(of: tableString, naturalWidth: naturalWidth)
+        )
         self.rebuildRowBounds()
     }
 
@@ -132,8 +141,8 @@ final class TableContentView: UIView {
     func update(tableString: NSAttributedString) {
         self.contentStorage.attributedString = tableString
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-        let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
-        let newH = textH + 16
+        // Same single source of truth as init — see comment there.
+        let newH = TableMeasurement.height(of: tableString, naturalWidth: frame.width)
         if abs(frame.height - newH) > 0.5 {
             frame.size.height = newH
         }
@@ -226,8 +235,17 @@ final class TableContentView: NSView {
 
         self.textContainer.size = CGSize(width: naturalWidth, height: .greatestFiniteMagnitude)
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-        let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
-        frame = CGRect(x: 0, y: 0, width: naturalWidth, height: textH + 16)
+        // Height is the single source of truth shared with the main-stack
+        // reservation: `TableMeasurement.height` runs the *same* arithmetic on
+        // the *same* table string at the *same* natural width that
+        // `AttributedStringRenderer.overflowTablePlaceholder` used, so the
+        // overlay frame and the reserved height are constructively equal.
+        frame = CGRect(
+            x: 0,
+            y: 0,
+            width: naturalWidth,
+            height: TableMeasurement.height(of: tableString, naturalWidth: naturalWidth)
+        )
         self.rebuildRowBounds()
     }
 
@@ -319,8 +337,8 @@ final class TableContentView: NSView {
     func update(tableString: NSAttributedString) {
         self.contentStorage.attributedString = tableString
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-        let textH = ceil(layoutManager.usageBoundsForTextContainer.height)
-        let newH = textH + 16
+        // Same single source of truth as init — see comment there.
+        let newH = TableMeasurement.height(of: tableString, naturalWidth: frame.width)
         if abs(frame.height - newH) > 0.5 {
             frame.size.height = newH
         }

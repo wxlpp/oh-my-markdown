@@ -240,26 +240,35 @@ struct MarkdownRenderKitTests {
         _ = try #require(rendered.attribute(.markdownTableNaturalWidth, at: 0, effectiveRange: nil) as? CGFloat)
 
         // The overflow table reservation collapsed to ONE invisible NBSP whose
-        // paragraph style pins min == max line height; the platform layer
-        // rewrites that single value to the overlay's measured height (single
-        // height source of truth). No cell text leaks into the main stack, and
-        // there are no NBSP placeholder rows / newlines.
+        // paragraph style pins min == max line height to the table's *true*
+        // rendered height, computed at render time by `TableMeasurement.height`
+        // (the same algorithm & inputs the platform overlay's `TableContentView`
+        // uses → constructively equal, no write-back). No cell text leaks into
+        // the main stack, and there are no NBSP placeholder rows / newlines.
         #expect(rendered.string.contains(longText) == false)
         #expect(rendered.length == 1)
         #expect(rendered.string == "\u{00A0}")
-        // Reserved height = a precise forced line-height (no font-leading slack),
-        // which the platform write-back later overwrites with the overlay height.
+        // Reserved height = a precise forced line-height (no font-leading slack)
+        // equal to the overlay-equal true table height.
         let para = try #require(
             rendered.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
         )
         #expect(para.maximumLineHeight > 0)
         #expect(para.maximumLineHeight == para.minimumLineHeight)
-        // The marker the platform layer keys on to locate & resize this block.
+        // The marker the platform layer keys on to locate & position this block.
         #expect(
             rendered.attribute(.markdownOverflowTablePlaceholder, at: 0, effectiveRange: nil) as? Bool == true
         )
         // Markers preserved so platform overlay positioning / decoration skip still work.
         #expect(rendered.attribute(.markdownTableColumns, at: 0, effectiveRange: nil) as? Int == 2)
+        // The single height source of truth: the reserved forced line-height
+        // exactly equals the `markdownTableNaturalHeight` attribute the overlay
+        // reads — constructive equality, asserted directly on the contract.
+        let trueHeight = try #require(
+            rendered.attribute(.markdownTableNaturalHeight, at: 0, effectiveRange: nil) as? CGFloat
+        )
+        #expect(trueHeight > 0)
+        #expect(para.maximumLineHeight == trueHeight)
     }
 
     @Test("Renderer reuses image cache when source URL has already been loaded")

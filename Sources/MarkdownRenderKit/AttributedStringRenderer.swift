@@ -21,14 +21,53 @@ extension NSAttributedString.Key {
     public static let markdownTableNaturalWidth = NSAttributedString.Key("MarkdownKit.tableNaturalWidth")
     /// Natural widths for each rendered table column, used by platform views to draw separators.
     public static let markdownTableColumnWidths = NSAttributedString.Key("MarkdownKit.tableColumnWidths")
-    /// Marks the single transparent placeholder attachment that reserves vertical
+    /// Marks the single transparent placeholder line that reserves vertical
     /// space for an overflowing (horizontally-scrolling) table. The real table is
-    /// drawn by the platform scroll overlay; the platform layer writes the overlay's
-    /// measured height back into this attachment's `bounds` so the reserved height
-    /// in the main TextKit stack exactly equals the overlay height (single height
-    /// source of truth — see `MarkdownLabelView._syncTableOverlays`).
+    /// drawn by the platform scroll overlay; the reserved height is computed *at
+    /// render time* by `TableMeasurement.height` (the same algorithm the overlay's
+    /// `TableContentView` uses), so the main-stack reservation and the overlay
+    /// height are constructively equal — no platform write-back needed.
     public static let markdownOverflowTablePlaceholder
         = NSAttributedString.Key("MarkdownKit.overflowTablePlaceholder")
+    /// True (overlay-equal) rendered height of an overflowing table, computed by
+    /// `TableMeasurement.height` at render time and reused verbatim by the
+    /// platform layer to size the scroll overlay (single height source of truth —
+    /// see `MarkdownLabelView._syncTableOverlays`).
+    public static let markdownTableNaturalHeight
+        = NSAttributedString.Key("MarkdownKit.tableNaturalHeight")
+}
+
+// MARK: - TableMeasurement
+
+/// Single source of truth for an overflowing table's rendered height.
+///
+/// Both the main-stack reservation (`AttributedStringRenderer.overflowTablePlaceholder`)
+/// and the platform scroll overlay (`TableContentView`) call this *exact* function
+/// with the *exact* same inputs (the full non-overflow table attributed string and
+/// the table's natural width), so the height they use is constructively equal — it
+/// is the same arithmetic on the same TextKit 2 layout, not two algorithms that
+/// happen to agree within a tolerance.
+public enum TableMeasurement {
+    /// Lays `tableString` out in an independent TextKit 2 stack constrained to
+    /// `naturalWidth` and returns `ceil(usageBoundsForTextContainer.height) + 16`
+    /// — byte-for-byte the computation `TableContentView`'s initializer performs
+    /// (`lineFragmentPadding = 0`, container width = natural width, full
+    /// `ensureLayout`, +16 chrome inset). Pure, MainActor-free, platform-neutral.
+    public static func height(of tableString: NSAttributedString, naturalWidth: CGFloat) -> CGFloat {
+        guard tableString.length > 0, naturalWidth > 0 else {
+            return 0
+        }
+        let contentStorage = NSTextContentStorage()
+        let layoutManager = NSTextLayoutManager()
+        let textContainer = NSTextContainer(size: .zero)
+        textContainer.lineFragmentPadding = 0
+        layoutManager.textContainer = textContainer
+        contentStorage.addTextLayoutManager(layoutManager)
+        contentStorage.attributedString = tableString
+        textContainer.size = CGSize(width: naturalWidth, height: .greatestFiniteMagnitude)
+        layoutManager.ensureLayout(for: layoutManager.documentRange)
+        return ceil(layoutManager.usageBoundsForTextContainer.height) + 16
+    }
 }
 
 // MARK: - AttributedStringRenderer
@@ -423,22 +462,25 @@ public struct AttributedStringRenderer: @unchecked Sendable {
             )
             result.append(rowStr)
         }
-        // When the table is too wide, keep only lightweight placeholder rows in the
-        // main TextKit stack. The real table is rendered by the scroll overlay at
-        // natural width; laying out the full hidden table in the narrow main container
-        // creates excessive vertical whitespace during streaming.
+        // When the table is too wide, keep only a single lightweight placeholder
+        // line in the main TextKit stack. The real table is rendered by the scroll
+        // overlay at natural width. The reserved height is computed *here, at
+        // render time*, by measuring this very `result` (the full non-overflow
+        // table string) at `naturalTableWidth` via `TableMeasurement.height` —
+        // the exact same function & inputs the overlay's `TableContentView` uses,
+        // so the reservation and the overlay height are constructively equal. No
+        // platform write-back; every re-render (incl. per-token streaming) emits
+        // the correct height, so there is no convergence race.
         if needsScroll {
+            let trueTableHeight = TableMeasurement.height(
+                of: result,
+                naturalWidth: naturalTableWidth
+            )
             return self.overflowTablePlaceholder(
                 columns: cols,
-                rows: rows.count,
+                trueTableHeight: trueTableHeight,
                 columnWidths: colWidths,
-                naturalTableWidth: naturalTableWidth,
-                headerAttributes: hAttrs,
-                bodyAttributes: {
-                    var attrs = self.bodyAttributes()
-                    attrs[.paragraphStyle] = bodyRowPara
-                    return attrs
-                }()
+                naturalTableWidth: naturalTableWidth
             )
         }
         return result
@@ -446,44 +488,34 @@ public struct AttributedStringRenderer: @unchecked Sendable {
 
     /// A single invisible placeholder that reserves vertical space for an
     /// overflowing (horizontally-scrolling) table. The real table is drawn by
-    /// the platform scroll overlay (`TableContentView` at natural width); the
-    /// reserved height here would otherwise be computed by a *different*
-    /// algorithm (one NBSP line per row) than the overlay's own layout, and the
-    /// two never agree — the block below the table is then permanently overlapped
-    /// by the overlay's excess (or leaves a gap). Collapsing the reservation to
-    /// one forced-line-height line gives the platform layer a single value to
-    /// rewrite to the overlay's *measured* height (single height source of
-    /// truth), so the reserved height exactly equals the overlay height.
+    /// the platform scroll overlay (`TableContentView` at natural width). The
+    /// reserved height is `trueTableHeight` — measured at render time by
+    /// `TableMeasurement.height` from the *same* full table string the overlay
+    /// lays out, at the *same* natural width — so the main-stack reservation and
+    /// the overlay height are constructively equal (one arithmetic on one layout,
+    /// not two algorithms reconciled by write-back). Every re-render (incl. the
+    /// per-token streaming re-render forced by `tailReparseStartIndex`) emits the
+    /// correct height, so there is no convergence race and no platform write-back.
     private func overflowTablePlaceholder(
         columns: Int,
-        rows: Int,
+        trueTableHeight: CGFloat,
         columnWidths: [CGFloat],
-        naturalTableWidth: CGFloat,
-        headerAttributes _: [NSAttributedString.Key: Any],
-        bodyAttributes _: [NSAttributedString.Key: Any]
+        naturalTableWidth: CGFloat
     )
         -> NSAttributedString {
-        // Conservative initial reservation; the platform layer rewrites this to
-        // the overlay's exact measured height on the next layout pass. Anchored
-        // to body line height × (rows + 1) + the overlay chrome inset (16) so the
-        // very first pre-write-back frame is in the right ballpark.
-        let lineHeight = self.style.bodyFont.ascender - self.style.bodyFont.descender
-        let initialHeight = ceil(lineHeight * CGFloat(rows + 1)) + 16
-
         // Reserve the height via a single forced-line-height paragraph (the exact
         // technique `renderThematicBreak` uses for a precise reservation): one
         // invisible NBSP in a 1pt clear font whose paragraph style pins
-        // minimum == maximum line height. This makes the laid-out fragment height
-        // *exactly* the requested value (no font asc/descent/leading slack —
-        // which is why an attachment's `bounds` alone was ~3pt off), giving the
-        // platform layer one single value to rewrite to the overlay's measured
-        // height (single height source of truth).
+        // minimum == maximum line height to `trueTableHeight`. This makes the
+        // laid-out fragment height *exactly* the overlay height (no font
+        // asc/descent/leading slack — which is why an attachment's `bounds` alone
+        // was ~3pt off).
         let para = NSMutableParagraphStyle()
         para.lineSpacing = 0
         para.paragraphSpacing = 0
         para.paragraphSpacingBefore = 0
-        para.minimumLineHeight = initialHeight
-        para.maximumLineHeight = initialHeight
+        para.minimumLineHeight = trueTableHeight
+        para.maximumLineHeight = trueTableHeight
 
         let result = NSMutableAttributedString(
             string: "\u{00A0}",
@@ -506,6 +538,14 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         result.addAttribute(
             .markdownOverflowTablePlaceholder,
             value: true,
+            range: NSRange(location: 0, length: result.length)
+        )
+        // The single height source of truth: the platform overlay reads this
+        // verbatim to size the scroll view, so reservation == overlay by
+        // construction (no independent re-measure on the platform side).
+        result.addAttribute(
+            .markdownTableNaturalHeight,
+            value: trueTableHeight,
             range: NSRange(location: 0, length: result.length)
         )
         return result
