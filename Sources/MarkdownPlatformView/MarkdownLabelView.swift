@@ -337,6 +337,36 @@ public final class MarkdownLabelView: UIView {
         return self.decorations.blockFrameUnion(at: index)
     }
 
+    /// Test-support: math-resolution state of the *actual* production-rendered
+    /// string (`contentStorage.attributedString`, i.e. what is drawn).
+    /// Read-only forwarder; mirrors `_blockFrameUnionForTesting`.
+    ///
+    /// `mathSourceCount` = residual unresolved-math placeholders;
+    /// `attachmentCount` = resolved math glyphs spliced in as attachments.
+    /// After streaming settles, a fully math-resolved document has
+    /// `mathSourceCount == 0` and `attachmentCount == <#math spans>`. If the
+    /// async math glyph write-back fails to survive `resetLayout()`'s renderer
+    /// recreation (Bug 1 math sub-symptom), `renderMath` keeps missing the
+    /// cache → placeholders keep reappearing → these counts oscillate / never
+    /// reach the resolved form. This is the true, undecoupled signal for "did
+    /// the resolved math survive renderer recreation" — distinct from the
+    /// separately-guarded TextKit2 relayout-timing concern.
+    func _renderedMathStateForTesting() -> (mathSourceCount: Int, attachmentCount: Int) {
+        guard let str = self.contentStorage.attributedString else {
+            return (0, 0)
+        }
+        var srcCount = 0
+        var attachCount = 0
+        let full = NSRange(location: 0, length: str.length)
+        str.enumerateAttribute(.markdownMathSource, in: full) { v, _, _ in
+            if v is String { srcCount += 1 }
+        }
+        str.enumerateAttribute(.attachment, in: full) { v, _, _ in
+            if v != nil { attachCount += 1 }
+        }
+        return (srcCount, attachCount)
+    }
+
     /// Maps a rendered selection range to the original Markdown source it
     /// covers (block-level). Shared between platforms via the file-scope
     /// `markdownSourceForRenderedSelection`.
@@ -525,6 +555,16 @@ public final class MarkdownLabelView: UIView {
     private var _imageLoading: Set<String> = []
     /// Platform-agnostic async math render coordinator (dedup/三态/代际).
     private let _mathCoordinator = MathLoadCoordinator()
+    /// View-held math glyph cache / raster scale / renderer generation —
+    /// the **canonical store** for async math write-back, mirroring
+    /// `_imageCache`. The transient `_cachedRenderer` is discarded by
+    /// `resetLayout()` whenever `bounds.width` changes (streaming churn);
+    /// keeping math state on the view (and re-seeding it into every freshly
+    /// built renderer in `cachedRenderer`) is what makes resolved glyphs
+    /// survive renderer recreation — exactly as `_imageCache` already does.
+    private var _mathCache: [MathCacheKey: MathRenderedGlyph] = [:]
+    private var _mathRasterScale: CGFloat = 1
+    private var _mathRendererGeneration: Int = 0
     /// Injected math renderer; swapping it bumps the coordinator's generation.
     public var mathRenderer: (any MathRendering)? {
         // setRenderer 异步派发；落地前发生的渲染会显示 latex 占位，并在下次
@@ -551,6 +591,12 @@ public final class MarkdownLabelView: UIView {
         if self._cachedRenderer == nil || abs(w - self._cachedRendererWidth) > 0.5 {
             var renderer = AttributedStringRenderer(style: renderStyle, availableWidth: w)
             renderer.imageCache = self._imageCache
+            // Re-seed view-held math state so resolved glyphs survive the
+            // renderer recreation `resetLayout()` performs on width churn
+            // (identical discipline to `imageCache` above).
+            renderer.mathCache = self._mathCache
+            renderer.mathRasterScale = self._mathRasterScale
+            renderer.mathRendererGeneration = self._mathRendererGeneration
             self._cachedRenderer = renderer
             self._cachedRendererWidth = w
         }
@@ -970,9 +1016,17 @@ public final class MarkdownLabelView: UIView {
             }
             // 一次性合并回写并仅触发一次 updateContent（镜像图片加载纪律）。
             await MainActor.run {
+                // 真值源是 view-held store —— resetLayout() 在宽度抖动时会
+                // 丢弃 _cachedRenderer，下次 cachedRenderer 重建会从这里
+                // 重播种；同时也写当前 transient renderer（与
+                // finishImageLoad 同时写 _imageCache 与 _cachedRenderer?
+                // 完全同构）。
+                self._mathRasterScale = scale
+                self._mathRendererGeneration = gen
                 self._cachedRenderer?.mathRasterScale = scale
                 self._cachedRenderer?.mathRendererGeneration = gen
                 for entry in resolved {
+                    self._mathCache[entry.key] = entry.glyph
                     self._cachedRenderer?.mathCache[entry.key] = entry.glyph
                 }
                 self.updateContent()
@@ -1611,6 +1665,36 @@ public final class MarkdownLabelView: NSView {
         return self.decorations.blockFrameUnion(at: index)
     }
 
+    /// Test-support: math-resolution state of the *actual* production-rendered
+    /// string (`contentStorage.attributedString`, i.e. what is drawn).
+    /// Read-only forwarder; mirrors `_blockFrameUnionForTesting`.
+    ///
+    /// `mathSourceCount` = residual unresolved-math placeholders;
+    /// `attachmentCount` = resolved math glyphs spliced in as attachments.
+    /// After streaming settles, a fully math-resolved document has
+    /// `mathSourceCount == 0` and `attachmentCount == <#math spans>`. If the
+    /// async math glyph write-back fails to survive `resetLayout()`'s renderer
+    /// recreation (Bug 1 math sub-symptom), `renderMath` keeps missing the
+    /// cache → placeholders keep reappearing → these counts oscillate / never
+    /// reach the resolved form. This is the true, undecoupled signal for "did
+    /// the resolved math survive renderer recreation" — distinct from the
+    /// separately-guarded TextKit2 relayout-timing concern.
+    func _renderedMathStateForTesting() -> (mathSourceCount: Int, attachmentCount: Int) {
+        guard let str = self.contentStorage.attributedString else {
+            return (0, 0)
+        }
+        var srcCount = 0
+        var attachCount = 0
+        let full = NSRange(location: 0, length: str.length)
+        str.enumerateAttribute(.markdownMathSource, in: full) { v, _, _ in
+            if v is String { srcCount += 1 }
+        }
+        str.enumerateAttribute(.attachment, in: full) { v, _, _ in
+            if v != nil { attachCount += 1 }
+        }
+        return (srcCount, attachCount)
+    }
+
     public func setMarkdown(_ source: String) {
         self._parseSerial += 1
         self._parseTask?.cancel()
@@ -1675,6 +1759,16 @@ public final class MarkdownLabelView: NSView {
     private var _imageLoading: Set<String> = []
     /// Platform-agnostic async math render coordinator (dedup/三态/代际).
     private let _mathCoordinator = MathLoadCoordinator()
+    /// View-held math glyph cache / raster scale / renderer generation —
+    /// the **canonical store** for async math write-back, mirroring
+    /// `_imageCache`. The transient `_cachedRenderer` is discarded by
+    /// `resetLayout()` whenever `bounds.width` changes (streaming churn);
+    /// keeping math state on the view (and re-seeding it into every freshly
+    /// built renderer in `cachedRenderer`) is what makes resolved glyphs
+    /// survive renderer recreation — exactly as `_imageCache` already does.
+    private var _mathCache: [MathCacheKey: MathRenderedGlyph] = [:]
+    private var _mathRasterScale: CGFloat = 1
+    private var _mathRendererGeneration: Int = 0
     /// Injected math renderer; swapping it bumps the coordinator's generation.
     public var mathRenderer: (any MathRendering)? {
         // setRenderer 异步派发；落地前发生的渲染会显示 latex 占位，并在下次
@@ -1697,6 +1791,12 @@ public final class MarkdownLabelView: NSView {
         if self._cachedRenderer == nil || abs(w - self._cachedRendererWidth) > 0.5 {
             var renderer = AttributedStringRenderer(style: renderStyle, availableWidth: w)
             renderer.imageCache = self._imageCache
+            // Re-seed view-held math state so resolved glyphs survive the
+            // renderer recreation `resetLayout()` performs on width churn
+            // (identical discipline to `imageCache` above).
+            renderer.mathCache = self._mathCache
+            renderer.mathRasterScale = self._mathRasterScale
+            renderer.mathRendererGeneration = self._mathRendererGeneration
             self._cachedRenderer = renderer
             self._cachedRendererWidth = w
         }
@@ -2202,9 +2302,17 @@ public final class MarkdownLabelView: NSView {
             }
             // 一次性合并回写并仅触发一次 updateContent（镜像图片加载纪律）。
             await MainActor.run {
+                // 真值源是 view-held store —— resetLayout() 在宽度抖动时会
+                // 丢弃 _cachedRenderer，下次 cachedRenderer 重建会从这里
+                // 重播种；同时也写当前 transient renderer（与
+                // finishImageLoad 同时写 _imageCache 与 _cachedRenderer?
+                // 完全同构）。
+                self._mathRasterScale = scale
+                self._mathRendererGeneration = gen
                 self._cachedRenderer?.mathRasterScale = scale
                 self._cachedRenderer?.mathRendererGeneration = gen
                 for entry in resolved {
+                    self._mathCache[entry.key] = entry.glyph
                     self._cachedRenderer?.mathCache[entry.key] = entry.glyph
                 }
                 self.updateContent()
