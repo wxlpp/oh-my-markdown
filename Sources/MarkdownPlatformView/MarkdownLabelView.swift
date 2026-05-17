@@ -1066,44 +1066,20 @@ public final class MarkdownLabelView: UIView {
             return
         }
 
-        // Write-back pre-pass: for every wide table, measure the overlay's true
-        // height (the single source of truth — `TableContentView` at natural
-        // width, independent of the main layout) and stamp it into the
-        // placeholder attachment so the main stack reserves exactly that height.
-        var didWriteBackTableHeight = false
-        for i in startIndex ..< self.blocks.count {
-            guard case .table = self.blocks[i] else {
-                continue
-            }
-            let nw = self._tableNaturalWidth(at: i)
-            guard nw > viewWidth + 0.5 else {
-                continue
-            }
-            let probe = AttributedStringRenderer(style: renderStyle, availableWidth: nw)
-            let probeView = TableContentView(
-                tableString: probe.renderBlock(self.blocks[i]),
-                style: renderStyle,
-                naturalWidth: nw
-            )
-            if self._writeBackOverflowTableHeight(blockIndex: i, overlayHeight: probeView.frame.height) {
-                didWriteBackTableHeight = true
-            }
-        }
-        if didWriteBackTableHeight {
-            // Reuse resetLayout's host-relayout discipline so the placeholder's
-            // new height propagates: re-ensure layout, re-measure intrinsic size,
-            // ask the host to re-query, schedule the deferred re-measure, and
-            // sync overlays again on the next pass against corrected geometry.
-            self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-            self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
-            invalidateIntrinsicContentSize()
-            setNeedsDisplay()
-            setNeedsLayout()
-            self.scheduleDeferredHeightUpdate()
-            self._pendingTableOverlaySyncStart = min(
-                self._pendingTableOverlaySyncStart ?? startIndex, startIndex
-            )
-        }
+        // Overlay heights measured this pass, keyed by block index. The overlay's
+        // `TableContentView` (the single height source of truth — laid out at the
+        // table's natural width, independent of the main stack) is constructed by
+        // the create / update-in-place branches below for their own purposes; we
+        // reuse the height already computed there to write it back into the
+        // placeholder, so there is no extra full-table layout for the write-back.
+        // The actual splice is deferred until after the loop: mutating
+        // `_liveString` mid-loop would invalidate `decorations.blockFrameUnion`
+        // for the tables visited afterwards (stale geometry → misplaced overlay).
+        // Collecting now and writing back once after the loop keeps every table's
+        // frame query in this pass consistent; the corrected overlay placement is
+        // delegated to the next sync pass (driven by `_pendingTableOverlaySyncStart`
+        // + the relayout below), exactly as the former pre-pass did.
+        var measuredOverlayHeights: [Int: CGFloat] = [:]
 
         for i in startIndex ..< self.blocks.count {
             let block = self.blocks[i]
@@ -1152,6 +1128,7 @@ public final class MarkdownLabelView: UIView {
                 let tableStr = renderer.renderBlock(block)
                 existing.content.update(tableString: tableStr)
                 let newH = existing.content.frame.height
+                measuredOverlayHeights[i] = newH
                 self._mkLog("tableOverlay[update] block=\(i) reservedH=\(blockFrame.height) overlayH=\(newH) delta=\(newH - blockFrame.height)")
                 existing.scroll.contentSize = CGSize(width: naturalWidth, height: newH)
                 CATransaction.begin()
@@ -1182,6 +1159,7 @@ public final class MarkdownLabelView: UIView {
                 naturalWidth: naturalWidth
             )
             let scrollH = contentView.frame.height
+            measuredOverlayHeights[i] = scrollH
             self._mkLog("tableOverlay[create] block=\(i) reservedH=\(blockFrame.height) overlayH=\(scrollH) delta=\(scrollH - blockFrame.height)")
             let scrollView = UIScrollView(frame: CGRect(
                 x: 0,
@@ -1205,6 +1183,35 @@ public final class MarkdownLabelView: UIView {
                 content: contentView,
                 block: block,
                 naturalWidth: naturalWidth
+            )
+        }
+
+        // Write the overlay heights measured above back into the placeholders,
+        // now that every block-frame query for this pass is done (no stale
+        // geometry). `_writeBackOverflowTableHeight`'s `> 0.5` fixed-point guard
+        // makes the steady state a no-op, so this only mutates on the first few
+        // passes / when an overlay's height actually changes.
+        var didWriteBackTableHeight = false
+        for (blockIndex, overlayHeight) in measuredOverlayHeights {
+            if self._writeBackOverflowTableHeight(blockIndex: blockIndex, overlayHeight: overlayHeight) {
+                didWriteBackTableHeight = true
+            }
+        }
+        if didWriteBackTableHeight {
+            // Reuse resetLayout's host-relayout discipline so the placeholder's
+            // new height propagates: re-ensure layout, re-measure intrinsic size,
+            // ask the host to re-query, schedule the deferred re-measure, and
+            // sync overlays again on the next pass against corrected geometry
+            // (which is where the overlays touched this pass get their final,
+            // correctly-positioned frame — identical to the former pre-pass).
+            self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+            self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
+            invalidateIntrinsicContentSize()
+            setNeedsDisplay()
+            setNeedsLayout()
+            self.scheduleDeferredHeightUpdate()
+            self._pendingTableOverlaySyncStart = min(
+                self._pendingTableOverlaySyncStart ?? startIndex, startIndex
             )
         }
     }
@@ -2117,43 +2124,20 @@ public final class MarkdownLabelView: NSView {
             return
         }
 
-        // Write-back pre-pass (symmetric with iOS): for every wide table, measure
-        // the overlay's true height (single source of truth — `TableContentView`
-        // at natural width, independent of the main layout) and stamp it into the
-        // placeholder attachment so the main stack reserves exactly that height.
-        var didWriteBackTableHeight = false
-        for i in startIndex ..< self.blocks.count {
-            guard case .table = self.blocks[i] else {
-                continue
-            }
-            let nw = self._tableNaturalWidth(at: i)
-            guard nw > viewWidth + 0.5 else {
-                continue
-            }
-            let probe = AttributedStringRenderer(style: renderStyle, availableWidth: nw)
-            let probeView = TableContentView(
-                tableString: probe.renderBlock(self.blocks[i]),
-                style: renderStyle,
-                naturalWidth: nw
-            )
-            if self._writeBackOverflowTableHeight(blockIndex: i, overlayHeight: probeView.frame.height) {
-                didWriteBackTableHeight = true
-            }
-        }
-        if didWriteBackTableHeight {
-            // Reuse resetLayout's host-relayout discipline so the placeholder's
-            // new height propagates (AppKit primitives), then sync overlays again
-            // on the next pass against corrected geometry.
-            self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-            self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
-            invalidateIntrinsicContentSize()
-            needsDisplay = true
-            needsLayout = true
-            self.scheduleDeferredHeightUpdate()
-            self._pendingTableOverlaySyncStart = min(
-                self._pendingTableOverlaySyncStart ?? startIndex, startIndex
-            )
-        }
+        // Overlay heights measured this pass, keyed by block index. The overlay's
+        // `TableContentView` (the single height source of truth — laid out at the
+        // table's natural width, independent of the main stack) is constructed by
+        // the create / update-in-place branches below for their own purposes; we
+        // reuse the height already computed there to write it back into the
+        // placeholder, so there is no extra full-table layout for the write-back.
+        // The actual splice is deferred until after the loop: mutating
+        // `_liveString` mid-loop would invalidate `decorations.blockFrameUnion`
+        // for the tables visited afterwards (stale geometry → misplaced overlay).
+        // Collecting now and writing back once after the loop keeps every table's
+        // frame query in this pass consistent; the corrected overlay placement is
+        // delegated to the next sync pass (driven by `_pendingTableOverlaySyncStart`
+        // + the relayout below), exactly as the former pre-pass did.
+        var measuredOverlayHeights: [Int: CGFloat] = [:]
 
         for i in startIndex ..< self.blocks.count {
             let block = self.blocks[i]
@@ -2198,6 +2182,7 @@ public final class MarkdownLabelView: NSView {
                 let tableStr = renderer.renderBlock(block)
                 existing.content.update(tableString: tableStr)
                 let newH = existing.content.frame.height
+                measuredOverlayHeights[i] = newH
                 existing.scroll.documentView?.setFrameSize(NSSize(width: naturalWidth, height: newH))
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
@@ -2227,6 +2212,7 @@ public final class MarkdownLabelView: NSView {
                 naturalWidth: naturalWidth
             )
             let scrollH = contentView.frame.height
+            measuredOverlayHeights[i] = scrollH
             let scrollView = NSScrollView(frame: NSRect(
                 x: 0,
                 y: blockFrame.minY - 8,
@@ -2250,6 +2236,34 @@ public final class MarkdownLabelView: NSView {
                 content: contentView,
                 block: block,
                 naturalWidth: naturalWidth
+            )
+        }
+
+        // Write the overlay heights measured above back into the placeholders,
+        // now that every block-frame query for this pass is done (no stale
+        // geometry). `_writeBackOverflowTableHeight`'s `> 0.5` fixed-point guard
+        // makes the steady state a no-op, so this only mutates on the first few
+        // passes / when an overlay's height actually changes.
+        var didWriteBackTableHeight = false
+        for (blockIndex, overlayHeight) in measuredOverlayHeights {
+            if self._writeBackOverflowTableHeight(blockIndex: blockIndex, overlayHeight: overlayHeight) {
+                didWriteBackTableHeight = true
+            }
+        }
+        if didWriteBackTableHeight {
+            // Reuse resetLayout's host-relayout discipline so the placeholder's
+            // new height propagates (AppKit primitives), then sync overlays again
+            // on the next pass against corrected geometry (which is where the
+            // overlays touched this pass get their final, correctly-positioned
+            // frame — identical to the former pre-pass).
+            self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+            self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+            needsLayout = true
+            self.scheduleDeferredHeightUpdate()
+            self._pendingTableOverlaySyncStart = min(
+                self._pendingTableOverlaySyncStart ?? startIndex, startIndex
             )
         }
     }
