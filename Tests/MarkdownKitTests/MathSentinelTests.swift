@@ -63,7 +63,12 @@ struct MathSentinelTests {
 
     @Test("相邻公式 span 之间空切片不崩、锚连续")
     func adjacentSpans() {
-        let src = "$x$$y$"
+        // 原 fixture `$x$$y$` 非 pandoc / remark-math 合规（两个 $…$ 之间
+        // 无分隔，中段 `$$` 在 pandoc 语义下是块级定界符——仅旧贪婪扫描器
+        // 才会把它拆成两个相邻行内 span）。本测试意图是钉 MathSentinel 对
+        // 「两个零间隔相邻 span」的空切片/锚连续鲁棒性，与该畸形串无关。
+        // 改用零间隔、无歧义的相邻 `\(a\)\(b\)`，同样产出两个紧邻 span。
+        let src = "\\(a\\)\\(b\\)"
         let spans = MathScanner.scan(src)
         let result = MathSentinel.substitute(source: src, spans: spans)
         #expect(result.table.count == spans.count)

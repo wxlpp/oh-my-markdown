@@ -12,6 +12,18 @@ public struct MathSpan: Sendable, Equatable {
 
 /// 在原始 Markdown 源码上扫描数学区段。纯函数，不修改输入。
 /// 跳过围栏代码块 / 缩进代码块 / 行内代码；`\$` 转义不作定界符；未配对当字面。
+///
+/// 行内 `$ … $` 采用 pandoc Markdown `tex_math_dollars` / remark-math 的定界符
+/// 规则（**不是**贪婪「下一个 `$` 即配对」），以避免货币写法（`$5.00`、
+/// `cost $5 vs $9`）被当行内数学定界符贪婪配对、与其后真实公式的开界 `$`
+/// 误配而吞掉整段（含代码块、标题）。具体：
+///   1. 开界 `$` 后必须紧跟非空白字节（空格/制表/换行/回车之外）；
+///   2. 闭界 `$` 前一字节非空白，且其后一字节（若存在）非 ASCII 数字；
+///   3. 行内 `$ … $` 不得跨段落空行；
+///   4. 公式非空（`close > openContentStart`）。
+/// 找不到合规闭界 → 该开界 `$` 退为字面文本（`i += 1` 继续）。
+/// `$$…$$` / `\(…\)` / `\[…\]` 规则、代码区掩码、转义、`$$` 块级优先、
+/// 非空约束均不受此规则影响。
 public enum MathScanner {
     public static func scan(_ source: String) -> [MathSpan] {
         let bytes = Array(source.utf8)
@@ -48,6 +60,47 @@ public enum MathScanner {
             return nil
         }
 
+        // pandoc / remark-math 行内 `$ … $` 定界符判定用字节级 helper。
+        // 空白 = 空格(0x20) / 制表(0x09) / 换行(0x0A) / 回车(0x0D)。
+        @inline(__always) func isASCIIWhitespace(_ b: UInt8) -> Bool {
+            b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D
+        }
+        @inline(__always) func isASCIIDigit(_ b: UInt8) -> Bool {
+            b >= 0x30 && b <= 0x39
+        }
+
+        /// 为行内 `$` 找合规闭界 `$`（pandoc / remark-math 规则）。
+        /// `openContentStart` = 开界 `$` 之后第一个内容字节的索引（== 开界 i+1）。
+        /// 合规闭界 `$` 需满足：非代码、非转义；不是 `$$` 的一部分（其后一字节
+        /// 非 `$`，避免吃掉块级定界符的半个 `$`）；前一字节非空白；其后一字节
+        /// （若存在）非 ASCII 数字（抗 `$5 ... $9` 货币）；`close > openContentStart`
+        /// （公式非空）。搜索过程中若先遇到段落空行边界（一个 `\n` 后跟零个或
+        /// 多个 空格/制表 再跟 `\n`）仍未找到合规闭界 → 返回 nil（行内不跨空行，
+        /// 阻断「吞代码块 + 标题」灾难性跨块）。
+        func findInlineDollarClose(openContentStart: Int) -> Int? {
+            var k = openContentStart
+            while k < bytes.count {
+                let b = bytes[k]
+                // 段落空行边界检测：`\n`（含其前的同行尾随空白）后到下一个 `\n`
+                // 之间只有 空格/制表 → 视为空行，行内公式不得跨越。
+                if b == 0x0A {
+                    var p = k + 1
+                    while p < bytes.count, bytes[p] == 0x20 || bytes[p] == 0x09 { p += 1 }
+                    if p < bytes.count, bytes[p] == 0x0A { return nil }
+                }
+                if b == 0x24, !codeMask[k], !isEscaped(k) {
+                    let nextIsDollar = k + 1 < bytes.count && bytes[k + 1] == 0x24
+                    let prevNotWhitespace = k - 1 >= 0 && !isASCIIWhitespace(bytes[k - 1])
+                    let afterNotDigit = k + 1 >= bytes.count || !isASCIIDigit(bytes[k + 1])
+                    if !nextIsDollar, prevNotWhitespace, afterNotDigit, k > openContentStart {
+                        return k
+                    }
+                }
+                k += 1
+            }
+            return nil
+        }
+
         while i < bytes.count {
             if codeMask[i] || isEscaped(i) { i += 1; continue }
             let b = bytes[i]
@@ -60,9 +113,14 @@ public enum MathScanner {
                 }
                 i += 2; continue
             }
-            // $ … $（行内，闭合符不能是 $$ 的一部分；公式非空）
+            // $ … $（行内）：pandoc / remark-math 规则——开界 $ 后非空白，
+            // 闭界 $ 前非空白且其后非数字，行内不跨段落空行（详见类型 doc）。
+            // 抗货币 $（$5.00 / cost $5 vs $9）被贪婪误配吞整段。
             if b == 0x24 {
-                if let close = findClose([0x24], from: i + 1), close > i + 1 {
+                let openContentStart = i + 1
+                let openValid = openContentStart < bytes.count
+                    && !isASCIIWhitespace(bytes[openContentStart])
+                if openValid, let close = findInlineDollarClose(openContentStart: openContentStart) {
                     spans.append(makeSpan(open: i, openLen: 1, close: close, closeLen: 1, display: false))
                     i = close + 1; continue
                 }
