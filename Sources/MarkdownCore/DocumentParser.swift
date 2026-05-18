@@ -444,8 +444,38 @@ extension String {
 enum MathBackfill {
     static func resolve(_ blocks: [ParsedBlockNode], table: [MathSentinel.Entry]) -> [ParsedBlockNode] {
         blocks.flatMap { node -> [ParsedBlockNode] in
-            self.resolveBlock(node.block, table: table).map {
-                ParsedBlockNode(block: $0, sourceRange: node.sourceRange, fingerprint: node.fingerprint)
+            let resolved = self.resolveBlock(node.block, table: table)
+            // pre-backfill 的 `fingerprint` / `sourceRange` 是对**原始**
+            // `node.block` 在原始源码字节空间算出的；仅当 backfill 对该位置
+            // 「原样透传、未拆未改 block」时它们才与 emitted 块 1:1 自洽。
+            // 一旦 backfill 拆分（paragraph → [paragraph, mathBlock, …]）或
+            // 改写块内容（行内文本被替换为含 `.math` 的新 inline 数组、
+            // `unescapeReservedScalar` 改了文本），复用旧 fingerprint 会让
+            // `MarkdownLabelView` 的块 diff（双方 fingerprint 非 nil 时优先
+            // fingerprint 相等）把**已变**块误判**未变**而跳过流式增量更新
+            // （与本 PR/saga 同类的增量正确性 bug）。
+            //
+            // 判定准则（精确，非一刀切）：`resolveBlock` 输出恰为 `[node.block]`
+            // （单块且 `BlockNode` 相等）⟺ 真·透传 → 保留原 fingerprint/
+            // sourceRange（fast-path 不退化）；否则（拆成多块、或单块但内容
+            // 被改写）→ 该位置所有 emitted 块 `fingerprint`/`sourceRange`
+            // 置 nil，强制 diff 回退到 `BlockNode` 相等（语义正确，仅失去
+            // fast-path）。`sourceRange` 同理：拆分/改写后派生块不再 1:1
+            // 精确对应原始 markdown 源切片，置 nil（与 Bug-4 既定语义一致；
+            // nil sourceRange 的整选区纯文本回退是既有已知限制，本轮不扩大
+            // 不收缩）。
+            // Reuse the original fingerprint/sourceRange only on a true
+            // passthrough; clear them whenever backfill split or rewrote
+            // this position so the block diff falls back to BlockNode
+            // equality (semantically correct, just no fast-path).
+            let isPassthrough = resolved.count == 1 && resolved[0] == node.block
+            if isPassthrough {
+                return [ParsedBlockNode(
+                    block: resolved[0], sourceRange: node.sourceRange, fingerprint: node.fingerprint
+                )]
+            }
+            return resolved.map {
+                ParsedBlockNode(block: $0, sourceRange: nil, fingerprint: nil)
             }
         }
     }
