@@ -64,7 +64,16 @@ public enum MathScanner {
             }
             var k = from
             while k + marker.count <= bytes.count {
-                if !codeMask[k], !isEscaped(k), matchesMarker(at: k) {
+                // 硬边界：闭合搜索一旦扫进代码区即放弃（该 open 视为字面）。
+                // 否则会越过 fenced/indented 代码块去匹配其**之后**的闭合符，
+                // 使数学 span 吞掉整个代码块（随后 MathSentinel 把它从源码
+                // 移除）——与引发整段 saga 的根因同类（定界符吞结构内容）。
+                // 仅当扫描跨过代码区找 close 时触发，单调更保守，绝不放宽。
+                // Hard boundary: a math delimiter pair must not span a code region.
+                if codeMask[k] {
+                    return nil
+                }
+                if !isEscaped(k), matchesMarker(at: k) {
                     return k
                 }
                 k += 1
@@ -94,6 +103,16 @@ public enum MathScanner {
             var k = openContentStart
             while k < bytes.count {
                 let b = bytes[k]
+                // 硬边界：行内 `$ … $` 闭合搜索一旦扫进代码区即放弃（开界 `$`
+                // 视为字面）。否则会越过 fenced/indented 代码块去匹配其**之后**
+                // 的闭合 `$`，使行内数学 span 吞掉整个代码块（随后 MathSentinel
+                // 把它从源码移除）——与引发整段 saga 的根因同类（定界符吞结构
+                // 内容），语义与 `findClose`/`findCloseBackslash` 一致。仅在扫描
+                // 跨过代码区找 close 时触发，单调更保守，绝不放宽。
+                // Hard boundary: a math delimiter pair must not span a code region.
+                if codeMask[k] {
+                    return nil
+                }
                 // 段落空行边界检测：行边界（`\n` / `\r\n` / `\r`，含其前的同行
                 // 尾随空白）后到下一个行边界之间只有 空格/制表 → 视为空行，
                 // 行内公式不得跨越。CRLF/CR 与 LF 同等对待（与本文件「空白
@@ -169,7 +188,17 @@ public enum MathScanner {
     ) -> Int? {
         var k = from
         while k + 1 < bytes.count {
-            if !codeMask[k], bytes[k] == 0x5C, bytes[k + 1] == close {
+            // 硬边界：`\(…\)` / `\[…\]` 闭合搜索一旦扫进代码区即放弃（该 open
+            // 视为字面）。否则会越过 fenced/indented 代码块去匹配其**之后**的
+            // `\)` / `\]`，使数学 span 吞掉整个代码块（随后 MathSentinel 把它
+            // 从源码移除）——与引发整段 saga 的根因同类（定界符吞结构内容），
+            // 语义与 `findClose`/`findInlineDollarClose` 一致。仅在扫描跨过
+            // 代码区找 close 时触发，单调更保守，绝不放宽。
+            // Hard boundary: a math delimiter pair must not span a code region.
+            if codeMask[k] {
+                return nil
+            }
+            if bytes[k] == 0x5C, bytes[k + 1] == close {
                 var backslashes = 0, p = k - 1
                 while p >= 0, bytes[p] == 0x5C {
                     backslashes += 1; p -= 1

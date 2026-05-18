@@ -42,11 +42,37 @@ extension NSAttributedString.Key {
 /// is the same arithmetic on the same TextKit 2 layout, not two algorithms that
 /// happen to agree within a tolerance.
 public enum TableMeasurement {
+    /// The single height arithmetic core: `ceil(usageBoundsForTextContainer
+    /// .height) + 16` (the +16 chrome inset). Both entry points
+    /// (`height(of:naturalWidth:)` building its own stack, and
+    /// `height(usingLaidOut:)` reusing an already-laid-out manager) funnel
+    /// through *this* function, so for the same table content they produce a
+    /// byte-for-byte identical height — the wide-table root-cause invariant
+    /// (constructive equality, one arithmetic, never two algorithms).
+    @inline(__always)
+    private static func heightCore(usingLaidOut layoutManager: NSTextLayoutManager) -> CGFloat {
+        ceil(layoutManager.usageBoundsForTextContainer.height) + 16
+    }
+
+    /// Reuse a TextKit 2 layout manager the caller has **already laid out**
+    /// (e.g. `TableContentView`'s own stack after its `ensureLayout`) and
+    /// return the table height via the shared `heightCore`. The caller is
+    /// responsible for configuring the stack identically to
+    /// `height(of:naturalWidth:)` (`lineFragmentPadding = 0`, container width
+    /// = natural width, full `ensureLayout`) so the inputs to `heightCore` are
+    /// the same — avoiding a second TextKit 2 stack + second full layout per
+    /// init / streaming table update while keeping the height constructively
+    /// equal to the main-stack reservation.
+    public static func height(usingLaidOut layoutManager: NSTextLayoutManager) -> CGFloat {
+        self.heightCore(usingLaidOut: layoutManager)
+    }
+
     /// Lays `tableString` out in an independent TextKit 2 stack constrained to
-    /// `naturalWidth` and returns `ceil(usageBoundsForTextContainer.height) + 16`
-    /// — byte-for-byte the computation `TableContentView`'s initializer performs
+    /// `naturalWidth`, then returns the height via the shared `heightCore`
     /// (`lineFragmentPadding = 0`, container width = natural width, full
-    /// `ensureLayout`, +16 chrome inset). Pure, MainActor-free, platform-neutral.
+    /// `ensureLayout`, +16 chrome inset). Used by the main-stack reservation
+    /// (`overflowTablePlaceholder`) which has no pre-existing layout manager.
+    /// Pure, MainActor-free, platform-neutral.
     public static func height(of tableString: NSAttributedString, naturalWidth: CGFloat) -> CGFloat {
         guard tableString.length > 0, naturalWidth > 0 else {
             return 0
@@ -60,7 +86,7 @@ public enum TableMeasurement {
         contentStorage.attributedString = tableString
         textContainer.size = CGSize(width: naturalWidth, height: .greatestFiniteMagnitude)
         layoutManager.ensureLayout(for: layoutManager.documentRange)
-        return ceil(layoutManager.usageBoundsForTextContainer.height) + 16
+        return self.heightCore(usingLaidOut: layoutManager)
     }
 }
 

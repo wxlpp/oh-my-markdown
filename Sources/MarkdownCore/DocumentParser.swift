@@ -151,16 +151,23 @@ public struct MarkdownDocument: Sendable, Equatable {
         // 廉价早退：既无 `$`(0x24) 也无 `\`(0x5C) 时不可能有任何数学开界符，
         // 直接返回，避免常见无数学流式场景为重扫描/掩码付费。
         if !bytes.contains(0x24), !bytes.contains(0x5C) { return false }
+        // `MathScanner.scan` 返回的 spans 左→右**有序且不重叠**：scan 主循环
+        // 命中一个 span 后把游标推进到 `close + closeLen`（越过整个 span），
+        // 故下一个 span 的 `open >= 上一个 span 的 upperBound`，构造上严格
+        // 有序、互不相交。下方指针游走依赖此不变量。
         let spans = MathScanner.scan(source)
-        // 单次预计算覆盖掩码：把 O(spans) 的逐字节命中折成 O(1) 查表。
-        var coveredMask = [Bool](repeating: false, count: bytes.count)
-        for span in spans {
-            for x in span.range where x >= 0 && x < coveredMask.count {
-                coveredMask[x] = true
-            }
-        }
+        // 有序 span 指针游走替代 O(totalSpanBytes) 的 bool 覆盖掩码：扫描 `i`
+        // 单调不减（仅 `i += 1`，起点 clamp 后固定），维护一个 span 下标
+        // 指针，循环内推进它越过所有 `upperBound <= i` 的 span；`isCovered(i)`
+        // ＝ 当前 span 存在且 `range.contains(i)`，O(1) 摊还。与原 bool-mask
+        // **严格等价**（i 被覆盖 ⟺ i ∈ 某 span.range），不再每 token 付
+        // O(totalSpanBytes) 建掩码。
+        var spanIdx = 0
         func isCovered(_ i: Int) -> Bool {
-            coveredMask[i]
+            while spanIdx < spans.count, spans[spanIdx].range.upperBound <= i {
+                spanIdx += 1
+            }
+            return spanIdx < spans.count && spans[spanIdx].range.contains(i)
         }
         let mask = MathScanner.codeRegionMask(source: source)
         // 扫描从尾窗起点开始（mask/escape/covered 仍按全局索引计算，仅判定
