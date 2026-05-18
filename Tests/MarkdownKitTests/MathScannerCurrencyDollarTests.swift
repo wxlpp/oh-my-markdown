@@ -51,6 +51,16 @@ struct MathScannerCurrencyDollarTests {
         #expect(spans("$a\n\nb$").isEmpty)
     }
 
+    @Test("行内 $…$ 不得跨 CRLF / CR 段落空行 → 非数学")
+    func noCrossBlankLineCRLF() {
+        // CRLF（Windows / 部分 LLM 输出）空行：`\r\n\r\n` 须与 `\n\n` 同样阻断。
+        #expect(spans("$a\r\n\r\nb$").isEmpty)
+        // CR 单独作行尾（旧 Mac / 异常输出）的空行：`\r\r` 同样阻断。
+        #expect(spans("$a\r\rb$").isEmpty)
+        // 对照：CRLF 单换行（非空行）不阻断，仍成 1 span（证明只拦空行非拦所有 \r）。
+        #expect(spans("$a\r\nb$").count == 1)
+    }
+
     @Test("单换行（非空行）不阻断行内公式")
     func singleNewlineAllowed() {
         let r = spans("$a\nb$")

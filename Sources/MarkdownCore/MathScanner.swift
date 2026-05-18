@@ -19,7 +19,7 @@ public struct MathSpan: Sendable, Equatable {
 /// 误配而吞掉整段（含代码块、标题）。具体：
 ///   1. 开界 `$` 后必须紧跟非空白字节（空格/制表/换行/回车之外）；
 ///   2. 闭界 `$` 前一字节非空白，且其后一字节（若存在）非 ASCII 数字；
-///   3. 行内 `$ … $` 不得跨段落空行；
+///   3. 行内 `$ … $` 不得跨段落空行（行边界 = `\n` / `\r\n` / `\r`）；
 ///   4. 公式非空（`close > openContentStart`）。
 /// 找不到合规闭界 → 该开界 `$` 退为字面文本（`i += 1` 继续）。
 /// `$$…$$` / `\(…\)` / `\[…\]` 规则、代码区掩码、转义、`$$` 块级优先、
@@ -74,19 +74,23 @@ public enum MathScanner {
         /// 合规闭界 `$` 需满足：非代码、非转义；不是 `$$` 的一部分（其后一字节
         /// 非 `$`，避免吃掉块级定界符的半个 `$`）；前一字节非空白；其后一字节
         /// （若存在）非 ASCII 数字（抗 `$5 ... $9` 货币）；`close > openContentStart`
-        /// （公式非空）。搜索过程中若先遇到段落空行边界（一个 `\n` 后跟零个或
-        /// 多个 空格/制表 再跟 `\n`）仍未找到合规闭界 → 返回 nil（行内不跨空行，
-        /// 阻断「吞代码块 + 标题」灾难性跨块）。
+        /// （公式非空）。搜索过程中若先遇到段落空行边界（一个行边界
+        /// `\n` / `\r\n` / `\r` 后跟零个或多个 空格/制表 再跟行边界）仍未找到
+        /// 合规闭界 → 返回 nil（行内不跨空行，阻断「吞代码块 + 标题」灾难性
+        /// 跨块）。CRLF / CR 与 LF 同等对待。
         func findInlineDollarClose(openContentStart: Int) -> Int? {
             var k = openContentStart
             while k < bytes.count {
                 let b = bytes[k]
-                // 段落空行边界检测：`\n`（含其前的同行尾随空白）后到下一个 `\n`
-                // 之间只有 空格/制表 → 视为空行，行内公式不得跨越。
-                if b == 0x0A {
+                // 段落空行边界检测：行边界（`\n` / `\r\n` / `\r`，含其前的同行
+                // 尾随空白）后到下一个行边界之间只有 空格/制表 → 视为空行，
+                // 行内公式不得跨越。CRLF/CR 与 LF 同等对待（与本文件「空白
+                // 含 0x0D」契约一致；CRLF 是 Windows / 部分 LLM 输出的常态）。
+                if b == 0x0A || b == 0x0D {
                     var p = k + 1
+                    if b == 0x0D, p < bytes.count, bytes[p] == 0x0A { p += 1 } // 跨过 \r\n 的 \n
                     while p < bytes.count, bytes[p] == 0x20 || bytes[p] == 0x09 { p += 1 }
-                    if p < bytes.count, bytes[p] == 0x0A { return nil }
+                    if p < bytes.count, bytes[p] == 0x0A || bytes[p] == 0x0D { return nil }
                 }
                 if b == 0x24, !codeMask[k], !isEscaped(k) {
                     let nextIsDollar = k + 1 < bytes.count && bytes[k + 1] == 0x24
