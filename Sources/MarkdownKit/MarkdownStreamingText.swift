@@ -69,10 +69,11 @@ public struct MarkdownStreamingText: View {
     }
 
     public var body: some View {
-        _MarkdownStreamingTextRepresentable(source: self.source, style: self.style)
+        _MarkdownStreamingTextRepresentable(source: self.source, style: self.style, mathRenderer: self.mathRenderer)
     }
 
     @Environment(\.markdownStyle) private var style
+    @Environment(\.markdownMathRenderer) private var mathRenderer
 
     private let source: MarkdownStreamingSource
 }
@@ -83,10 +84,12 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         var listenerID: UUID?
         var currentSource: MarkdownStreamingSource?
         var lastStyle: RenderStyle?
+        var lastMathRenderer: (any MathRendering)?
     }
 
     let source: MarkdownStreamingSource
     let style: RenderStyle
+    let mathRenderer: (any MathRendering)?
 
     static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
         coordinator.currentSource?.removeListener(coordinator.listenerID)
@@ -112,6 +115,10 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
             uiView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
+        }
+        if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
+            uiView.mathRenderer = self.mathRenderer
+            context.coordinator.lastMathRenderer = self.mathRenderer
         }
         if context.coordinator.currentSource !== self.source {
             self.attachListener(to: uiView, context: context)
@@ -151,10 +158,12 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         var listenerID: UUID?
         var currentSource: MarkdownStreamingSource?
         var lastStyle: RenderStyle?
+        var lastMathRenderer: (any MathRendering)?
     }
 
     let source: MarkdownStreamingSource
     let style: RenderStyle
+    let mathRenderer: (any MathRendering)?
 
     static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
         coordinator.currentSource?.removeListener(coordinator.listenerID)
@@ -176,6 +185,10 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
             nsView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
+        }
+        if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
+            nsView.mathRenderer = self.mathRenderer
+            context.coordinator.lastMathRenderer = self.mathRenderer
         }
         if context.coordinator.currentSource !== self.source {
             self.attachListener(to: nsView, context: context)

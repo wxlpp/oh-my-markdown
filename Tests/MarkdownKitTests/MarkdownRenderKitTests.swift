@@ -226,7 +226,7 @@ struct MarkdownRenderKitTests {
         #expect(naturalWidth > 180)
     }
 
-    @Test("Overflow table uses lightweight placeholder in the main text layout")
+    @Test("Overflow table uses a single forced-line-height placeholder in the main text layout")
     func overflowTableUsesLightweightPlaceholder() throws {
         let longText = "This cell has enough text to require a wider natural table column."
         let document = MarkdownDocument(parsing: """
@@ -235,12 +235,54 @@ struct MarkdownRenderKitTests {
         | A | \(longText) |
         """)
 
+        let tableBlock = try #require(document.blocks.first)
         let renderer = AttributedStringRenderer(style: .default, availableWidth: 180)
         let rendered = renderer.render(document.blocks)
-        _ = try #require(rendered.attribute(.markdownTableNaturalWidth, at: 0, effectiveRange: nil) as? CGFloat)
+        let naturalWidth = try #require(
+            rendered.attribute(.markdownTableNaturalWidth, at: 0, effectiveRange: nil) as? CGFloat
+        )
 
+        // The overflow table reservation collapsed to ONE invisible NBSP whose
+        // paragraph style pins min == max line height to the table's *true*
+        // rendered height, computed at render time by `TableMeasurement.height`
+        // (the same algorithm & inputs the platform overlay's `TableContentView`
+        // uses → constructively equal, no write-back). No cell text leaks into
+        // the main stack, and there are no NBSP placeholder rows / newlines.
         #expect(rendered.string.contains(longText) == false)
-        #expect(rendered.string.split(separator: "\n", omittingEmptySubsequences: false).count == 2)
+        #expect(rendered.length == 1)
+        #expect(rendered.string == "\u{00A0}")
+        // Reserved height = a precise forced line-height (no font-leading slack)
+        // equal to the overlay-equal true table height.
+        let para = try #require(
+            rendered.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        )
+        #expect(para.maximumLineHeight > 0)
+        #expect(para.maximumLineHeight == para.minimumLineHeight)
+        // The marker the platform layer keys on to locate & position this block.
+        #expect(
+            rendered.attribute(.markdownOverflowTablePlaceholder, at: 0, effectiveRange: nil) as? Bool == true
+        )
+        // Markers preserved so platform overlay positioning / decoration skip still work.
+        #expect(rendered.attribute(.markdownTableColumns, at: 0, effectiveRange: nil) as? Int == 2)
+        // Constructive-equality contract, asserted directly against the single
+        // height source of truth — `TableMeasurement.height` — instead of a
+        // proxy attribute. The reserved forced line-height must exactly equal
+        // `TableMeasurement.height` of the full (non-overflow) table string the
+        // platform overlay's `TableContentView` lays out, at the same natural
+        // width. We reconstruct that exact input the way the platform layer does
+        // (`AttributedStringRenderer(availableWidth: naturalWidth).renderBlock`),
+        // so this pins the same arithmetic on the same TextKit 2 layout the
+        // overlay uses — no attribute, no platform write-back. If anyone changes
+        // `overflowTablePlaceholder` to reserve a height other than
+        // `TableMeasurement.height`, this assertion goes red.
+        let overlayRenderer = AttributedStringRenderer(style: .default, availableWidth: naturalWidth)
+        let fullTableString = overlayRenderer.renderBlock(tableBlock)
+        let constructiveHeight = TableMeasurement.height(
+            of: fullTableString,
+            naturalWidth: naturalWidth
+        )
+        #expect(constructiveHeight > 0)
+        #expect(para.maximumLineHeight == constructiveHeight)
     }
 
     @Test("Renderer reuses image cache when source URL has already been loaded")
@@ -278,8 +320,11 @@ struct MarkdownRenderKitTests {
         // If a property is added to RenderStyle, isSemanticallyEqual must be updated
         // to compare it. This test guards against silently missing one.
         let propertyCount = Mirror(reflecting: RenderStyle.default).children.count
+        // 23 includes the three math fields (mathScale, mathColorOverride, mathTokenColor);
+        // mathScale/mathColorOverride were added in Task 8, mathTokenColor in Task 9;
+        // isSemanticallyEqual compares all three.
         #expect(
-            propertyCount == 20,
+            propertyCount == 23,
             "RenderStyle has \(propertyCount) stored properties; update isSemanticallyEqual to match."
         )
     }

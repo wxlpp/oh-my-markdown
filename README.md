@@ -150,12 +150,31 @@ let renderer = AttributedStringRenderer(style: .default, availableWidth: 320)
 let attributedString = renderer.render(document.blocks)
 ```
 
+### Math (LaTeX)
+
+LaTeX math is an opt-in feature provided by the separate **MarkdownMath** product. Attach a renderer with the `.mathRenderer(_:)` modifier:
+
+```swift
+import MarkdownKit
+import MarkdownMath
+
+MarkdownText("Euler: $e^{i\\pi}+1=0$")
+    .mathRenderer(MathJaxRenderer())
+```
+
+Notes:
+
+- Without `.mathRenderer(_:)`, math is gracefully degraded and shown as its raw LaTeX text.
+- `MarkdownEditor` only token-highlights the math delimiters; it does not render formulas.
+- `MathJaxRenderer` loads a minimal core package set (`base` + `ams`, plus `noundefined` so undefined commands render as a visible error placeholder rather than failing). Non-core commands such as `\ce{}`, `\braket`, or `\color` render as a visible error placeholder rather than the intended output.
+
 ## 📖 Public Modules
 
 - `MarkdownCore` - Markdown IR and parser output (`MarkdownDocument`, `BlockNode`, `InlineNode`)
 - `MarkdownRenderKit` - `AttributedStringRenderer`, `RenderStyle`, fenced code syntax highlighting, source editor highlighting
 - `MarkdownPlatformView` - `MarkdownLabelView`, `MarkdownEditorTextView`, editor commands and platform hosts
 - `MarkdownKit` - SwiftUI `MarkdownText`, `MarkdownEditor`, plus the lower layers via re-export
+- `MarkdownMath` - optional MathJax (JavaScriptCore) + SwiftDraw implementation of the `MathRendering` protocol for LaTeX math
 
 ## 📖 Supported Markdown Features
 
@@ -169,6 +188,7 @@ let attributedString = renderer.render(document.blocks)
 - ✅ Block quotes
 - ✅ Horizontal rules
 - ✅ GFM tables including alignment markers
+- ✅ LaTeX math (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) via the optional **MarkdownMath** product
 - ✅ Incremental streaming updates
 - ✅ Markdown source editor with token highlighting
 - ✅ List continuation, empty-list exit, task toggle, and indent / outdent commands

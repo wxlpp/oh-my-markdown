@@ -1,4 +1,5 @@
 import Foundation
+import MarkdownCore
 
 #if canImport(UIKit)
 import UIKit
@@ -48,6 +49,7 @@ public struct MarkdownSourceHighlighter: Sendable {
 
         self.applyLineHighlights(to: result, source: source, skipping: codeBlocks)
         self.applyInlineHighlights(to: result, source: source, skipping: codeBlocks)
+        self.applyMathHighlights(to: result, source: source)
 
         // Preserve paragraph spacing while keeping editor typography compact.
         result.addAttribute(.paragraphStyle, value: self.paragraphStyle(), range: fullRange)
@@ -294,6 +296,77 @@ public struct MarkdownSourceHighlighter: Sendable {
             }
             self.applyFontTransform(to: result, range: match.range) { $0.italic() }
         }
+    }
+
+    private func applyMathHighlights(to result: NSMutableAttributedString, source: String) {
+        let ns = source as NSString
+        let bytes = Array(source.utf8)
+        let spans = MathScanner.scan(source)
+        for span in spans {
+            // `mathTokenColor` 文档/README/命名契约：editor 只 token-highlight
+            // 数学**定界符**，不渲染/着色公式内容。`MathSpan.range` 含定界符
+            // 但不暴露定界符长度——按开界字节就地推出（与 MathScanner 同构）：
+            //   `$$`=2 / `$`=1 / `\(`=2 / `\[`=2；闭界与开界等长
+            //   （`$$`↔`$$` / `$`↔`$` / `\(`↔`\)` / `\[`↔`\]`，均 1/1 或 2/2）。
+            // 仅对开界区间 [open, open+delimLen) 与闭界区间
+            // [close, close+delimLen) 施色，**不**碰中间 LaTeX 内容区间。
+            // Token-highlight only the math delimiters (open/close), never the
+            // LaTeX content — matches the mathTokenColor doc/README contract.
+            let openByte = span.range.lowerBound
+            guard openByte >= 0, openByte < bytes.count else { continue }
+            let delimLen: Int
+            if bytes[openByte] == 0x24 { // `$`
+                // `$$`(块级) vs `$`(行内)：看开界第二字节是否仍为 `$`。
+                delimLen = (openByte + 1 < bytes.count && bytes[openByte + 1] == 0x24) ? 2 : 1
+            } else { // `\(` / `\[`（开界 `\` + `(`/`[`），闭界 `\)` / `\]`，均 2 字节
+                delimLen = 2
+            }
+            let openEnd = openByte + delimLen
+            let closeStart = span.range.upperBound - delimLen
+            // 防御：公式过短致开闭定界符在字节空间相接/重叠时退化为整段
+            // 着色（不漏色定界符；MathScanner 保证 latex 非空，正常不触发）。
+            guard closeStart >= openEnd else {
+                let lo = utf16Index(source, utf8Offset: span.range.lowerBound)
+                let hi = utf16Index(source, utf8Offset: span.range.upperBound)
+                if lo >= 0, hi > lo, hi <= ns.length {
+                    result.addAttribute(.foregroundColor, value: self.style.mathTokenColor,
+                                        range: NSRange(location: lo, length: hi - lo))
+                }
+                continue
+            }
+            self.colorRange(
+                result, ns: ns, source: source, utf8Lower: span.range.lowerBound, utf8Upper: openEnd
+            )
+            self.colorRange(
+                result, ns: ns, source: source, utf8Lower: closeStart, utf8Upper: span.range.upperBound
+            )
+        }
+    }
+
+    /// 把 [utf8Lower, utf8Upper) 字节区间换算成 NSString(UTF-16) 区间后
+    /// 施 `mathTokenColor`；越界/非字符边界则跳过（与原逐 span 守卫一致）。
+    private func colorRange(
+        _ result: NSMutableAttributedString,
+        ns: NSString,
+        source: String,
+        utf8Lower: Int,
+        utf8Upper: Int
+    ) {
+        let lower = utf16Index(source, utf8Offset: utf8Lower)
+        let upper = utf16Index(source, utf8Offset: utf8Upper)
+        guard lower >= 0, upper > lower, upper <= ns.length else { return }
+        result.addAttribute(.foregroundColor, value: self.style.mathTokenColor,
+                            range: NSRange(location: lower, length: upper - lower))
+    }
+
+    /// 把 source 的 UTF-8 字节偏移换成 NSString(UTF-16) 索引（字符边界对齐）。
+    /// 对所有 Unicode 标量正确（含补充平面/emoji）。越界/非字符边界返回 -1。
+    private func utf16Index(_ source: String, utf8Offset: Int) -> Int {
+        guard utf8Offset >= 0, utf8Offset <= source.utf8.count else { return -1 }
+        let utf8 = source.utf8
+        let u8Idx = utf8.index(utf8.startIndex, offsetBy: utf8Offset)
+        guard let strIdx = String.Index(u8Idx, within: source) else { return -1 }
+        return source.utf16.distance(from: source.utf16.startIndex, to: strIdx)
     }
 
     private func applyFontTransform(

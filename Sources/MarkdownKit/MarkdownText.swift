@@ -26,10 +26,11 @@ public struct MarkdownText: View {
     }
 
     public var body: some View {
-        _MarkdownTextRepresentable(source: self.source, style: self.style)
+        _MarkdownTextRepresentable(source: self.source, style: self.style, mathRenderer: self.mathRenderer)
     }
 
     @Environment(\.markdownStyle) private var style
+    @Environment(\.markdownMathRenderer) private var mathRenderer
 
     private let source: String
 }
@@ -42,10 +43,12 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     final class Coordinator {
         var lastSource = ""
         var lastStyle: RenderStyle?
+        var lastMathRenderer: (any MathRendering)?
     }
 
     let source: String
     let style: RenderStyle
+    let mathRenderer: (any MathRendering)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -64,6 +67,10 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
         if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
             uiView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
+        }
+        if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
+            uiView.mathRenderer = self.mathRenderer
+            context.coordinator.lastMathRenderer = self.mathRenderer
         }
         let old = context.coordinator.lastSource
         guard old != self.source else {
@@ -95,10 +102,12 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     final class Coordinator {
         var lastSource = ""
         var lastStyle: RenderStyle?
+        var lastMathRenderer: (any MathRendering)?
     }
 
     let source: String
     let style: RenderStyle
+    let mathRenderer: (any MathRendering)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -112,6 +121,10 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
         if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
             nsView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
+        }
+        if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
+            nsView.mathRenderer = self.mathRenderer
+            context.coordinator.lastMathRenderer = self.mathRenderer
         }
         let old = context.coordinator.lastSource
         guard old != self.source else {

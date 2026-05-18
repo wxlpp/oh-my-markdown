@@ -41,6 +41,120 @@ private func markdownBlocksMatch(
     return prevBlock == newBlock
 }
 
+// MARK: - Copy: rendered selection → original Markdown source
+
+/// Converts a UTF-8 byte offset into a `String.Index` without losing surrogate
+/// pairs. Same correct form used by `MarkdownCore`'s internal `utf8Index(at:)`
+/// (`String.Index(_:within:)` on the UTF-8 view), not a code-unit-by-code-unit
+/// walk which would mis-handle multi-byte scalars.
+///
+/// Complexity: `String.UTF8View` is not random-access, so `utf8.index(_:offsetBy:)`
+/// is O(byteOffset). On the copy path this is called exactly twice per copy
+/// operation (once for lowerByte, once for upperByte) and is not a hot path —
+/// the cost is intentionally accepted here; do not call in a loop or hot path.
+private func utf8StringIndex(in source: String, at byteOffset: Int) -> String.Index? {
+    guard byteOffset >= 0, byteOffset <= source.utf8.count else {
+        return nil
+    }
+    let utf8 = source.utf8
+    guard let scalarIndex = utf8.index(
+        utf8.startIndex, offsetBy: byteOffset, limitedBy: utf8.endIndex
+    ) else {
+        return nil
+    }
+    return String.Index(scalarIndex, within: source)
+}
+
+/// Bug 4 — read-only copy must yield the *original Markdown source* the user
+/// selected, not the rendered plain text (where math/image collapse to the
+/// object-replacement char `\u{FFFC}` and tables lose their pipes).
+///
+/// Strategy (block-level granularity, first version): the rendered selection
+/// `[selStart, selEnd)` is mapped to the set of blocks it overlaps via
+/// `blockStarts` (the rendered char offset of each block's start, maintained in
+/// `updateContent`/`applyDocument`). The returned string is the *continuous*
+/// original-source substring from the first overlapped block's
+/// `sourceRange.lowerBound` to the last overlapped block's
+/// `sourceRange.upperBound` in `lastParsedSource` — the most faithful form
+/// because it preserves the original inter-block text verbatim (`# `, `- `,
+/// `$$…$$`, `![alt](url)`, `| a | b |`, blank-line separators, …).
+///
+/// Falls back to the rendered-plain-text substring when there is no usable
+/// source mapping (e.g. blocks were set directly without a Markdown source),
+/// so non-Markdown content still copies.
+///
+/// Known limitation: granularity is block-level. A selection touching any part
+/// of a block expands to that block's full original source. Inline-precise
+/// source extraction is intentionally out of scope for this first version; the
+/// core guarantee — formulas/images/tables never lost — holds regardless.
+private func markdownSourceForRenderedSelection(
+    renderedRange: NSRange,
+    renderedPlainText: String,
+    blockStarts: [Int],
+    parsedBlocks: [ParsedBlockNode],
+    renderedLength: Int,
+    originalSource: String
+)
+    -> String {
+    func plainFallback() -> String {
+        let ns = renderedPlainText as NSString
+        let clamped = NSRange(
+            location: min(renderedRange.location, ns.length),
+            length: min(renderedRange.length, max(0, ns.length - renderedRange.location))
+        )
+        return ns.substring(with: clamped)
+    }
+
+    let selStart = renderedRange.location
+    let selEnd = renderedRange.location + renderedRange.length
+    guard selStart < selEnd, !blockStarts.isEmpty else {
+        return plainFallback()
+    }
+
+    // Rendered span of block i is [blockStarts[i], blockStarts[i+1]) with the
+    // last block running to renderedLength. A block is overlapped when its span
+    // intersects [selStart, selEnd).
+    var firstBlock: Int?
+    var lastBlock: Int?
+    for index in blockStarts.indices {
+        let blockStart = blockStarts[index]
+        let blockEnd = index + 1 < blockStarts.count ? blockStarts[index + 1] : renderedLength
+        if blockStart < selEnd, selStart < blockEnd {
+            if firstBlock == nil {
+                firstBlock = index
+            }
+            lastBlock = index
+        }
+    }
+    guard
+        let lower = firstBlock,
+        let upper = lastBlock,
+        lower < parsedBlocks.count,
+        upper < parsedBlocks.count else {
+        return plainFallback()
+    }
+
+    // Continuous original-source span: first overlapped block's lowerBound to
+    // last overlapped block's upperBound. Preserves original block separators.
+    //
+    // Known block-level limitation: if the first or last overlapped block has
+    // `sourceRange == nil` (e.g. blocks injected via `setBlocks` without a
+    // Markdown source), the *entire* selection — including any middle blocks that
+    // do carry a sourceRange — falls back to rendered plain text (all-or-nothing,
+    // determined by the boundary blocks). Per-block mixed restoration is deferred
+    // to a future version.
+    guard
+        let lowerByte = parsedBlocks[lower].sourceRange?.lowerBound,
+        let upperByte = parsedBlocks[upper].sourceRange?.upperBound,
+        lowerByte <= upperByte,
+        let startIndex = utf8StringIndex(in: originalSource, at: lowerByte),
+        let endIndex = utf8StringIndex(in: originalSource, at: upperByte),
+        startIndex <= endIndex else {
+        return plainFallback()
+    }
+    return String(originalSource[startIndex ..< endIndex])
+}
+
 #if canImport(UIKit)
 import UIKit
 
@@ -178,11 +292,26 @@ public final class MarkdownLabelView: UIView {
 
     @objc
     override public func copy(_ sender: Any?) {
+        guard let copied = self._copiedStringForCurrentSelection() else {
+            return
+        }
+        UIPasteboard.general.string = copied
+    }
+
+    /// Single source of truth for "current selection → copied original-source
+    /// string": resolve the active TextKit2 selection, convert it to a
+    /// rendered-plain-text offset range, and map that range back to the
+    /// original Markdown source via `copyString`. Returns `nil` when there is
+    /// no usable selection (no selection / empty range) so callers can no-op.
+    /// Production `copy(_:)` writes the result to the pasteboard; the
+    /// test seam returns it — keeping both paths on identical logic so they
+    /// cannot drift.
+    private func _copiedStringForCurrentSelection() -> String? {
         guard
             let sel = layoutManager.textSelections.first,
             let range = sel.textRanges.first,
             let str = contentStorage.attributedString?.string else {
-            return
+            return nil
         }
         let start = self.contentStorage.offset(
             from: self.contentStorage.documentRange.location, to: range.location
@@ -191,10 +320,89 @@ public final class MarkdownLabelView: UIView {
             from: self.contentStorage.documentRange.location, to: range.endLocation
         )
         guard start < end else {
-            return
+            return nil
         }
-        UIPasteboard.general.string = (str as NSString).substring(
-            with: NSRange(location: start, length: end - start)
+        return self.copyString(
+            forRenderedRange: NSRange(location: start, length: end - start),
+            renderedPlainText: str
+        )
+    }
+
+    /// Test-support: select the entire document. Headless tests have no
+    /// UITextInteraction, so they drive `layoutManager.textSelections` through
+    /// this internal seam instead of widening TextKit object visibility.
+    func _selectEntireDocumentForTesting() {
+        self.layoutManager.textSelections = [
+            NSTextSelection(
+                range: self.contentStorage.documentRange,
+                affinity: .downstream,
+                granularity: .character
+            ),
+        ]
+    }
+
+    /// Test-support: the original-source string that the production copy path
+    /// (`copy(_:)`) would put on the pasteboard for the *current* selection,
+    /// without touching the system pasteboard (avoids a global side effect /
+    /// headless-CI flakiness). Shares the exact production
+    /// selection→range→`copyString` logic via `_copiedStringForCurrentSelection`
+    /// so the regression coverage is not narrowed. Mirrors the AppKit seam.
+    func _copiedStringForCurrentSelectionForTesting() -> String {
+        self._copiedStringForCurrentSelection() ?? ""
+    }
+
+    /// Test-support: the laid-out frame union of the block at `index` in the
+    /// *main* TextKit 2 stack — i.e. the vertical space the block actually
+    /// reserves in the document flow. Read-only forwarder to the private
+    /// `decorations.blockFrameUnion`; mirrors `_selectEntireDocumentForTesting`.
+    /// The observed quantity is driven by real TextKit2 layout (which depends
+    /// on placeholder attachment bounds), not a decoupled counter.
+    func _blockFrameUnionForTesting(at index: Int) -> CGRect? {
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        return self.decorations.blockFrameUnion(at: index)
+    }
+
+    /// Test-support: math-resolution state of the *actual* production-rendered
+    /// string (`contentStorage.attributedString`, i.e. what is drawn).
+    /// Read-only forwarder; mirrors `_blockFrameUnionForTesting`.
+    ///
+    /// `mathSourceCount` = residual unresolved-math placeholders;
+    /// `attachmentCount` = resolved math glyphs spliced in as attachments.
+    /// After streaming settles, a fully math-resolved document has
+    /// `mathSourceCount == 0` and `attachmentCount == <#math spans>`. If the
+    /// async math glyph write-back fails to survive `resetLayout()`'s renderer
+    /// recreation (Bug 1 math sub-symptom), `renderMath` keeps missing the
+    /// cache → placeholders keep reappearing → these counts oscillate / never
+    /// reach the resolved form. This is the true, undecoupled signal for "did
+    /// the resolved math survive renderer recreation" — distinct from the
+    /// separately-guarded TextKit2 relayout-timing concern.
+    func _renderedMathStateForTesting() -> (mathSourceCount: Int, attachmentCount: Int) {
+        guard let str = self.contentStorage.attributedString else {
+            return (0, 0)
+        }
+        var srcCount = 0
+        var attachCount = 0
+        let full = NSRange(location: 0, length: str.length)
+        str.enumerateAttribute(.markdownMathSource, in: full) { v, _, _ in
+            if v is String { srcCount += 1 }
+        }
+        str.enumerateAttribute(.attachment, in: full) { v, _, _ in
+            if v != nil { attachCount += 1 }
+        }
+        return (srcCount, attachCount)
+    }
+
+    /// Maps a rendered selection range to the original Markdown source it
+    /// covers (block-level). Shared between platforms via the file-scope
+    /// `markdownSourceForRenderedSelection`.
+    func copyString(forRenderedRange range: NSRange, renderedPlainText: String) -> String {
+        markdownSourceForRenderedSelection(
+            renderedRange: range,
+            renderedPlainText: renderedPlainText,
+            blockStarts: self.blockStarts,
+            parsedBlocks: self.parsedBlocks,
+            renderedLength: self._liveString.length,
+            originalSource: self.lastParsedSource
         )
     }
 
@@ -305,6 +513,7 @@ public final class MarkdownLabelView: UIView {
         }
         self.resetLayout()
         self.triggerImageLoads(in: NSRange(location: 0, length: self._liveString.length))
+        self.triggerMathLoads(in: NSRange(location: 0, length: self._liveString.length))
     }
 
     func offsetOf(_ location: any NSTextLocation) -> Int {
@@ -343,6 +552,15 @@ public final class MarkdownLabelView: UIView {
     private var _lastHeight: CGFloat = 0
     /// Coalesces expensive TextKit height queries during streaming updates.
     private var _heightUpdateTask: Task<Void, Never>?
+    /// Test-only monotonic counter incremented as the *first line* of
+    /// `scheduleDeferredHeightUpdate()` itself, so "counter++" and "that primitive
+    /// was actually invoked" are one indivisible semantic — there is no decoupled
+    /// bypass. If a caller (e.g. `resetLayout()` on the async write-back path) stops
+    /// invoking `scheduleDeferredHeightUpdate()`, this counter cannot advance, so a
+    /// regression test bound to it necessarily turns red. The deferred task auto-nils
+    /// after ~33ms so a transient flag would race, hence a durable counter. Zero
+    /// production behavior beyond an Int increment at the primitive's entry.
+    var _deferredHeightScheduleCount = 0
     /// In-flight parse task. Streaming keeps this single-flight so large documents do not
     /// accumulate cancelled full-document parses as tokens arrive.
     private var _parseTask: Task<Void, Never>?
@@ -352,6 +570,24 @@ public final class MarkdownLabelView: UIView {
     private var _imageCache: [String: UIImage] = [:]
     /// Source URLs currently being fetched (prevents duplicate requests).
     private var _imageLoading: Set<String> = []
+    /// Platform-agnostic async math render coordinator (dedup/三态/代际).
+    private let _mathCoordinator = MathLoadCoordinator()
+    /// View-held math glyph cache / raster scale / renderer generation —
+    /// the **canonical store** for async math write-back, mirroring
+    /// `_imageCache`. The transient `_cachedRenderer` is discarded by
+    /// `resetLayout()` whenever `bounds.width` changes (streaming churn);
+    /// keeping math state on the view (and re-seeding it into every freshly
+    /// built renderer in `cachedRenderer`) is what makes resolved glyphs
+    /// survive renderer recreation — exactly as `_imageCache` already does.
+    private var _mathCache: [MathCacheKey: MathRenderedGlyph] = [:]
+    private var _mathRasterScale: CGFloat = 1
+    private var _mathRendererGeneration: Int = 0
+    /// Injected math renderer; swapping it bumps the coordinator's generation.
+    public var mathRenderer: (any MathRendering)? {
+        // setRenderer 异步派发；落地前发生的渲染会显示 latex 占位，并在下次
+        // updateContent/relayout 时解析（有意为之的最终一致性）。
+        didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
+    }
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
     private var _tableOverlays: [Int: (
         scroll: UIScrollView,
@@ -372,6 +608,12 @@ public final class MarkdownLabelView: UIView {
         if self._cachedRenderer == nil || abs(w - self._cachedRendererWidth) > 0.5 {
             var renderer = AttributedStringRenderer(style: renderStyle, availableWidth: w)
             renderer.imageCache = self._imageCache
+            // Re-seed view-held math state so resolved glyphs survive the
+            // renderer recreation `resetLayout()` performs on width churn
+            // (identical discipline to `imageCache` above).
+            renderer.mathCache = self._mathCache
+            renderer.mathRasterScale = self._mathRasterScale
+            renderer.mathRendererGeneration = self._mathRendererGeneration
             self._cachedRenderer = renderer
             self._cachedRendererWidth = w
         }
@@ -436,11 +678,21 @@ public final class MarkdownLabelView: UIView {
         self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
         invalidateIntrinsicContentSize()
         setNeedsDisplay()
+        // Mirror applyDocument's host-relayout discipline: async write-back paths
+        // (image/math glyph resolution → updateContent → resetLayout) can shrink
+        // content dramatically. invalidateIntrinsicContentSize() alone does not make
+        // the SwiftUI host re-query our size, so request a host layout pass and a
+        // deferred height re-measure exactly as the streaming incremental path does.
+        setNeedsLayout()
+        self.scheduleDeferredHeightUpdate()
         self._pendingTableOverlaySyncStart = nil
         self._syncTableOverlays(from: 0)
     }
 
     private func scheduleDeferredHeightUpdate() {
+        // Counter is bumped here, at the primitive's entry, so it is indivisible
+        // from "scheduleDeferredHeightUpdate() was actually invoked" (see decl).
+        self._deferredHeightScheduleCount += 1
         guard self._heightUpdateTask == nil else {
             return
         }
@@ -614,6 +866,7 @@ public final class MarkdownLabelView: UIView {
         self._pendingTableOverlaySyncStart = min(self._pendingTableOverlaySyncStart ?? firstChanged, firstChanged)
         setNeedsLayout()
         self.triggerImageLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
+        self.triggerMathLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
     }
 
     // MARK: Link tap
@@ -706,6 +959,91 @@ public final class MarkdownLabelView: UIView {
         _ = self._imageLoading.remove(source)
     }
 
+    // MARK: Math loading
+
+    private func triggerMathLoads(in range: NSRange) {
+        guard self.mathRenderer != nil, let str = contentStorage.attributedString else {
+            return
+        }
+        let safe = range.clamped(to: str.length)
+        guard safe.length > 0 else {
+            return
+        }
+        let scale = self.window?.screen.scale ?? UIScreen.main.scale
+        // 同步枚举收集原始请求（latex/display/color/pt），代际相关的 key 构造
+        // 推迟到下面那个唯一的 Task 内一次性完成（generation 受 actor 隔离）。
+        var raw: [(latex: String, display: Bool, color: PlatformColor, pt: CGFloat)] = []
+        str.enumerateAttribute(.markdownMathSource, in: safe) { value, _, _ in
+            guard
+                let payload = value as? String,
+                let sep = payload.firstIndex(of: "\u{1F}") else {
+                return
+            }
+            let display = payload[payload.startIndex] == "1"
+            let latex = String(payload[payload.index(after: sep)...])
+            let color = self.renderStyle.mathColorOverride ?? self.renderStyle.textColor
+            let pt = MathMetrics.effectivePointSize(
+                textPointSize: self.renderStyle.bodyFont.pointSize,
+                mathScale: self.renderStyle.mathScale
+            )
+            raw.append((latex: latex, display: display, color: color, pt: pt))
+        }
+        guard !raw.isEmpty else {
+            return
+        }
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            // 一次读取代际，用同一 gen 构造所有 key（保持与原实现一致的键公式）。
+            let gen = await self._mathCoordinator.generation
+            let requests: [(key: MathCacheKey, latex: String, display: Bool,
+                            color: PlatformColor, pt: CGFloat)] = raw.map {
+                let key = MathCacheKey(
+                    latex: $0.latex, display: $0.display, pointSize: $0.pt,
+                    colorHex: MathMetrics.colorHex($0.color),
+                    rasterScale: scale, rendererGeneration: gen
+                )
+                return (key: key, latex: $0.latex, display: $0.display,
+                        color: $0.color, pt: $0.pt)
+            }
+            // 先派发全部渲染（去重由 coordinator 负责）。
+            for r in requests {
+                await self._mathCoordinator.loadIfNeeded(
+                    key: r.key, latex: r.latex, display: r.display,
+                    pointSize: r.pt, scale: scale, color: r.color
+                )
+            }
+            // 仅 await 各自 key 的在途任务，收集解析出的字形。
+            var resolved: [(key: MathCacheKey, glyph: MathRenderedGlyph)] = []
+            for r in requests {
+                if let glyph = await self._mathCoordinator.awaitGlyph(for: r.key) {
+                    resolved.append((key: r.key, glyph: glyph))
+                }
+            }
+            guard !resolved.isEmpty else {
+                return
+            }
+            // 一次性合并回写并仅触发一次 updateContent（镜像图片加载纪律）。
+            await MainActor.run {
+                // 真值源是 view-held store —— resetLayout() 在宽度抖动时会
+                // 丢弃 _cachedRenderer，下次 cachedRenderer 重建会从这里
+                // 重播种；同时也写当前 transient renderer（与
+                // finishImageLoad 同时写 _imageCache 与 _cachedRenderer?
+                // 完全同构）。
+                self._mathRasterScale = scale
+                self._mathRendererGeneration = gen
+                self._cachedRenderer?.mathRasterScale = scale
+                self._cachedRenderer?.mathRendererGeneration = gen
+                for entry in resolved {
+                    self._mathCache[entry.key] = entry.glyph
+                    self._cachedRenderer?.mathCache[entry.key] = entry.glyph
+                }
+                self.updateContent()
+            }
+        }
+    }
+
     // MARK: Table overlay helpers (iOS)
 
     private func _tableNaturalWidth(at blockIndex: Int) -> CGFloat {
@@ -734,6 +1072,13 @@ public final class MarkdownLabelView: UIView {
         guard startIndex < self.blocks.count else {
             return
         }
+
+        // The reserved height in the main stack is already correct by
+        // construction: `AttributedStringRenderer.overflowTablePlaceholder` and
+        // the overlay's `TableContentView` both size off the *same*
+        // `TableMeasurement.height` call, so there is no write-back and no
+        // convergence pass — this loop only positions/sizes the overlay against
+        // the (already-correct) reserved geometry from `blockFrameUnion`.
         for i in startIndex ..< self.blocks.count {
             let block = self.blocks[i]
             guard case .table = block else {
@@ -1284,12 +1629,20 @@ public final class MarkdownLabelView: NSView {
             switch event.characters {
             case "a": self.selectAll(nil)
                 return
-            case "c": self.performCopy()
+            case "c": self.copy(nil)
                 return
             default: break
             }
         }
         super.keyDown(with: event)
+    }
+
+    /// AppKit first-responder copy entry point (Edit menu / `cmd+C`); mirrors the
+    /// iOS copy entry point (not an NSView override — NSView has no `copy(_:)`).
+    /// `@objc` is sufficient for responder-chain dispatch; `public` is not needed.
+    @objc
+    func copy(_: Any?) {
+        self.performCopy()
     }
 
     @objc
@@ -1302,6 +1655,62 @@ public final class MarkdownLabelView: NSView {
             ),
         ]
         needsDisplay = true
+    }
+
+    /// Test-support: select the entire document. Mirrors the iOS seam so the
+    /// headless copy regression test drives both platforms symmetrically.
+    func _selectEntireDocumentForTesting() {
+        self.selectAll(nil)
+    }
+
+    /// Test-support: the original-source string that the production copy path
+    /// (`performCopy()`) would put on the pasteboard for the *current*
+    /// selection, without touching the system pasteboard (avoids a global side
+    /// effect / headless-CI flakiness). Shares the exact production
+    /// selection→range→`copyString` logic via `_copiedStringForCurrentSelection`
+    /// so the regression coverage is not narrowed. Mirrors the iOS seam.
+    func _copiedStringForCurrentSelectionForTesting() -> String {
+        self._copiedStringForCurrentSelection() ?? ""
+    }
+
+    /// Test-support: the laid-out frame union of the block at `index` in the
+    /// *main* TextKit 2 stack. Mirrors the iOS seam so the headless wide-table
+    /// overlap regression test drives both platforms symmetrically. The
+    /// observed quantity is driven by real TextKit2 layout (which depends on
+    /// placeholder attachment bounds), not a decoupled counter.
+    func _blockFrameUnionForTesting(at index: Int) -> CGRect? {
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        return self.decorations.blockFrameUnion(at: index)
+    }
+
+    /// Test-support: math-resolution state of the *actual* production-rendered
+    /// string (`contentStorage.attributedString`, i.e. what is drawn).
+    /// Read-only forwarder; mirrors `_blockFrameUnionForTesting`.
+    ///
+    /// `mathSourceCount` = residual unresolved-math placeholders;
+    /// `attachmentCount` = resolved math glyphs spliced in as attachments.
+    /// After streaming settles, a fully math-resolved document has
+    /// `mathSourceCount == 0` and `attachmentCount == <#math spans>`. If the
+    /// async math glyph write-back fails to survive `resetLayout()`'s renderer
+    /// recreation (Bug 1 math sub-symptom), `renderMath` keeps missing the
+    /// cache → placeholders keep reappearing → these counts oscillate / never
+    /// reach the resolved form. This is the true, undecoupled signal for "did
+    /// the resolved math survive renderer recreation" — distinct from the
+    /// separately-guarded TextKit2 relayout-timing concern.
+    func _renderedMathStateForTesting() -> (mathSourceCount: Int, attachmentCount: Int) {
+        guard let str = self.contentStorage.attributedString else {
+            return (0, 0)
+        }
+        var srcCount = 0
+        var attachCount = 0
+        let full = NSRange(location: 0, length: str.length)
+        str.enumerateAttribute(.markdownMathSource, in: full) { v, _, _ in
+            if v is String { srcCount += 1 }
+        }
+        str.enumerateAttribute(.attachment, in: full) { v, _, _ in
+            if v != nil { attachCount += 1 }
+        }
+        return (srcCount, attachCount)
     }
 
     public func setMarkdown(_ source: String) {
@@ -1340,6 +1749,15 @@ public final class MarkdownLabelView: NSView {
     private var _lastHeight: CGFloat = 0
     /// Coalesces expensive TextKit height queries during streaming updates.
     private var _heightUpdateTask: Task<Void, Never>?
+    /// Test-only monotonic counter incremented as the *first line* of
+    /// `scheduleDeferredHeightUpdate()` itself, so "counter++" and "that primitive
+    /// was actually invoked" are one indivisible semantic — there is no decoupled
+    /// bypass. If a caller (e.g. `resetLayout()` on the async write-back path) stops
+    /// invoking `scheduleDeferredHeightUpdate()`, this counter cannot advance, so a
+    /// regression test bound to it necessarily turns red. The deferred task auto-nils
+    /// after ~33ms so a transient flag would race, hence a durable counter. Zero
+    /// production behavior beyond an Int increment at the primitive's entry.
+    var _deferredHeightScheduleCount = 0
     /// In-flight parse task. Streaming keeps this single-flight so large documents do not
     /// accumulate cancelled full-document parses as tokens arrive.
     private var _parseTask: Task<Void, Never>?
@@ -1349,6 +1767,24 @@ public final class MarkdownLabelView: NSView {
     private var _imageCache: [String: NSImage] = [:]
     /// Source URLs currently being fetched (prevents duplicate requests).
     private var _imageLoading: Set<String> = []
+    /// Platform-agnostic async math render coordinator (dedup/三态/代际).
+    private let _mathCoordinator = MathLoadCoordinator()
+    /// View-held math glyph cache / raster scale / renderer generation —
+    /// the **canonical store** for async math write-back, mirroring
+    /// `_imageCache`. The transient `_cachedRenderer` is discarded by
+    /// `resetLayout()` whenever `bounds.width` changes (streaming churn);
+    /// keeping math state on the view (and re-seeding it into every freshly
+    /// built renderer in `cachedRenderer`) is what makes resolved glyphs
+    /// survive renderer recreation — exactly as `_imageCache` already does.
+    private var _mathCache: [MathCacheKey: MathRenderedGlyph] = [:]
+    private var _mathRasterScale: CGFloat = 1
+    private var _mathRendererGeneration: Int = 0
+    /// Injected math renderer; swapping it bumps the coordinator's generation.
+    public var mathRenderer: (any MathRendering)? {
+        // setRenderer 异步派发；落地前发生的渲染会显示 latex 占位，并在下次
+        // updateContent/relayout 时解析（有意为之的最终一致性）。
+        didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
+    }
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
     private var _tableOverlays: [Int: (
         scroll: NSScrollView,
@@ -1365,6 +1801,12 @@ public final class MarkdownLabelView: NSView {
         if self._cachedRenderer == nil || abs(w - self._cachedRendererWidth) > 0.5 {
             var renderer = AttributedStringRenderer(style: renderStyle, availableWidth: w)
             renderer.imageCache = self._imageCache
+            // Re-seed view-held math state so resolved glyphs survive the
+            // renderer recreation `resetLayout()` performs on width churn
+            // (identical discipline to `imageCache` above).
+            renderer.mathCache = self._mathCache
+            renderer.mathRasterScale = self._mathRasterScale
+            renderer.mathRendererGeneration = self._mathRendererGeneration
             self._cachedRenderer = renderer
             self._cachedRendererWidth = w
         }
@@ -1407,6 +1849,7 @@ public final class MarkdownLabelView: NSView {
         }
         self.resetLayout()
         self.triggerImageLoads(in: NSRange(location: 0, length: self._liveString.length))
+        self.triggerMathLoads(in: NSRange(location: 0, length: self._liveString.length))
     }
 
     private func resetLayout() {
@@ -1423,11 +1866,21 @@ public final class MarkdownLabelView: NSView {
         self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
         invalidateIntrinsicContentSize()
         needsDisplay = true
+        // Mirror applyDocument's host-relayout discipline: async write-back paths
+        // (image/math glyph resolution → updateContent → resetLayout) can shrink
+        // content dramatically. invalidateIntrinsicContentSize() alone does not make
+        // the SwiftUI host re-query our size, so request a host layout pass and a
+        // deferred height re-measure exactly as the streaming incremental path does.
+        needsLayout = true
+        self.scheduleDeferredHeightUpdate()
         self._pendingTableOverlaySyncStart = nil
         self._syncTableOverlays(from: 0)
     }
 
     private func scheduleDeferredHeightUpdate() {
+        // Counter is bumped here, at the primitive's entry, so it is indivisible
+        // from "scheduleDeferredHeightUpdate() was actually invoked" (see decl).
+        self._deferredHeightScheduleCount += 1
         guard self._heightUpdateTask == nil else {
             return
         }
@@ -1602,6 +2055,7 @@ public final class MarkdownLabelView: NSView {
         self._pendingTableOverlaySyncStart = min(self._pendingTableOverlaySyncStart ?? firstChanged, firstChanged)
         needsLayout = true
         self.triggerImageLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
+        self.triggerMathLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
     }
 
     // MARK: Table overlay helpers (macOS)
@@ -1630,6 +2084,13 @@ public final class MarkdownLabelView: NSView {
         guard startIndex < self.blocks.count else {
             return
         }
+
+        // The reserved height in the main stack is already correct by
+        // construction: `AttributedStringRenderer.overflowTablePlaceholder` and
+        // the overlay's `TableContentView` both size off the *same*
+        // `TableMeasurement.height` call, so there is no write-back and no
+        // convergence pass — this loop only positions/sizes the overlay against
+        // the (already-correct) reserved geometry from `blockFrameUnion`.
         for i in startIndex ..< self.blocks.count {
             let block = self.blocks[i]
             guard case .table = block else {
@@ -1784,12 +2245,113 @@ public final class MarkdownLabelView: NSView {
         _ = self._imageLoading.remove(source)
     }
 
+    // MARK: Math loading
+
+    private func triggerMathLoads(in range: NSRange) {
+        guard self.mathRenderer != nil, let str = contentStorage.attributedString else {
+            return
+        }
+        let safe = range.clamped(to: str.length)
+        guard safe.length > 0 else {
+            return
+        }
+        let scale = self.window?.backingScaleFactor ?? 2
+        // 同步枚举收集原始请求（latex/display/color/pt），代际相关的 key 构造
+        // 推迟到下面那个唯一的 Task 内一次性完成（generation 受 actor 隔离）。
+        var raw: [(latex: String, display: Bool, color: PlatformColor, pt: CGFloat)] = []
+        str.enumerateAttribute(.markdownMathSource, in: safe) { value, _, _ in
+            guard
+                let payload = value as? String,
+                let sep = payload.firstIndex(of: "\u{1F}") else {
+                return
+            }
+            let display = payload[payload.startIndex] == "1"
+            let latex = String(payload[payload.index(after: sep)...])
+            let color = self.renderStyle.mathColorOverride ?? self.renderStyle.textColor
+            let pt = MathMetrics.effectivePointSize(
+                textPointSize: self.renderStyle.bodyFont.pointSize,
+                mathScale: self.renderStyle.mathScale
+            )
+            raw.append((latex: latex, display: display, color: color, pt: pt))
+        }
+        guard !raw.isEmpty else {
+            return
+        }
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            // 一次读取代际，用同一 gen 构造所有 key（保持与原实现一致的键公式）。
+            let gen = await self._mathCoordinator.generation
+            let requests: [(key: MathCacheKey, latex: String, display: Bool,
+                            color: PlatformColor, pt: CGFloat)] = raw.map {
+                let key = MathCacheKey(
+                    latex: $0.latex, display: $0.display, pointSize: $0.pt,
+                    colorHex: MathMetrics.colorHex($0.color),
+                    rasterScale: scale, rendererGeneration: gen
+                )
+                return (key: key, latex: $0.latex, display: $0.display,
+                        color: $0.color, pt: $0.pt)
+            }
+            // 先派发全部渲染（去重由 coordinator 负责）。
+            for r in requests {
+                await self._mathCoordinator.loadIfNeeded(
+                    key: r.key, latex: r.latex, display: r.display,
+                    pointSize: r.pt, scale: scale, color: r.color
+                )
+            }
+            // 仅 await 各自 key 的在途任务，收集解析出的字形。
+            var resolved: [(key: MathCacheKey, glyph: MathRenderedGlyph)] = []
+            for r in requests {
+                if let glyph = await self._mathCoordinator.awaitGlyph(for: r.key) {
+                    resolved.append((key: r.key, glyph: glyph))
+                }
+            }
+            guard !resolved.isEmpty else {
+                return
+            }
+            // 一次性合并回写并仅触发一次 updateContent（镜像图片加载纪律）。
+            await MainActor.run {
+                // 真值源是 view-held store —— resetLayout() 在宽度抖动时会
+                // 丢弃 _cachedRenderer，下次 cachedRenderer 重建会从这里
+                // 重播种；同时也写当前 transient renderer（与
+                // finishImageLoad 同时写 _imageCache 与 _cachedRenderer?
+                // 完全同构）。
+                self._mathRasterScale = scale
+                self._mathRendererGeneration = gen
+                self._cachedRenderer?.mathRasterScale = scale
+                self._cachedRenderer?.mathRendererGeneration = gen
+                for entry in resolved {
+                    self._mathCache[entry.key] = entry.glyph
+                    self._cachedRenderer?.mathCache[entry.key] = entry.glyph
+                }
+                self.updateContent()
+            }
+        }
+    }
+
     private func performCopy() {
+        guard let copied = self._copiedStringForCurrentSelection() else {
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(copied, forType: .string)
+    }
+
+    /// Single source of truth for "current selection → copied original-source
+    /// string": resolve the active TextKit2 selection, convert it to a
+    /// rendered-plain-text offset range, and map that range back to the
+    /// original Markdown source via `copyString`. Returns `nil` when there is
+    /// no usable selection (no selection / empty range) so callers can no-op.
+    /// Production `performCopy()` writes the result to the pasteboard; the
+    /// test seam returns it — keeping both paths on identical logic so they
+    /// cannot drift. Symmetric with the iOS implementation.
+    private func _copiedStringForCurrentSelection() -> String? {
         guard
             let sel = layoutManager.textSelections.first,
             let range = sel.textRanges.first,
             let str = contentStorage.attributedString?.string else {
-            return
+            return nil
         }
         let start = self.contentStorage.offset(
             from: self.contentStorage.documentRange.location, to: range.location
@@ -1798,12 +2360,26 @@ public final class MarkdownLabelView: NSView {
             from: self.contentStorage.documentRange.location, to: range.endLocation
         )
         guard start < end else {
-            return
+            return nil
         }
-        let nsStr = str as NSString
-        let copied = nsStr.substring(with: NSRange(location: start, length: end - start))
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(copied, forType: .string)
+        return self.copyString(
+            forRenderedRange: NSRange(location: start, length: end - start),
+            renderedPlainText: str
+        )
+    }
+
+    /// Maps a rendered selection range to the original Markdown source it
+    /// covers (block-level). Symmetric with the iOS implementation; shared
+    /// logic lives in the file-scope `markdownSourceForRenderedSelection`.
+    func copyString(forRenderedRange range: NSRange, renderedPlainText: String) -> String {
+        markdownSourceForRenderedSelection(
+            renderedRange: range,
+            renderedPlainText: renderedPlainText,
+            blockStarts: self.blockStarts,
+            parsedBlocks: self.parsedBlocks,
+            renderedLength: self._liveString.length,
+            originalSource: self.lastParsedSource
+        )
     }
 }
 #endif

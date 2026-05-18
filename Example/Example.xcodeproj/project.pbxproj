@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		D99B7A212CA4E49A0010B87C /* MarkdownKit in Frameworks */ = {isa = PBXBuildFile; productRef = D99B7A202CA4E49A0010B87C /* MarkdownKit */; };
+		D99B7A232CA4E49A0010B87C /* MarkdownMath in Frameworks */ = {isa = PBXBuildFile; productRef = D99B7A222CA4E49A0010B87C /* MarkdownMath */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,6 +58,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D99B7A212CA4E49A0010B87C /* MarkdownKit in Frameworks */,
+				D99B7A232CA4E49A0010B87C /* MarkdownMath in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,6 +120,7 @@
 			name = Example;
 			packageProductDependencies = (
 				D99B7A202CA4E49A0010B87C /* MarkdownKit */,
+				D99B7A222CA4E49A0010B87C /* MarkdownMath */,
 			);
 			productName = Example;
 			productReference = D99B79E32CA4E2B30010B87C /* Example.app */;
@@ -595,6 +598,10 @@
 		D99B7A202CA4E49A0010B87C /* MarkdownKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = MarkdownKit;
+		};
+		D99B7A222CA4E49A0010B87C /* MarkdownMath */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MarkdownMath;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
