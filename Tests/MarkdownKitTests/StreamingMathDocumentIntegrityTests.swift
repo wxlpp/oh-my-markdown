@@ -305,3 +305,118 @@ $$e^{i\pi}+1=0$$
         assertHealthy(doc.blocks, "streamed")
     }
 }
+
+/// Bug 1 真根因守卫的衍生守卫：`previousSourceHasOpenMathDelimiter` 收窄到
+/// reparse 尾窗后，必须同时满足两条不变量——
+/// 1. **正确性不回归**：尾窗内确有未闭合开界符时仍强制全量（append 闭合它
+///    应与全量逐块一致），收窄没重开跨界 math 损坏；
+/// 2. **perf 真收窄**：中段稳定 `$5.00`（其后有空行/块边界、再有更多内容）
+///    在尾窗判定下返回 false（旧全篇扫描会 true），即含字面 `$` 文档流式
+///    不再每 token 全量 = 消除 O(n²)。
+@Suite("Open math delimiter narrowed to reparse tail window (Bug 1 perf)")
+struct OpenMathDelimiterTailWindowTests {
+    /// 守卫 1（correctness）：尾窗内真·未闭合 `$x`，append 一个 `$` 应闭合
+    /// 成 math。收窄后该真开界仍被 detect → 强制全量，结果与全量逐块一致。
+    @Test("尾窗内真未闭合开界符仍正确强制全量（与全量逐块一致，不漏）")
+    func tailWindowOpenDelimiterStillForcesFullParse() {
+        // previousSource 末块（尾窗内）含未闭合 `$x`（无闭合 $）。
+        let previousSource = """
+        # Title
+
+        Stable paragraph with no math at all.
+
+        Tail paragraph opening math $x
+        """
+        // append 一个 `$` 把尾窗内的 `$x` 闭合成行内 math。
+        let newSource = previousSource + "+1$ done."
+
+        let previous = MarkdownDocument(parsing: previousSource)
+        let incremental = previous.parsingAppend(to: newSource, previousSource: previousSource)
+        let full = MarkdownDocument(parsing: newSource)
+
+        // 收窄后尾窗确有未闭合 `$` → 谓词须仍返回 true（强制全量）。
+        let reparseStart = previous.tailReparseStartIndexForTest()
+        #expect(
+            MarkdownDocument.previousSourceHasOpenMathDelimiter(
+                previousSource, fromReparseBoundary: reparseStart
+            ),
+            "tail-window open `$x` must still be detected → force full parse"
+        )
+        // 增量路径结果与全量逐块一致（跨界 math 未被收窄重开损坏）。
+        #expect(incremental.blocks == full.blocks,
+                "incremental must match full parse when tail window has open delimiter")
+        // 闭合后应得 1 个行内 math（`x+1`）。
+        var inlineMath = 0
+        func walkInlines(_ ns: [InlineNode]) {
+            for n in ns {
+                switch n {
+                case .math: inlineMath += 1
+                case .emphasis(let c), .strong(let c), .strikethrough(let c): walkInlines(c)
+                case .link(_, _, let c): walkInlines(c)
+                default: break
+                }
+            }
+        }
+        for b in full.blocks {
+            if case .paragraph(let i) = b { walkInlines(i) }
+            if case .heading(_, let i) = b { walkInlines(i) }
+        }
+        #expect(inlineMath == 1, "closed `$x+1$` should be exactly 1 inline math, got \(inlineMath)")
+    }
+
+    /// 守卫 2（perf）：中段稳定 `$5.00`，其后空行 + 块边界 + 更多内容。
+    /// reparse 尾窗起点落在中段 `$5.00` 之后；旧全篇扫描会因这枚字面 `$`
+    /// 返回 true（每 token 全量 = O(n²)），收窄后尾窗内无未闭合开界符 →
+    /// false，走增量路径。
+    @Test("中段稳定 $5.00 在尾窗判定下为 false（不再每 token 全量），增量与全量一致")
+    func midDocumentLiteralDollarNoLongerForcesFullParse() {
+        // 中段：含字面 `$5.00` 的稳定段落，其后有空行（段落边界）与多段内容。
+        let previousSource = """
+        # Pricing
+
+        The cost is $5.00 for the basic tier.
+
+        ## Details
+
+        Some stable explanatory paragraph here.
+
+        Another stable paragraph that has settled.
+        """
+        let newSource = previousSource + "\n\nFinal appended paragraph."
+
+        let previous = MarkdownDocument(parsing: previousSource)
+        let reparseStart = previous.tailReparseStartIndexForTest()
+
+        // 旧全篇扫描（fromReparseBoundary: 0）会因中段字面 `$5.00` → true。
+        #expect(
+            MarkdownDocument.previousSourceHasOpenMathDelimiter(previousSource, fromReparseBoundary: 0),
+            "whole-source scan returns true on mid-document literal $5.00 (old O(n^2) behavior)"
+        )
+        // 收窄后：reparse 尾窗起点 > 中段 `$5.00` 偏移 → 尾窗内无开界符 → false。
+        let dollarByteOffset = Array(previousSource.utf8).firstIndex(of: 0x24)!
+        #expect(reparseStart > dollarByteOffset,
+                "reparse boundary (\(reparseStart)) must be past mid-document $ (\(dollarByteOffset))")
+        #expect(
+            !MarkdownDocument.previousSourceHasOpenMathDelimiter(
+                previousSource, fromReparseBoundary: reparseStart
+            ),
+            "narrowed tail-window predicate must be false for stable mid-document $5.00 (no per-token full reparse → O(n) not O(n^2))"
+        )
+        // 谓词 false → 走增量路径；增量结果仍与全量逐块一致。
+        let incremental = previous.parsingAppend(to: newSource, previousSource: previousSource)
+        let full = MarkdownDocument(parsing: newSource)
+        #expect(incremental.blocks == full.blocks,
+                "incremental path (taken because predicate false) must still match full parse")
+    }
+}
+
+/// 测试专用：复算 `parsingAppend` 内部用的 reparse 边界 UTF-8 字节偏移
+/// （`tailReparseStartIndex()` → `reparseBlock.sourceRange?.lowerBound ??
+/// tailRange.lowerBound`），与生产口径完全一致（同一 internal 方法）。
+extension MarkdownDocument {
+    func tailReparseStartIndexForTest() -> Int {
+        guard let tail = parsedBlocks.last, let tailRange = tail.sourceRange else { return 0 }
+        let idx = self.tailReparseStartIndex()
+        return self.parsedBlocks[idx].sourceRange?.lowerBound ?? tailRange.lowerBound
+    }
+}

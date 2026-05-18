@@ -68,11 +68,10 @@ public struct MarkdownDocument: Sendable, Equatable {
     /// Parse an appended version of this document by preserving stable prefix blocks
     /// and reparsing the previous tail block plus the appended source.
     public func parsingAppend(to newSource: String, previousSource: String) -> MarkdownDocument {
-        // 数学感知：若被保留的 prefix 可能含会被追加文本闭合的未闭合数学开界符，
-        // suffix-only 扫描看不到开界符，直接全量解析以保证与全量一致（spec §4.3）。
-        if Self.previousSourceHasOpenMathDelimiter(previousSource) {
-            return MarkdownDocument(parsing: newSource)
-        }
+        // 先用既有边界逻辑安全求出 reparse 起点（控制流由「先查 open-delimiter
+        // 再算 reparseStart」安全重排为「先算 reparseStart 边界，再仅对 previousSource
+        // 的 [reparseStart, end) 尾窗做 open-delimiter 检测」）。重排保留现有
+        // 所有 guard：任一不满足仍全量兜底，与现状语义完全一致。
         guard
             newSource.hasPrefix(previousSource),
             let tail = parsedBlocks.last,
@@ -86,6 +85,14 @@ public struct MarkdownDocument: Sendable, Equatable {
         guard
             reparseStart <= previousSource.utf8.count,
             let suffixStart = newSource.utf8Index(at: reparseStart) else {
+            return MarkdownDocument(parsing: newSource)
+        }
+
+        // 数学感知：边界**之前**的稳定前缀块数学态已定型，且 pandoc 行内
+        // `$…$` 不跨块/段落空行，append 无法回头重开它们；仅当 reparse
+        // 尾窗 [reparseStart, end) 内有会被追加文本闭合的未闭合数学开界符时，
+        // suffix-only 扫描看不到它 → 必须全量解析以与全量一致（spec §4.3）。
+        if Self.previousSourceHasOpenMathDelimiter(previousSource, fromReparseBoundary: reparseStart) {
             return MarkdownDocument(parsing: newSource)
         }
 
@@ -104,7 +111,9 @@ public struct MarkdownDocument: Sendable, Equatable {
         return MarkdownDocument(parsedBlocks: Array(self.parsedBlocks.prefix(reparseIndex)) + reparsedTail)
     }
 
-    private func tailReparseStartIndex() -> Int {
+    // internal（非 private）：测试守卫复用同一套 reparse 边界计算，
+    // 与 `parsingAppend` 内部口径完全一致，避免守卫自算边界产生口径漂移。
+    func tailReparseStartIndex() -> Int {
         guard self.parsedBlocks.count >= 2 else {
             return max(self.parsedBlocks.count - 1, 0)
         }
@@ -116,12 +125,28 @@ public struct MarkdownDocument: Sendable, Equatable {
         return tailIndex
     }
 
-    /// previousSource 末尾是否处于「数学定界符未闭合」状态。
-    /// 复用 MathScanner 的代码区/转义规则：若存在任何开界符但 scan 未把它配成 span，
-    /// 说明闭合符尚未出现，追加文本可能闭合它 → 必须全量。
-    /// 保守性：任何裸露未配对的 `$` / `\(` / `\[`（包括 `price $5` 这类非数学散文）
-    /// 都会保守地强制全量重解析——符合 spec §4.3，并非最小化。
-    static func previousSourceHasOpenMathDelimiter(_ source: String) -> Bool {
+    /// previousSource 在 reparse 边界之后的尾窗内是否处于「数学定界符未闭合」状态。
+    /// 复用 MathScanner 的代码区/转义规则：若尾窗内存在任何开界符但 scan 未把它
+    /// 配成 span，说明闭合符尚未出现，追加文本可能闭合它 → 必须全量。
+    ///
+    /// 收窄理由（保正确性、消 O(n²)）：reparse 边界**之前**的稳定前缀块，其
+    /// 数学 span 已被上次解析正确定型，且 pandoc 行内 `$…$` 不跨段落空行 /
+    /// 块边界（详见 `MathScanner` 类型 doc 规则 3），append 无法回头重开它们；
+    /// 只有边界**之后**（尾窗，append 真正能交互的区域）的未闭合开界符才需
+    /// 强制全量。`fromReparseBoundary` = previousSource UTF-8 字节空间的 reparse
+    /// 起点（由 `parsingAppend` 用既有边界逻辑安全求出后传入；无法安全求边界
+    /// 时 `parsingAppend` 维持现状全量兜底，不走本谓词）。
+    ///
+    /// `MathScanner.scan` / `codeRegionMask` 仍按**完整 source** 计算，以保持
+    /// 代码区 / 转义 / span 配对语义正确；仅把「判定 return true 的扫描区间」
+    /// 限定为 `i >= fromReparseBoundary`（`isEscaped` / `isCovered` / `mask`
+    /// 仍用全局索引）。
+    ///
+    /// 保守性：尾窗内任何裸露未配对的 `$` / `\(` / `\[`（包括 `price $5` 这类
+    /// 非数学散文）都会保守地强制全量重解析——符合 spec §4.3，并非最小化。
+    static func previousSourceHasOpenMathDelimiter(
+        _ source: String, fromReparseBoundary: Int = 0
+    ) -> Bool {
         let bytes = Array(source.utf8)
         // 廉价早退：既无 `$`(0x24) 也无 `\`(0x5C) 时不可能有任何数学开界符，
         // 直接返回，避免常见无数学流式场景为重扫描/掩码付费。
@@ -138,7 +163,9 @@ public struct MarkdownDocument: Sendable, Equatable {
             coveredMask[i]
         }
         let mask = MathScanner.codeRegionMask(source: source)
-        var i = 0
+        // 扫描从尾窗起点开始（mask/escape/covered 仍按全局索引计算，仅判定
+        // 区间收窄）；clamp 进合法范围以防越界。
+        var i = max(0, min(fromReparseBoundary, bytes.count))
         while i < bytes.count {
             if mask[i] { i += 1; continue }
             var bs = 0, k = i - 1

@@ -25,7 +25,11 @@ public struct MathRenderedGlyph: @unchecked Sendable {
     /// `AttributedStringRenderer` 直接把 `image.size` 用作 `NSTextAttachment.bounds`；
     /// 若返回像素尺寸，行内公式会在 Retina 上放大 scale 倍。MarkdownMath 的 SVGRasterizer 须遵守。
     public let image: PlatformImage
-    /// 由 SVG vertical-align 解析得到的基线偏移（ex 单位，正值=下移）。
+    /// 由 SVG vertical-align 解析得到的基线偏移（ex 单位）。直接（无取反）
+    /// 映射到 `NSTextAttachment.bounds.origin.y`（`AttributedStringRenderer`：
+    /// `y = baselineOffsetEx * exToPoints`，sign pass-through）：**负值 = 基线
+    /// 下方（公式下沉），正值 = 基线上方**；MathJax 约定下实际恒为负。
+    /// Sign passes through unchanged: negative = below baseline (sinks).
     public let baselineOffsetEx: CGFloat
 }
 

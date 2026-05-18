@@ -50,9 +50,21 @@ public enum MathScanner {
 
         /// 在 [from, end) 内找未被 code 覆盖、未转义的字面定界符序列。
         func findClose(_ marker: [UInt8], from: Int) -> Int? {
+            // 无分配逐元素比较：marker 长仅 1 或 2，逐字节推进时若用
+            // `Array(bytes[k..<k+marker.count]) == marker` 每步都堆分配一个小
+            // 数组（热循环按字节推进，O(n) 次分配）。改为内联逐元素比较，
+            // 语义与 `Array(...) == marker` 逐字节完全等价（含
+            // `k + marker.count <= bytes.count` 边界不变）。
+            // No-allocation element-wise compare, equivalent to Array==.
+            func matchesMarker(at start: Int) -> Bool {
+                for j in 0 ..< marker.count where bytes[start + j] != marker[j] {
+                    return false
+                }
+                return true
+            }
             var k = from
             while k + marker.count <= bytes.count {
-                if !codeMask[k], !isEscaped(k), Array(bytes[k ..< k + marker.count]) == marker {
+                if !codeMask[k], !isEscaped(k), matchesMarker(at: k) {
                     return k
                 }
                 k += 1
