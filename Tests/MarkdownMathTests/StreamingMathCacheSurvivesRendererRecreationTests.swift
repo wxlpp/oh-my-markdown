@@ -110,7 +110,10 @@ struct StreamingMathCacheSurvivesRendererRecreationTests {
                 let w: CGFloat = (ti % 8 == 0) ? 322 : 318
                 view.frame = CGRect(x: 0, y: 0, width: w, height: 10_000)
             }
-            try? await Task.sleep(nanoseconds: UInt64(Int.random(in: 18 ... 55)) * 1_000_000)
+            // 节奏延时定长（30ms，与观测窗口 :127 同量级）以消除 CI 不确定性；
+            // 复现竞态靠上面的 width churn（frame 318/322 跨折行点），与此
+            // sleep 时长无关——只去掉随机节奏抖动，不动 churn 逻辑。
+            try? await Task.sleep(nanoseconds: 30_000_000)
         }
 
         // 2) 观测窗口：持续抖宽（每隔几拍改 frame，反复触发 renderer 重建），

@@ -56,7 +56,13 @@ public struct MathCacheKey: Hashable, Sendable {
 }
 
 /// 注入协议：MarkdownMath 提供实现，RenderKit 不依赖任何 MathJax。
-public protocol MathRendering: Sendable {
+///
+/// 约束为 `AnyObject`（类约束）：注入身份比较须稳定——值类型经
+/// `as AnyObject` 装箱每次产生新对象，会让 MarkdownKit 的身份 guard
+/// （`isSameMathRenderer`，见 MarkdownText/MarkdownStreamingText）恒为
+/// false，SwiftUI 每次刷新都重新赋值 renderer、bump 代际清缓存。
+/// 唯一实现 `MathJaxRenderer` 本就是 `final class`，此约束与现实一致、零破坏。
+public protocol MathRendering: AnyObject, Sendable {
     /// pointSize 已是有效字号（文本字号 × mathScale）；scale 为屏幕光栅化 scale。
     func render(latex: String, display: Bool, pointSize: CGFloat,
                 scale: CGFloat, color: PlatformColor) async -> MathRenderOutcome

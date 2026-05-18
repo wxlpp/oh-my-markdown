@@ -45,18 +45,16 @@ struct ReadOnlyCopyOriginalSourceTests {
     | 1 | 2 |
     """
 
-    /// 把全文选中并走真实 copy 路径，读回系统剪贴板字符串。
+    /// 把全文选中并取出生产 copy 路径会写入剪贴板的原始源串。
+    ///
+    /// 经 internal 测试 seam `_copiedStringForCurrentSelectionForTesting()`
+    /// 取串：该 seam 与生产 `copy(_:)` / `performCopy()` 共用同一
+    /// `_copiedStringForCurrentSelection`（selection→offset range→`copyString`），
+    /// 覆盖面与走真实 copy 等价，但不读写系统剪贴板——消除全局副作用与
+    /// headless CI flaky（剪贴板在无头/并发环境不可靠）。
     private func selectAllAndCopy(_ view: MarkdownLabelView) -> String {
         view._selectEntireDocumentForTesting()
-        #if canImport(UIKit)
-        view.copy(nil)
-        return UIPasteboard.general.string ?? ""
-        #elseif canImport(AppKit)
-        view.copy(nil)
-        return NSPasteboard.general.string(forType: .string) ?? ""
-        #else
-        return ""
-        #endif
+        return view._copiedStringForCurrentSelectionForTesting()
     }
 
     @Test("选中全部后复制，剪贴板应为覆盖块的原始 markdown 源（公式/图片/表格/标题不丢）")
@@ -89,9 +87,13 @@ struct ReadOnlyCopyOriginalSourceTests {
         #expect(parsed, "流式 parse 未在超时内完成")
 
         // 等异步 math 字形回写命中（math attachment 命中态），最大化复现强度。
+        // 条件轮询 + 早退：math 全部解析为 attachment（mathSourceCount == 0）
+        // 即 break，避免固定 ~6s 空等与 CI flaky；超时上界不 fail 测试本身，
+        // 仅退出等待继续后续断言（与原行为一致——原代码也是等满就继续）。
         for _ in 0 ..< 200 {
             await Task.yield()
             try? await Task.sleep(nanoseconds: 30_000_000)
+            if view._renderedMathStateForTesting().mathSourceCount == 0 { break }
         }
 
         let copied = self.selectAllAndCopy(view)

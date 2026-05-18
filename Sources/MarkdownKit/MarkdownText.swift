@@ -40,7 +40,8 @@ public struct MarkdownText: View {
 private func isSameMathRenderer(_ a: (any MathRendering)?, _ b: (any MathRendering)?) -> Bool {
     switch (a, b) {
     case (nil, nil): return true
-    case let (x?, y?): return (x as AnyObject) === (y as AnyObject)
+    // MathRendering 现已约束 AnyObject，`===` 直接比较类实例身份、无装箱。
+    case let (x?, y?): return x === y
     default: return false
     }
 }

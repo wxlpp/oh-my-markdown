@@ -166,7 +166,8 @@ struct MathRendererEnvTests {
     func envValue() {
         var env = EnvironmentValues()
         #expect(env.markdownMathRenderer == nil)
-        struct Dummy: MathRendering {
+        // MathRendering 现已约束 AnyObject，测试替身改为 final class。
+        final class Dummy: MathRendering, @unchecked Sendable {
             func render(latex: String, display: Bool, pointSize: CGFloat,
                         scale: CGFloat, color: PlatformColor) async -> MathRenderOutcome { .failed }
         }

@@ -9,13 +9,20 @@ private actor CallCounter {
     func bump() { count += 1 }
 }
 
-private struct StubRenderer: MathRendering {
+// MathRendering 现已约束 AnyObject（与唯一生产实现 final class MathJaxRenderer
+// 一致），测试替身改为 final class，显式 memberwise init 保持调用点不变。
+private final class StubRenderer: MathRendering, @unchecked Sendable {
     let outcome: @Sendable () -> MathRenderOutcome
     let counter: CallCounter
+    init(outcome: @escaping @Sendable () -> MathRenderOutcome, counter: CallCounter) {
+        self.outcome = outcome
+        self.counter = counter
+    }
+
     func render(latex: String, display: Bool, pointSize: CGFloat,
                 scale: CGFloat, color: PlatformColor) async -> MathRenderOutcome {
-        await counter.bump()
-        return outcome()
+        await self.counter.bump()
+        return self.outcome()
     }
 }
 
