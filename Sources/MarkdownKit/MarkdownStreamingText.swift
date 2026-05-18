@@ -78,17 +78,6 @@ public struct MarkdownStreamingText: View {
     private let source: MarkdownStreamingSource
 }
 
-// MARK: - Helpers
-
-private func isSameMathRenderer(_ a: (any MathRendering)?, _ b: (any MathRendering)?) -> Bool {
-    switch (a, b) {
-    case (nil, nil): return true
-    // MathRendering 现已约束 AnyObject，`===` 直接比较类实例身份、无装箱。
-    case let (x?, y?): return x === y
-    default: return false
-    }
-}
-
 #if canImport(UIKit)
 private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     final class Coordinator {
