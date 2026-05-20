@@ -27,7 +27,7 @@ struct SVGBlockRenderTests {
         #expect(out.length > 0)
         #expect(!out.string.contains("\u{FFFC}"))
     }
-    @Test("cache hit → single centered attachment sized to image, origin.y == 0")
+    @Test("cache hit → single centered attachment sized to image, origin.y == 0；paragraphSpacing 与 miss 对齐（无解析跳动）")
     func hitProducesCenteredAttachment() {
         let sized = SVGBlockGlyph(image: makeImage(width: 200, height: 90))
         let key = SVGBlockCacheKey(svg: "<svg/>", availableWidth: 320, rasterScale: 1, rendererGeneration: 0)
@@ -42,6 +42,10 @@ struct SVGBlockRenderTests {
         #expect(a.bounds.origin.y == 0)
         let para = out.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
         #expect(para?.alignment == .center)
+        // Copilot PR #5 R6 #1：hit 的 paragraphSpacing 必须与 miss 路径
+        // （renderHighlightedCodeBlock 的 0）一致，否则 marker→attachment 解析
+        // 瞬间会引起垂直跳动。
+        #expect(para?.paragraphSpacing == 0)
     }
     @Test("non-svg code block unchanged (regression)")
     func nonSvgUnchanged() {

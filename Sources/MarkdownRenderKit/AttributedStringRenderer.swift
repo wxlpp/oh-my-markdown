@@ -258,7 +258,9 @@ public struct AttributedStringRenderer: @unchecked Sendable {
             attachment.bounds = CGRect(x: 0, y: 0, width: size.width, height: size.height)
             let para = NSMutableParagraphStyle()
             para.alignment = .center
-            para.paragraphSpacing = self.style.paragraphSpacing
+            // 与 miss 路径的 renderHighlightedCodeBlock(.paragraphSpacing=0) 对齐，
+            // 让 async 解析瞬间 marker→attachment 不引起垂直跳动（Copilot PR #5 R6 #1）。
+            para.paragraphSpacing = 0
             let m = NSMutableAttributedString(attachment: attachment)
             m.addAttribute(
                 .paragraphStyle,
