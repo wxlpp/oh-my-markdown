@@ -43,4 +43,18 @@ struct SwiftDrawSVGBlockRendererTests {
             #expect(Bool(false), "expected .failed for invalid svg")
         }
     }
+
+    @Test("极端纵横比 svg → .failed（OOM 防御，Copilot PR #5 R1 #1）")
+    func extremeAspectRatioRefused() async {
+        // viewBox 极小 width + 极大 height：fit-width 保留小宽度（≤ available），
+        // 由 native 纵横比派生的 target.height = width × (native.h / native.w) 会
+        // 膨胀至几十万 pt，光栅化分配巨型位图（无上界守卫前是 OOM 攻击向量）。
+        let evil = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 1000000\" width=\"100\" height=\"1000000\"><rect width=\"100\" height=\"1000000\" fill=\"red\"/></svg>"
+        let r = SwiftDrawSVGBlockRenderer()
+        if case .failed = await r.render(svg: evil, availableWidth: 100, scale: 2) {
+            // ok：守卫拒绝
+        } else {
+            #expect(Bool(false), "expected .failed for extreme aspect ratio (target height would exceed maxRasterPointDimension)")
+        }
+    }
 }
