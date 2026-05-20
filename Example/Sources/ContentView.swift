@@ -72,6 +72,7 @@ private struct RenderTab: View {
                 MarkdownText(sampleMarkdown)
                     .markdownStyle(self.preset.renderStyle)
                     .mathRenderer(self.mathRenderer)
+                    .svgRenderer(self.svgBlockRenderer)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
             }
@@ -92,8 +93,14 @@ private struct RenderTab: View {
     }
 
     @State private var preset: StylePreset = .default
-    // Stored once so the JSContext inside MathJaxRenderer is not rebuilt every body pass.
-    private let mathRenderer = MathJaxRenderer()
+    // `@State` 而非 `private let`：SwiftUI View 是 value type，每次 parent body
+    // 重新求值都会重建 View，`private let` 会同步重建 renderer → 触发 didSet
+    // 让 coordinator generation 翻转、view-held cache 失效 → 反复重光栅化。
+    // @State 把实例托管给 SwiftUI 的状态机，跨 struct 重建保持身份稳定，
+    // 让 isSameMathRenderer / isSameSVGBlockRenderer 守卫真正生效。
+    // Copilot PR #5 R4 #2 & suppressed #3.
+    @State private var mathRenderer = MathJaxRenderer()
+    @State private var svgBlockRenderer = SwiftDrawSVGBlockRenderer()
 }
 
 // MARK: - EditorTab
@@ -165,6 +172,7 @@ private struct StreamTab: View {
             ScrollView {
                 MarkdownStreamingText(self.streamSource)
                     .mathRenderer(self.mathRenderer)
+                    .svgRenderer(self.svgBlockRenderer)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
             }
@@ -208,8 +216,10 @@ private struct StreamTab: View {
     }
 
     @State private var streamSource = MarkdownStreamingSource()
-    // Stored once so the JSContext inside MathJaxRenderer is not rebuilt every body pass.
-    private let mathRenderer = MathJaxRenderer()
+    // @State 跨 View 重建保持 renderer 身份稳定，避免反复 setRenderer 翻转
+    // coordinator generation；与 RenderTab 同款（Copilot PR #5 R4 #2 & suppressed #3）。
+    @State private var mathRenderer = MathJaxRenderer()
+    @State private var svgBlockRenderer = SwiftDrawSVGBlockRenderer()
     @State private var isRunning = false
     @State private var hasOutput = false
     @State private var taskHandle: Task<Void, Never>?
@@ -419,6 +429,12 @@ $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
 
 $$\\begin{matrix} a & b \\\\ c & d \\end{matrix}$$
 
+## SVG 代码块（流式渲染）
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" width="120" height="60"><rect width="120" height="60" rx="8" fill="#4C8BF5"/><text x="60" y="38" font-size="20" text-anchor="middle" fill="white">SVG</text></svg>
+```
+
 ## 中文支持
 
 完美支持**中文**与 English 混排。TextKit 2 原生支持 Unicode 全字符集，行内断字规则与系统文本视图保持一致。
@@ -516,6 +532,14 @@ private let streamTokens: [String] = {
     流式场景下数学公式同样增量渲染。行内：高斯求和 $1+2+\\dots+n=\\frac{n(n+1)}{2}$。块级：
 
     $$e^{i\\pi}+1=0$$
+
+    ## SVG 代码块（流式）
+
+    流式场景下 `svg` 代码块逐 token 累积，解析完整后异步光栅化、命中缓存即落位为图像；未注入 renderer 时降级为高亮源码。
+
+    ```svg
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 60" width="160" height="60"><rect width="160" height="60" rx="10" fill="#4C8BF5"/><circle cx="30" cy="30" r="14" fill="#FFD166"/><text x="100" y="38" font-size="20" text-anchor="middle" fill="white">stream</text></svg>
+    ```
 
     ## 引用块测试
 

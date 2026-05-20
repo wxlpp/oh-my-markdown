@@ -392,6 +392,41 @@ public final class MarkdownLabelView: UIView {
         return (srcCount, attachCount)
     }
 
+    /// 测试钩子：枚举 `.markdownSVGBlockSource` 未解析占位与 `.attachment` 数量。
+    /// 镜像 `_renderedMathStateForTesting`，是「已解析 svg 是否熬过 renderer 重建」
+    /// 的无解耦直读信号（看 view 真正绘制的串）。
+    func _renderedSVGBlockStateForTesting() -> (markerCount: Int, attachmentCount: Int) {
+        guard let str = self.contentStorage.attributedString else {
+            return (0, 0)
+        }
+        var markerCount = 0
+        var attachCount = 0
+        let full = NSRange(location: 0, length: str.length)
+        str.enumerateAttribute(.markdownSVGBlockSource, in: full) { v, _, _ in
+            if v is String { markerCount += 1 }
+        }
+        str.enumerateAttribute(.attachment, in: full) { v, _, _ in
+            if v != nil { attachCount += 1 }
+        }
+        return (markerCount, attachCount)
+    }
+
+    /// 测试钩子：读取第一个 svg 渲染 attachment 的 image 尺寸（用于 R1→R2
+    /// swap 测试 —— 不同 renderer 配置不同 stub size，验证 swap 后 attachment
+    /// 真的换成新 renderer 输出。返回 nil 表示还没解析为 attachment。
+    func _firstSVGAttachmentImageSizeForTesting() -> CGSize? {
+        guard let str = self.contentStorage.attributedString else { return nil }
+        var found: CGSize?
+        let full = NSRange(location: 0, length: str.length)
+        str.enumerateAttribute(.attachment, in: full) { value, _, stop in
+            if let a = value as? NSTextAttachment, let img = a.image {
+                found = img.size
+                stop.pointee = true
+            }
+        }
+        return found
+    }
+
     /// Maps a rendered selection range to the original Markdown source it
     /// covers (block-level). Shared between platforms via the file-scope
     /// `markdownSourceForRenderedSelection`.
@@ -514,6 +549,7 @@ public final class MarkdownLabelView: UIView {
         self.resetLayout()
         self.triggerImageLoads(in: NSRange(location: 0, length: self._liveString.length))
         self.triggerMathLoads(in: NSRange(location: 0, length: self._liveString.length))
+        self.triggerSVGBlockLoads(in: NSRange(location: 0, length: self._liveString.length))
     }
 
     func offsetOf(_ location: any NSTextLocation) -> Int {
@@ -588,6 +624,54 @@ public final class MarkdownLabelView: UIView {
         // updateContent/relayout 时解析（有意为之的最终一致性）。
         didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
     }
+    /// Platform-agnostic async ```svg block render coordinator (dedup/三态/代际).
+    private let _svgBlockCoordinator = SVGBlockLoadCoordinator()
+    /// View-held svg-block glyph cache / raster scale / renderer generation —
+    /// the **canonical store** for async svg write-back, mirroring `_mathCache`
+    /// discipline. The transient `_cachedRenderer` is discarded by `resetLayout()`
+    /// on width churn; keeping svg state on the view (and re-seeding it into
+    /// every freshly built renderer in `cachedRenderer`) is what makes resolved
+    /// svg images survive renderer recreation — identical to `_mathCache`.
+    private var _svgBlockCache: [SVGBlockCacheKey: SVGBlockGlyph] = [:]
+    private var _svgRasterScale: CGFloat = 1
+    private var _svgBlockRendererGeneration: Int = 0
+    /// Injected ```svg block renderer; swapping it bumps the coordinator's generation.
+    public var svgBlockRenderer: (any SVGBlockRendering)? {
+        // didSet 行为契约：
+        // 1) 异步把 renderer 推给 coordinator（gen bump + 清协调器自身的 caches）。
+        // 2) 在 coordinator 落地**之后**回到 MainActor 做后续：
+        //    - nil 分支：清 view-held + transient renderer 的 svg cache（让
+        //      已渲染 svg 立刻降级回高亮源码，匹配 .svgRenderer(nil) 的
+        //      「disable」文档契约——Copilot PR #5 R4 #1）。
+        //    - 任何分支：触发一次 updateContent 让 triggerSVGBlockLoads 在
+        //      新 renderer 下重新派发；解决 nil→非nil 时源串不变 → representable
+        //      早 return 不调 setMarkdown → svg 永停 marker 的死锁（Copilot
+        //      PR #5 R7 #1 + suppressed）。先 await setRenderer 再 updateContent
+        //      可避免 triggerSVGBlockLoads 抢在 setRenderer 之前用旧 coordinator
+        //      状态派发并被随后的 setRenderer drop 的竞态。
+        didSet {
+            Task { [weak self] in
+                guard let self else { return }
+                await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer)
+                await MainActor.run {
+                    // **任何 renderer 变更**都失效 view-held svg cache：
+                    // - nil 分支：原 R4 #1 disable 契约要求清 cache 让已渲染
+                    //   svg 降级回高亮源码 + marker。
+                    // - 非 nil→非 nil swap：若不清，已 attachment 的 svg 会
+                    //   继续命中旧 cache（view-held _svgBlockRendererGeneration
+                    //   仍是旧值），renderSVGBlock 直接输出 attachment 而非
+                    //   marker，triggerSVGBlockLoads 枚举不到 marker → 新
+                    //   renderer 永不派发 → renderer swap 不真正生效
+                    //   （Copilot PR #5 R8 #1 + suppressed）。
+                    // 清 cache 后 updateContent 让所有 svg 走 miss→marker→
+                    // 新 coordinator 派发→回写链路；任何 renderer 切换都生效。
+                    self._svgBlockCache.removeAll()
+                    self._cachedRenderer?.svgBlockCache.removeAll()
+                    self.updateContent()
+                }
+            }
+        }
+    }
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
     private var _tableOverlays: [Int: (
         scroll: UIScrollView,
@@ -614,6 +698,10 @@ public final class MarkdownLabelView: UIView {
             renderer.mathCache = self._mathCache
             renderer.mathRasterScale = self._mathRasterScale
             renderer.mathRendererGeneration = self._mathRendererGeneration
+            // 同款 svg 重播种：让解析后的 svg 字形熬过 width churn 引发的 renderer 重建。
+            renderer.svgBlockCache = self._svgBlockCache
+            renderer.svgRasterScale = self._svgRasterScale
+            renderer.svgRendererGeneration = self._svgBlockRendererGeneration
             self._cachedRenderer = renderer
             self._cachedRendererWidth = w
         }
@@ -867,6 +955,7 @@ public final class MarkdownLabelView: UIView {
         setNeedsLayout()
         self.triggerImageLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
         self.triggerMathLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
+        self.triggerSVGBlockLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
     }
 
     // MARK: Link tap
@@ -1038,6 +1127,80 @@ public final class MarkdownLabelView: UIView {
                 for entry in resolved {
                     self._mathCache[entry.key] = entry.glyph
                     self._cachedRenderer?.mathCache[entry.key] = entry.glyph
+                }
+                self.updateContent()
+            }
+        }
+    }
+
+    // MARK: SVG block loading
+
+    private func triggerSVGBlockLoads(in range: NSRange) {
+        guard self.svgBlockRenderer != nil, let str = contentStorage.attributedString else {
+            return
+        }
+        let safe = range.clamped(to: str.length)
+        guard safe.length > 0 else {
+            return
+        }
+        let scale = self.window?.screen.scale ?? UIScreen.main.scale
+        // 与 renderSVGBlock 共用同一宽度：renderSVGBlock 的 lookup key 走
+        // self.cachedRenderer.availableWidth（renderer 持有），而 cachedRenderer
+        // 只在 |Δw|>0.5pt 时才重建。若 trigger 直接用 max(bounds.width,1)，
+        // 在 <0.5pt 抖动下 trigger 写入的 key 与 lookup 用的 key 不一致 →
+        // 已解析 svg 永远 cache miss → marker 永留（Copilot PR #5 R5 #1）。
+        // math 不受影响：MathCacheKey 不含 availableWidth。
+        let availableWidth = self.cachedRenderer.availableWidth
+        // 同步枚举收集 svg 源串。代际相关的 key 构造推迟到下面唯一的 Task 内一次性
+        // 完成（generation 受 actor 隔离），与 triggerMathLoads 同形。
+        // 注：enumerateAttribute 对相同 value 的 .markdownSVGBlockSource 合并成单次
+        // 回调（Foundation 文档：returns the maximum range over which the value applies），
+        // 故每个 svg block 自然只产一项，无需 Set 去重（详见 SVGBlockRenderTests
+        // missEnumerationCoalescesSameValue —— Copilot PR #5 R3 #2/#3 假设不成立）。
+        var svgs: [String] = []
+        str.enumerateAttribute(.markdownSVGBlockSource, in: safe) { value, _, _ in
+            guard let payload = value as? String else { return }
+            svgs.append(payload)
+        }
+        guard !svgs.isEmpty else {
+            return
+        }
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            let gen = await self._svgBlockCoordinator.generation
+            let requests: [(key: SVGBlockCacheKey, svg: String)] = svgs.map { svg in
+                (key: SVGBlockCacheKey(
+                    svg: svg, availableWidth: availableWidth,
+                    rasterScale: scale, rendererGeneration: gen
+                ), svg: svg)
+            }
+            for r in requests {
+                await self._svgBlockCoordinator.loadIfNeeded(
+                    key: r.key, svg: r.svg, availableWidth: availableWidth, scale: scale
+                )
+            }
+            var resolved: [(key: SVGBlockCacheKey, glyph: SVGBlockGlyph)] = []
+            for r in requests {
+                if let glyph = await self._svgBlockCoordinator.awaitGlyph(for: r.key) {
+                    resolved.append((key: r.key, glyph: glyph))
+                }
+            }
+            guard !resolved.isEmpty else {
+                return
+            }
+            await MainActor.run {
+                // 真值源是 view-held store（与 _mathCache 同款）—— resetLayout()
+                // 在宽度抖动时丢弃 _cachedRenderer，下次 cachedRenderer 重建会从
+                // 这里重播种；同时也写当前 transient renderer。
+                self._svgRasterScale = scale
+                self._svgBlockRendererGeneration = gen
+                self._cachedRenderer?.svgRasterScale = scale
+                self._cachedRenderer?.svgRendererGeneration = gen
+                for entry in resolved {
+                    self._svgBlockCache[entry.key] = entry.glyph
+                    self._cachedRenderer?.svgBlockCache[entry.key] = entry.glyph
                 }
                 self.updateContent()
             }
@@ -1713,6 +1876,41 @@ public final class MarkdownLabelView: NSView {
         return (srcCount, attachCount)
     }
 
+    /// 测试钩子：枚举 `.markdownSVGBlockSource` 未解析占位与 `.attachment` 数量。
+    /// 镜像 `_renderedMathStateForTesting`，是「已解析 svg 是否熬过 renderer 重建」
+    /// 的无解耦直读信号（看 view 真正绘制的串）。
+    func _renderedSVGBlockStateForTesting() -> (markerCount: Int, attachmentCount: Int) {
+        guard let str = self.contentStorage.attributedString else {
+            return (0, 0)
+        }
+        var markerCount = 0
+        var attachCount = 0
+        let full = NSRange(location: 0, length: str.length)
+        str.enumerateAttribute(.markdownSVGBlockSource, in: full) { v, _, _ in
+            if v is String { markerCount += 1 }
+        }
+        str.enumerateAttribute(.attachment, in: full) { v, _, _ in
+            if v != nil { attachCount += 1 }
+        }
+        return (markerCount, attachCount)
+    }
+
+    /// 测试钩子：读取第一个 svg 渲染 attachment 的 image 尺寸（用于 R1→R2
+    /// swap 测试 —— 不同 renderer 配置不同 stub size，验证 swap 后 attachment
+    /// 真的换成新 renderer 输出。返回 nil 表示还没解析为 attachment。
+    func _firstSVGAttachmentImageSizeForTesting() -> CGSize? {
+        guard let str = self.contentStorage.attributedString else { return nil }
+        var found: CGSize?
+        let full = NSRange(location: 0, length: str.length)
+        str.enumerateAttribute(.attachment, in: full) { value, _, stop in
+            if let a = value as? NSTextAttachment, let img = a.image {
+                found = img.size
+                stop.pointee = true
+            }
+        }
+        return found
+    }
+
     public func setMarkdown(_ source: String) {
         self._parseSerial += 1
         self._parseTask?.cancel()
@@ -1785,6 +1983,54 @@ public final class MarkdownLabelView: NSView {
         // updateContent/relayout 时解析（有意为之的最终一致性）。
         didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
     }
+    /// Platform-agnostic async ```svg block render coordinator (dedup/三态/代际).
+    private let _svgBlockCoordinator = SVGBlockLoadCoordinator()
+    /// View-held svg-block glyph cache / raster scale / renderer generation —
+    /// the **canonical store** for async svg write-back, mirroring `_mathCache`
+    /// discipline. The transient `_cachedRenderer` is discarded by `resetLayout()`
+    /// on width churn; keeping svg state on the view (and re-seeding it into
+    /// every freshly built renderer in `cachedRenderer`) is what makes resolved
+    /// svg images survive renderer recreation — identical to `_mathCache`.
+    private var _svgBlockCache: [SVGBlockCacheKey: SVGBlockGlyph] = [:]
+    private var _svgRasterScale: CGFloat = 1
+    private var _svgBlockRendererGeneration: Int = 0
+    /// Injected ```svg block renderer; swapping it bumps the coordinator's generation.
+    public var svgBlockRenderer: (any SVGBlockRendering)? {
+        // didSet 行为契约：
+        // 1) 异步把 renderer 推给 coordinator（gen bump + 清协调器自身的 caches）。
+        // 2) 在 coordinator 落地**之后**回到 MainActor 做后续：
+        //    - nil 分支：清 view-held + transient renderer 的 svg cache（让
+        //      已渲染 svg 立刻降级回高亮源码，匹配 .svgRenderer(nil) 的
+        //      「disable」文档契约——Copilot PR #5 R4 #1）。
+        //    - 任何分支：触发一次 updateContent 让 triggerSVGBlockLoads 在
+        //      新 renderer 下重新派发；解决 nil→非nil 时源串不变 → representable
+        //      早 return 不调 setMarkdown → svg 永停 marker 的死锁（Copilot
+        //      PR #5 R7 #1 + suppressed）。先 await setRenderer 再 updateContent
+        //      可避免 triggerSVGBlockLoads 抢在 setRenderer 之前用旧 coordinator
+        //      状态派发并被随后的 setRenderer drop 的竞态。
+        didSet {
+            Task { [weak self] in
+                guard let self else { return }
+                await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer)
+                await MainActor.run {
+                    // **任何 renderer 变更**都失效 view-held svg cache：
+                    // - nil 分支：原 R4 #1 disable 契约要求清 cache 让已渲染
+                    //   svg 降级回高亮源码 + marker。
+                    // - 非 nil→非 nil swap：若不清，已 attachment 的 svg 会
+                    //   继续命中旧 cache（view-held _svgBlockRendererGeneration
+                    //   仍是旧值），renderSVGBlock 直接输出 attachment 而非
+                    //   marker，triggerSVGBlockLoads 枚举不到 marker → 新
+                    //   renderer 永不派发 → renderer swap 不真正生效
+                    //   （Copilot PR #5 R8 #1 + suppressed）。
+                    // 清 cache 后 updateContent 让所有 svg 走 miss→marker→
+                    // 新 coordinator 派发→回写链路；任何 renderer 切换都生效。
+                    self._svgBlockCache.removeAll()
+                    self._cachedRenderer?.svgBlockCache.removeAll()
+                    self.updateContent()
+                }
+            }
+        }
+    }
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
     private var _tableOverlays: [Int: (
         scroll: NSScrollView,
@@ -1807,6 +2053,10 @@ public final class MarkdownLabelView: NSView {
             renderer.mathCache = self._mathCache
             renderer.mathRasterScale = self._mathRasterScale
             renderer.mathRendererGeneration = self._mathRendererGeneration
+            // 同款 svg 重播种：让解析后的 svg 字形熬过 width churn 引发的 renderer 重建。
+            renderer.svgBlockCache = self._svgBlockCache
+            renderer.svgRasterScale = self._svgRasterScale
+            renderer.svgRendererGeneration = self._svgBlockRendererGeneration
             self._cachedRenderer = renderer
             self._cachedRendererWidth = w
         }
@@ -1850,6 +2100,7 @@ public final class MarkdownLabelView: NSView {
         self.resetLayout()
         self.triggerImageLoads(in: NSRange(location: 0, length: self._liveString.length))
         self.triggerMathLoads(in: NSRange(location: 0, length: self._liveString.length))
+        self.triggerSVGBlockLoads(in: NSRange(location: 0, length: self._liveString.length))
     }
 
     private func resetLayout() {
@@ -2056,6 +2307,7 @@ public final class MarkdownLabelView: NSView {
         needsLayout = true
         self.triggerImageLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
         self.triggerMathLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
+        self.triggerSVGBlockLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
     }
 
     // MARK: Table overlay helpers (macOS)
@@ -2324,6 +2576,80 @@ public final class MarkdownLabelView: NSView {
                 for entry in resolved {
                     self._mathCache[entry.key] = entry.glyph
                     self._cachedRenderer?.mathCache[entry.key] = entry.glyph
+                }
+                self.updateContent()
+            }
+        }
+    }
+
+    // MARK: SVG block loading
+
+    private func triggerSVGBlockLoads(in range: NSRange) {
+        guard self.svgBlockRenderer != nil, let str = contentStorage.attributedString else {
+            return
+        }
+        let safe = range.clamped(to: str.length)
+        guard safe.length > 0 else {
+            return
+        }
+        let scale = self.window?.backingScaleFactor ?? 2
+        // 与 renderSVGBlock 共用同一宽度：renderSVGBlock 的 lookup key 走
+        // self.cachedRenderer.availableWidth（renderer 持有），而 cachedRenderer
+        // 只在 |Δw|>0.5pt 时才重建。若 trigger 直接用 max(bounds.width,1)，
+        // 在 <0.5pt 抖动下 trigger 写入的 key 与 lookup 用的 key 不一致 →
+        // 已解析 svg 永远 cache miss → marker 永留（Copilot PR #5 R5 #1）。
+        // math 不受影响：MathCacheKey 不含 availableWidth。
+        let availableWidth = self.cachedRenderer.availableWidth
+        // 同步枚举收集 svg 源串。代际相关的 key 构造推迟到下面唯一的 Task 内一次性
+        // 完成（generation 受 actor 隔离），与 triggerMathLoads 同形。
+        // 注：enumerateAttribute 对相同 value 的 .markdownSVGBlockSource 合并成单次
+        // 回调（Foundation 文档：returns the maximum range over which the value applies），
+        // 故每个 svg block 自然只产一项，无需 Set 去重（详见 SVGBlockRenderTests
+        // missEnumerationCoalescesSameValue —— Copilot PR #5 R3 #2/#3 假设不成立）。
+        var svgs: [String] = []
+        str.enumerateAttribute(.markdownSVGBlockSource, in: safe) { value, _, _ in
+            guard let payload = value as? String else { return }
+            svgs.append(payload)
+        }
+        guard !svgs.isEmpty else {
+            return
+        }
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            let gen = await self._svgBlockCoordinator.generation
+            let requests: [(key: SVGBlockCacheKey, svg: String)] = svgs.map { svg in
+                (key: SVGBlockCacheKey(
+                    svg: svg, availableWidth: availableWidth,
+                    rasterScale: scale, rendererGeneration: gen
+                ), svg: svg)
+            }
+            for r in requests {
+                await self._svgBlockCoordinator.loadIfNeeded(
+                    key: r.key, svg: r.svg, availableWidth: availableWidth, scale: scale
+                )
+            }
+            var resolved: [(key: SVGBlockCacheKey, glyph: SVGBlockGlyph)] = []
+            for r in requests {
+                if let glyph = await self._svgBlockCoordinator.awaitGlyph(for: r.key) {
+                    resolved.append((key: r.key, glyph: glyph))
+                }
+            }
+            guard !resolved.isEmpty else {
+                return
+            }
+            await MainActor.run {
+                // 真值源是 view-held store（与 _mathCache 同款）—— resetLayout()
+                // 在宽度抖动时丢弃 _cachedRenderer，下次 cachedRenderer 重建会从
+                // 这里重播种；同时也写当前 transient renderer。
+                self._svgRasterScale = scale
+                self._svgBlockRendererGeneration = gen
+                self._cachedRenderer?.svgRasterScale = scale
+                self._cachedRenderer?.svgRendererGeneration = gen
+                for entry in resolved {
+                    self._svgBlockCache[entry.key] = entry.glyph
+                    self._cachedRenderer?.svgBlockCache[entry.key] = entry.glyph
                 }
                 self.updateContent()
             }

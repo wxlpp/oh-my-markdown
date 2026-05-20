@@ -69,11 +69,17 @@ public struct MarkdownStreamingText: View {
     }
 
     public var body: some View {
-        _MarkdownStreamingTextRepresentable(source: self.source, style: self.style, mathRenderer: self.mathRenderer)
+        _MarkdownStreamingTextRepresentable(
+            source: self.source,
+            style: self.style,
+            mathRenderer: self.mathRenderer,
+            svgBlockRenderer: self.svgBlockRenderer
+        )
     }
 
     @Environment(\.markdownStyle) private var style
     @Environment(\.markdownMathRenderer) private var mathRenderer
+    @Environment(\.markdownSVGBlockRenderer) private var svgBlockRenderer
 
     private let source: MarkdownStreamingSource
 }
@@ -85,11 +91,13 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         var currentSource: MarkdownStreamingSource?
         var lastStyle: RenderStyle?
         var lastMathRenderer: (any MathRendering)?
+        var lastSVGBlockRenderer: (any SVGBlockRendering)?
     }
 
     let source: MarkdownStreamingSource
     let style: RenderStyle
     let mathRenderer: (any MathRendering)?
+    let svgBlockRenderer: (any SVGBlockRendering)?
 
     static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
         coordinator.currentSource?.removeListener(coordinator.listenerID)
@@ -119,6 +127,10 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
             uiView.mathRenderer = self.mathRenderer
             context.coordinator.lastMathRenderer = self.mathRenderer
+        }
+        if !isSameSVGBlockRenderer(context.coordinator.lastSVGBlockRenderer, self.svgBlockRenderer) {
+            uiView.svgBlockRenderer = self.svgBlockRenderer
+            context.coordinator.lastSVGBlockRenderer = self.svgBlockRenderer
         }
         if context.coordinator.currentSource !== self.source {
             self.attachListener(to: uiView, context: context)
@@ -159,11 +171,13 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         var currentSource: MarkdownStreamingSource?
         var lastStyle: RenderStyle?
         var lastMathRenderer: (any MathRendering)?
+        var lastSVGBlockRenderer: (any SVGBlockRendering)?
     }
 
     let source: MarkdownStreamingSource
     let style: RenderStyle
     let mathRenderer: (any MathRendering)?
+    let svgBlockRenderer: (any SVGBlockRendering)?
 
     static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
         coordinator.currentSource?.removeListener(coordinator.listenerID)
@@ -189,6 +203,10 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
             nsView.mathRenderer = self.mathRenderer
             context.coordinator.lastMathRenderer = self.mathRenderer
+        }
+        if !isSameSVGBlockRenderer(context.coordinator.lastSVGBlockRenderer, self.svgBlockRenderer) {
+            nsView.svgBlockRenderer = self.svgBlockRenderer
+            context.coordinator.lastSVGBlockRenderer = self.svgBlockRenderer
         }
         if context.coordinator.currentSource !== self.source {
             self.attachListener(to: nsView, context: context)
