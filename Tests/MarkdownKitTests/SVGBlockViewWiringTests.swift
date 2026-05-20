@@ -9,12 +9,14 @@ import AppKit
 #endif
 
 private final class ImgSVGRenderer: SVGBlockRendering, @unchecked Sendable {
+    let imageSize: CGSize
+    init(_ size: CGSize = CGSize(width: 50, height: 30)) { self.imageSize = size }
     func render(svg _: String, availableWidth _: CGFloat, scale _: CGFloat) async -> SVGBlockOutcome {
         #if canImport(UIKit)
-        let img = UIGraphicsImageRenderer(size: .init(width: 50, height: 30)).image { _ in }
+        let img = UIGraphicsImageRenderer(size: self.imageSize).image { _ in }
         return .rendered(SVGBlockGlyph(image: img))
         #elseif canImport(AppKit)
-        let img = NSImage(size: .init(width: 50, height: 30))
+        let img = NSImage(size: self.imageSize)
         img.lockFocus(); img.unlockFocus()
         return .rendered(SVGBlockGlyph(image: img))
         #else
@@ -102,6 +104,58 @@ struct SVGBlockViewWiringTests {
             }
         }
         #expect(heldResolved, "sub-pixel 抖动下 svg 应解析为 attachment（trigger 与 render 必须共用 cachedRenderer.availableWidth；buggy 下永 miss）")
+    }
+
+    @Test("非nil→非nil renderer swap 真正生效：attachment 尺寸切换到新 renderer 输出（Copilot PR #5 R8 #1 + suppressed）")
+    func nonNilToNonNilRendererSwapTakesEffect() async {
+        // R1→R2 swap：若 didSet 不清 view-held cache，已解析的 attachment
+        // 命中旧 cache 输出 R1 图，trigger 枚举不到 marker → R2 永不派发 →
+        // swap 不生效。检验：R1 给 50×30 图、R2 给 120×80 图，swap 后
+        // attachment 尺寸必须切换。
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 4000))
+        #if canImport(UIKit)
+        view.layoutIfNeeded()
+        #elseif canImport(AppKit)
+        view.layoutSubtreeIfNeeded()
+        #endif
+
+        let r1 = ImgSVGRenderer(CGSize(width: 50, height: 30))
+        view.svgBlockRenderer = r1
+        for _ in 0 ..< 20 {
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        view.setMarkdown("```svg\n<svg viewBox=\"0 0 10 6\"/>\n```")
+        var r1Size: CGSize?
+        for _ in 0 ..< 200 {
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 25_000_000)
+            if let sz = view._firstSVGAttachmentImageSizeForTesting() {
+                r1Size = sz; break
+            }
+        }
+        let r1Got = try! #require(r1Size)
+        #expect(abs(r1Got.width - 50) <= 0.5)
+        #expect(abs(r1Got.height - 30) <= 0.5)
+
+        // swap 到 R2 —— 不同尺寸输出
+        let r2 = ImgSVGRenderer(CGSize(width: 120, height: 80))
+        view.svgBlockRenderer = r2
+
+        // 等 attachment 尺寸切到 R2 的输出。若 didSet 不清 view-cache，
+        // attachment 会一直停在 r1Size（50×30），永远拿不到 r2 的 120×80。
+        var r2Size: CGSize?
+        for _ in 0 ..< 300 {
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 25_000_000)
+            if let sz = view._firstSVGAttachmentImageSizeForTesting(),
+               abs(sz.width - 120) <= 0.5, abs(sz.height - 80) <= 0.5 {
+                r2Size = sz; break
+            }
+        }
+        let r2Got = try! #require(r2Size, "R1→R2 swap 后 attachment 应换成 R2 输出（120×80），buggy 路径下永停 R1 的 50×30")
+        #expect(abs(r2Got.width - 120) <= 0.5)
+        #expect(abs(r2Got.height - 80) <= 0.5)
     }
 
     @Test("nil→非nil 切换源串不变时也能触发解析（Copilot PR #5 R7 #1 + suppressed）")

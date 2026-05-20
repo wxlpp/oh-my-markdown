@@ -411,6 +411,22 @@ public final class MarkdownLabelView: UIView {
         return (markerCount, attachCount)
     }
 
+    /// 测试钩子：读取第一个 svg 渲染 attachment 的 image 尺寸（用于 R1→R2
+    /// swap 测试 —— 不同 renderer 配置不同 stub size，验证 swap 后 attachment
+    /// 真的换成新 renderer 输出。返回 nil 表示还没解析为 attachment。
+    func _firstSVGAttachmentImageSizeForTesting() -> CGSize? {
+        guard let str = self.contentStorage.attributedString else { return nil }
+        var found: CGSize?
+        let full = NSRange(location: 0, length: str.length)
+        str.enumerateAttribute(.attachment, in: full) { value, _, stop in
+            if let a = value as? NSTextAttachment, let img = a.image {
+                found = img.size
+                stop.pointee = true
+            }
+        }
+        return found
+    }
+
     /// Maps a rendered selection range to the original Markdown source it
     /// covers (block-level). Shared between platforms via the file-scope
     /// `markdownSourceForRenderedSelection`.
@@ -638,10 +654,19 @@ public final class MarkdownLabelView: UIView {
                 guard let self else { return }
                 await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer)
                 await MainActor.run {
-                    if self.svgBlockRenderer == nil {
-                        self._svgBlockCache.removeAll()
-                        self._cachedRenderer?.svgBlockCache.removeAll()
-                    }
+                    // **任何 renderer 变更**都失效 view-held svg cache：
+                    // - nil 分支：原 R4 #1 disable 契约要求清 cache 让已渲染
+                    //   svg 降级回高亮源码 + marker。
+                    // - 非 nil→非 nil swap：若不清，已 attachment 的 svg 会
+                    //   继续命中旧 cache（view-held _svgBlockRendererGeneration
+                    //   仍是旧值），renderSVGBlock 直接输出 attachment 而非
+                    //   marker，triggerSVGBlockLoads 枚举不到 marker → 新
+                    //   renderer 永不派发 → renderer swap 不真正生效
+                    //   （Copilot PR #5 R8 #1 + suppressed）。
+                    // 清 cache 后 updateContent 让所有 svg 走 miss→marker→
+                    // 新 coordinator 派发→回写链路；任何 renderer 切换都生效。
+                    self._svgBlockCache.removeAll()
+                    self._cachedRenderer?.svgBlockCache.removeAll()
                     self.updateContent()
                 }
             }
@@ -1870,6 +1895,22 @@ public final class MarkdownLabelView: NSView {
         return (markerCount, attachCount)
     }
 
+    /// 测试钩子：读取第一个 svg 渲染 attachment 的 image 尺寸（用于 R1→R2
+    /// swap 测试 —— 不同 renderer 配置不同 stub size，验证 swap 后 attachment
+    /// 真的换成新 renderer 输出。返回 nil 表示还没解析为 attachment。
+    func _firstSVGAttachmentImageSizeForTesting() -> CGSize? {
+        guard let str = self.contentStorage.attributedString else { return nil }
+        var found: CGSize?
+        let full = NSRange(location: 0, length: str.length)
+        str.enumerateAttribute(.attachment, in: full) { value, _, stop in
+            if let a = value as? NSTextAttachment, let img = a.image {
+                found = img.size
+                stop.pointee = true
+            }
+        }
+        return found
+    }
+
     public func setMarkdown(_ source: String) {
         self._parseSerial += 1
         self._parseTask?.cancel()
@@ -1972,10 +2013,19 @@ public final class MarkdownLabelView: NSView {
                 guard let self else { return }
                 await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer)
                 await MainActor.run {
-                    if self.svgBlockRenderer == nil {
-                        self._svgBlockCache.removeAll()
-                        self._cachedRenderer?.svgBlockCache.removeAll()
-                    }
+                    // **任何 renderer 变更**都失效 view-held svg cache：
+                    // - nil 分支：原 R4 #1 disable 契约要求清 cache 让已渲染
+                    //   svg 降级回高亮源码 + marker。
+                    // - 非 nil→非 nil swap：若不清，已 attachment 的 svg 会
+                    //   继续命中旧 cache（view-held _svgBlockRendererGeneration
+                    //   仍是旧值），renderSVGBlock 直接输出 attachment 而非
+                    //   marker，triggerSVGBlockLoads 枚举不到 marker → 新
+                    //   renderer 永不派发 → renderer swap 不真正生效
+                    //   （Copilot PR #5 R8 #1 + suppressed）。
+                    // 清 cache 后 updateContent 让所有 svg 走 miss→marker→
+                    // 新 coordinator 派发→回写链路；任何 renderer 切换都生效。
+                    self._svgBlockCache.removeAll()
+                    self._cachedRenderer?.svgBlockCache.removeAll()
                     self.updateContent()
                 }
             }
