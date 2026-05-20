@@ -72,6 +72,7 @@ private struct RenderTab: View {
                 MarkdownText(sampleMarkdown)
                     .markdownStyle(self.preset.renderStyle)
                     .mathRenderer(self.mathRenderer)
+                    .svgRenderer(self.svgBlockRenderer)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
             }
@@ -94,6 +95,8 @@ private struct RenderTab: View {
     @State private var preset: StylePreset = .default
     // Stored once so the JSContext inside MathJaxRenderer is not rebuilt every body pass.
     private let mathRenderer = MathJaxRenderer()
+    // Stored once so the SwiftDraw rasterizer state is reused across body passes.
+    private let svgBlockRenderer = SwiftDrawSVGBlockRenderer()
 }
 
 // MARK: - EditorTab
@@ -165,6 +168,7 @@ private struct StreamTab: View {
             ScrollView {
                 MarkdownStreamingText(self.streamSource)
                     .mathRenderer(self.mathRenderer)
+                    .svgRenderer(self.svgBlockRenderer)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
             }
@@ -210,6 +214,8 @@ private struct StreamTab: View {
     @State private var streamSource = MarkdownStreamingSource()
     // Stored once so the JSContext inside MathJaxRenderer is not rebuilt every body pass.
     private let mathRenderer = MathJaxRenderer()
+    // Stored once so the SwiftDraw rasterizer state is reused across body passes.
+    private let svgBlockRenderer = SwiftDrawSVGBlockRenderer()
     @State private var isRunning = false
     @State private var hasOutput = false
     @State private var taskHandle: Task<Void, Never>?
@@ -418,6 +424,12 @@ $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
 矩阵：
 
 $$\\begin{matrix} a & b \\\\ c & d \\end{matrix}$$
+
+## SVG 代码块（流式渲染）
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" width="120" height="60"><rect width="120" height="60" rx="8" fill="#4C8BF5"/><text x="60" y="38" font-size="20" text-anchor="middle" fill="white">SVG</text></svg>
+```
 
 ## 中文支持
 
