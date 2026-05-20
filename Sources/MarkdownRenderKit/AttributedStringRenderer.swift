@@ -129,6 +129,11 @@ public struct AttributedStringRenderer: @unchecked Sendable {
     /// 当前光栅化 scale 与 renderer 代际，参与缓存键（平台层设置）。
     public var mathRasterScale: CGFloat = 1
     public var mathRendererGeneration: Int = 0
+    /// 渲染好的 SVG 块字形缓存，键含 svg 源串/可用宽度/scale/renderer 代际。平台层填充。
+    public var svgBlockCache: [SVGBlockCacheKey: SVGBlockGlyph] = [:]
+    /// 当前 SVG 光栅化 scale 与 renderer 代际，参与缓存键（平台层设置）。
+    public var svgRasterScale: CGFloat = 1
+    public var svgRendererGeneration: Int = 0
 
     /// Render an array of top-level blocks.
     public func render(_ blocks: [BlockNode]) -> NSAttributedString {
@@ -200,6 +205,17 @@ public struct AttributedStringRenderer: @unchecked Sendable {
     // MARK: Code block
 
     private func renderCodeBlock(language: String?, body: String) -> NSAttributedString {
+        // Early-branch ```svg before the syntax-highlighted path. Pure pre-dispatch:
+        // miss falls through to the highlighted helper tagged with .markdownSVGBlockSource,
+        // hit emits a centered attachment. Other languages keep byte-identical behavior
+        // (the highlighted-helper extraction is behavior-neutral; guarded by nonSvgUnchanged).
+        if language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "svg" {
+            return self.renderSVGBlock(svg: body)
+        }
+        return self.renderHighlightedCodeBlock(language: language, body: body)
+    }
+
+    private func renderHighlightedCodeBlock(language: String?, body: String) -> NSAttributedString {
         // Trim single trailing newline added by cmark-gfm.
         let text = body.hasSuffix("\n") ? String(body.dropLast()) : body
         let para = NSMutableParagraphStyle()
@@ -221,6 +237,46 @@ public struct AttributedStringRenderer: @unchecked Sendable {
             range: NSRange(location: 0, length: highlighted.length)
         )
         return highlighted
+    }
+
+    /// ```svg 代码块渲染：命中缓存返回居中 attachment；未命中则保留高亮代码块，
+    /// 同时打 .markdownSVGBlockSource 标记，平台层据此异步触发渲染。
+    /// Cache-hit → single centered attachment sized in points; cache-miss → highlighted
+    /// code block tagged with `.markdownSVGBlockSource` so the platform layer can
+    /// dispatch async rasterization (degraded-readable state per spec §10).
+    private func renderSVGBlock(svg: String) -> NSAttributedString {
+        let key = SVGBlockCacheKey(
+            svg: svg,
+            availableWidth: self.availableWidth,
+            rasterScale: self.svgRasterScale,
+            rendererGeneration: self.svgRendererGeneration
+        )
+        if let glyph = self.svgBlockCache[key] {
+            let attachment = NSTextAttachment()
+            attachment.image = glyph.image
+            let size = glyph.image.size
+            attachment.bounds = CGRect(x: 0, y: 0, width: size.width, height: size.height)
+            let para = NSMutableParagraphStyle()
+            para.alignment = .center
+            para.paragraphSpacing = self.style.paragraphSpacing
+            let m = NSMutableAttributedString(attachment: attachment)
+            m.addAttribute(
+                .paragraphStyle,
+                value: para.copy() as! NSParagraphStyle,
+                range: NSRange(location: 0, length: m.length)
+            )
+            return m
+        }
+        // Miss → keep the existing syntax-highlighted code-block rendering as the
+        // (readable) degraded state, tagged so the platform layer can async-trigger.
+        let highlighted = self.renderHighlightedCodeBlock(language: "svg", body: svg)
+        let result = NSMutableAttributedString(attributedString: highlighted)
+        result.addAttribute(
+            .markdownSVGBlockSource,
+            value: svg,
+            range: NSRange(location: 0, length: result.length)
+        )
+        return result
     }
 
     // MARK: Blockquote
