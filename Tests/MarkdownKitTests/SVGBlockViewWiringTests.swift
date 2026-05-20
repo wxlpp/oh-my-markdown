@@ -104,6 +104,41 @@ struct SVGBlockViewWiringTests {
         #expect(heldResolved, "sub-pixel 抖动下 svg 应解析为 attachment（trigger 与 render 必须共用 cachedRenderer.availableWidth；buggy 下永 miss）")
     }
 
+    @Test("nil→非nil 切换源串不变时也能触发解析（Copilot PR #5 R7 #1 + suppressed）")
+    func nilToNonNilTriggersResolutionWithoutSourceChange() async {
+        // 复现 R7 死锁路径：先 setMarkdown 把 svg 块加入文档（renderer=nil
+        // 状态下走 miss 路径，停在 marker），再注入 renderer。SwiftUI
+        // representable 早 return（old==source）不调 setMarkdown，didSet
+        // 必须主动 triggerSVGBlockLoads/updateContent 才能让 svg 解析。
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 4000))
+        #if canImport(UIKit)
+        view.layoutIfNeeded()
+        #elseif canImport(AppKit)
+        view.layoutSubtreeIfNeeded()
+        #endif
+        // 注：先 setMarkdown，**不**注入 renderer
+        view.setMarkdown("```svg\n<svg viewBox=\"0 0 10 6\"/>\n```\n\ntail")
+        var markerPresent = false
+        for _ in 0 ..< 100 {
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            let s = view._renderedSVGBlockStateForTesting()
+            if s.markerCount >= 1, s.attachmentCount == 0 { markerPresent = true; break }
+        }
+        #expect(markerPresent, "前置：renderer 注入前应停在 miss marker 状态")
+
+        // 后注入 renderer，源串不变。didSet 必须触发解析。
+        view.svgBlockRenderer = ImgSVGRenderer()
+        var resolved = false
+        for _ in 0 ..< 300 {
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 25_000_000)
+            let s = view._renderedSVGBlockStateForTesting()
+            if s.attachmentCount >= 1, s.markerCount == 0 { resolved = true; break }
+        }
+        #expect(resolved, "nil→非nil 切换且源串不变时，svgBlockRenderer 的 didSet 必须主动触发 updateContent → triggerSVGBlockLoads → 解析")
+    }
+
     @Test("svgBlockRenderer = nil 真正降级已渲染 svg → 回到 marker 形态（Copilot PR #5 R4 #1）")
     func nilRendererDegradesResolved() async {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 4000))

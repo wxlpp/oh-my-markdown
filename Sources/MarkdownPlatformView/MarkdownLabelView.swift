@@ -621,17 +621,29 @@ public final class MarkdownLabelView: UIView {
     private var _svgBlockRendererGeneration: Int = 0
     /// Injected ```svg block renderer; swapping it bumps the coordinator's generation.
     public var svgBlockRenderer: (any SVGBlockRendering)? {
-        // setRenderer 异步派发；落地前已渲染的 svg 块仍降级为高亮源码，并在下次
-        // updateContent/relayout 时解析（与 mathRenderer 同款最终一致性）。
-        // 设为 nil 即「运行时禁用」：清 view-held + transient renderer 的 svg
-        // cache 并触发 updateContent，已解析的 svg 块降级回高亮源码，让
-        // .svgRenderer(nil) 的「disable」文档契约真正生效（Copilot PR #5 R4 #1）。
+        // didSet 行为契约：
+        // 1) 异步把 renderer 推给 coordinator（gen bump + 清协调器自身的 caches）。
+        // 2) 在 coordinator 落地**之后**回到 MainActor 做后续：
+        //    - nil 分支：清 view-held + transient renderer 的 svg cache（让
+        //      已渲染 svg 立刻降级回高亮源码，匹配 .svgRenderer(nil) 的
+        //      「disable」文档契约——Copilot PR #5 R4 #1）。
+        //    - 任何分支：触发一次 updateContent 让 triggerSVGBlockLoads 在
+        //      新 renderer 下重新派发；解决 nil→非nil 时源串不变 → representable
+        //      早 return 不调 setMarkdown → svg 永停 marker 的死锁（Copilot
+        //      PR #5 R7 #1 + suppressed）。先 await setRenderer 再 updateContent
+        //      可避免 triggerSVGBlockLoads 抢在 setRenderer 之前用旧 coordinator
+        //      状态派发并被随后的 setRenderer drop 的竞态。
         didSet {
-            Task { await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer) }
-            if self.svgBlockRenderer == nil {
-                self._svgBlockCache.removeAll()
-                self._cachedRenderer?.svgBlockCache.removeAll()
-                self.updateContent()
+            Task { [weak self] in
+                guard let self else { return }
+                await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer)
+                await MainActor.run {
+                    if self.svgBlockRenderer == nil {
+                        self._svgBlockCache.removeAll()
+                        self._cachedRenderer?.svgBlockCache.removeAll()
+                    }
+                    self.updateContent()
+                }
             }
         }
     }
@@ -1943,17 +1955,29 @@ public final class MarkdownLabelView: NSView {
     private var _svgBlockRendererGeneration: Int = 0
     /// Injected ```svg block renderer; swapping it bumps the coordinator's generation.
     public var svgBlockRenderer: (any SVGBlockRendering)? {
-        // setRenderer 异步派发；落地前已渲染的 svg 块仍降级为高亮源码，并在下次
-        // updateContent/relayout 时解析（与 mathRenderer 同款最终一致性）。
-        // 设为 nil 即「运行时禁用」：清 view-held + transient renderer 的 svg
-        // cache 并触发 updateContent，已解析的 svg 块降级回高亮源码，让
-        // .svgRenderer(nil) 的「disable」文档契约真正生效（Copilot PR #5 R4 #1）。
+        // didSet 行为契约：
+        // 1) 异步把 renderer 推给 coordinator（gen bump + 清协调器自身的 caches）。
+        // 2) 在 coordinator 落地**之后**回到 MainActor 做后续：
+        //    - nil 分支：清 view-held + transient renderer 的 svg cache（让
+        //      已渲染 svg 立刻降级回高亮源码，匹配 .svgRenderer(nil) 的
+        //      「disable」文档契约——Copilot PR #5 R4 #1）。
+        //    - 任何分支：触发一次 updateContent 让 triggerSVGBlockLoads 在
+        //      新 renderer 下重新派发；解决 nil→非nil 时源串不变 → representable
+        //      早 return 不调 setMarkdown → svg 永停 marker 的死锁（Copilot
+        //      PR #5 R7 #1 + suppressed）。先 await setRenderer 再 updateContent
+        //      可避免 triggerSVGBlockLoads 抢在 setRenderer 之前用旧 coordinator
+        //      状态派发并被随后的 setRenderer drop 的竞态。
         didSet {
-            Task { await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer) }
-            if self.svgBlockRenderer == nil {
-                self._svgBlockCache.removeAll()
-                self._cachedRenderer?.svgBlockCache.removeAll()
-                self.updateContent()
+            Task { [weak self] in
+                guard let self else { return }
+                await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer)
+                await MainActor.run {
+                    if self.svgBlockRenderer == nil {
+                        self._svgBlockCache.removeAll()
+                        self._cachedRenderer?.svgBlockCache.removeAll()
+                    }
+                    self.updateContent()
+                }
             }
         }
     }
