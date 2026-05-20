@@ -1107,7 +1107,13 @@ public final class MarkdownLabelView: UIView {
             return
         }
         let scale = self.window?.screen.scale ?? UIScreen.main.scale
-        let availableWidth = max(bounds.width, 1)
+        // 与 renderSVGBlock 共用同一宽度：renderSVGBlock 的 lookup key 走
+        // self.cachedRenderer.availableWidth（renderer 持有），而 cachedRenderer
+        // 只在 |Δw|>0.5pt 时才重建。若 trigger 直接用 max(bounds.width,1)，
+        // 在 <0.5pt 抖动下 trigger 写入的 key 与 lookup 用的 key 不一致 →
+        // 已解析 svg 永远 cache miss → marker 永留（Copilot PR #5 R5 #1）。
+        // math 不受影响：MathCacheKey 不含 availableWidth。
+        let availableWidth = self.cachedRenderer.availableWidth
         // 同步枚举收集 svg 源串。代际相关的 key 构造推迟到下面唯一的 Task 内一次性
         // 完成（generation 受 actor 隔离），与 triggerMathLoads 同形。
         // 注：enumerateAttribute 对相同 value 的 .markdownSVGBlockSource 合并成单次
@@ -2513,7 +2519,13 @@ public final class MarkdownLabelView: NSView {
             return
         }
         let scale = self.window?.backingScaleFactor ?? 2
-        let availableWidth = max(bounds.width, 1)
+        // 与 renderSVGBlock 共用同一宽度：renderSVGBlock 的 lookup key 走
+        // self.cachedRenderer.availableWidth（renderer 持有），而 cachedRenderer
+        // 只在 |Δw|>0.5pt 时才重建。若 trigger 直接用 max(bounds.width,1)，
+        // 在 <0.5pt 抖动下 trigger 写入的 key 与 lookup 用的 key 不一致 →
+        // 已解析 svg 永远 cache miss → marker 永留（Copilot PR #5 R5 #1）。
+        // math 不受影响：MathCacheKey 不含 availableWidth。
+        let availableWidth = self.cachedRenderer.availableWidth
         // 同步枚举收集 svg 源串。代际相关的 key 构造推迟到下面唯一的 Task 内一次性
         // 完成（generation 受 actor 隔离），与 triggerMathLoads 同形。
         // 注：enumerateAttribute 对相同 value 的 .markdownSVGBlockSource 合并成单次
