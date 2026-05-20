@@ -54,7 +54,27 @@ struct SwiftDrawSVGBlockRendererTests {
         if case .failed = await r.render(svg: evil, availableWidth: 100, scale: 2) {
             // ok：守卫拒绝
         } else {
-            #expect(Bool(false), "expected .failed for extreme aspect ratio (target height would exceed maxRasterPointDimension)")
+            #expect(Bool(false), "expected .failed for extreme aspect ratio (target height would exceed maxRasterPixelDimension)")
+        }
+    }
+
+    @Test("高 scale 放大像素 → .failed（codex adversarial R #2：point cap 漏 Retina）")
+    func highScalePixelCapEnforced() async {
+        // 2000pt × 2000pt 方形 SVG，在 scale=3 下像素维度 = 6000px，超过 4096
+        // 像素上限 → .failed。证明守卫按像素而非点判定，Retina 不能绕过。
+        // 比照：scale=1 下 2000pt × 1 = 2000px，<4096 → 应 .rendered。
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 2000 2000\" width=\"2000\" height=\"2000\"><rect width=\"2000\" height=\"2000\" fill=\"green\"/></svg>"
+        let r = SwiftDrawSVGBlockRenderer()
+        if case .failed = await r.render(svg: svg, availableWidth: 9999, scale: 3) {
+            // ok：scale 3 下像素超界
+        } else {
+            #expect(Bool(false), "expected .failed when point × scale exceeds maxRasterPixelDimension")
+        }
+        // 同一 SVG 在低 scale 下应能渲染
+        if case .rendered = await r.render(svg: svg, availableWidth: 9999, scale: 1) {
+            // ok
+        } else {
+            #expect(Bool(false), "expected .rendered when point × scale ≤ maxRasterPixelDimension")
         }
     }
 }

@@ -59,6 +59,22 @@ struct MarkdownLabelDecorations {
         return result.isNull ? nil : result
     }
 
+    /// ```svg 代码块是否已被异步解析为 attachment（hit 状态）。
+    /// 检查块起点的 `.markdownSVGBlockSource` 占位标记：占位还在 = miss
+    /// （未渲染），占位被剥离 = hit（attachment 替代）。drawCodeBlockBackground
+    /// 据此跳过对 hit 状态的灰底绘制。
+    func svgBlockIsResolved(at blockIndex: Int) -> Bool {
+        guard blockIndex < self.blockStarts.count else {
+            return false
+        }
+        let start = self.blockStarts[blockIndex]
+        guard start < self.liveString.length else {
+            return false
+        }
+        let hasMarker = self.liveString.attribute(.markdownSVGBlockSource, at: start, effectiveRange: nil) != nil
+        return !hasMarker
+    }
+
     /// Natural table width stored in the attributed string for the block at `index`, or 0 if no overflow.
     func tableNaturalWidth(at blockIndex: Int) -> CGFloat {
         guard blockIndex < self.blockStarts.count else {
@@ -95,7 +111,15 @@ struct MarkdownLabelDecorations {
                 continue
             }
             switch block {
-            case .codeBlock:
+            case .codeBlock(let language, _):
+                // ```svg 已解析为 attachment（hit 状态）时，跳过代码块灰底——
+                // 渲染出的是一张完整图像，再叠灰底会破坏视觉。miss 状态（仍是
+                // 高亮源码 + .markdownSVGBlockSource 占位）保留背景作为可读
+                // 降级态。codex adversarial review user feedback。
+                if language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "svg",
+                   self.svgBlockIsResolved(at: index) {
+                    break
+                }
                 self.drawCodeBlockBackground(frame, in: ctx)
             case .blockquote:
                 self.drawBlockquoteDecoration(frame, in: ctx)

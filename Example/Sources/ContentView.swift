@@ -529,6 +529,14 @@ private let streamTokens: [String] = {
 
     $$e^{i\\pi}+1=0$$
 
+    ## SVG 代码块（流式）
+
+    流式场景下 `svg` 代码块逐 token 累积，解析完整后异步光栅化、命中缓存即落位为图像；未注入 renderer 时降级为高亮源码。
+
+    ```svg
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 60" width="160" height="60"><rect width="160" height="60" rx="10" fill="#4C8BF5"/><circle cx="30" cy="30" r="14" fill="#FFD166"/><text x="100" y="38" font-size="20" text-anchor="middle" fill="white">stream</text></svg>
+    ```
+
     ## 引用块测试
 
     > **TextKit 2** 是苹果在 WWDC 2021 推出的全新文字排版引擎，以 `NSTextLayoutManager` 为核心。
