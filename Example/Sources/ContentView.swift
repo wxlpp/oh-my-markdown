@@ -93,10 +93,14 @@ private struct RenderTab: View {
     }
 
     @State private var preset: StylePreset = .default
-    // Stored once so the JSContext inside MathJaxRenderer is not rebuilt every body pass.
-    private let mathRenderer = MathJaxRenderer()
-    // Stored once so the SwiftDraw rasterizer state is reused across body passes.
-    private let svgBlockRenderer = SwiftDrawSVGBlockRenderer()
+    // `@State` 而非 `private let`：SwiftUI View 是 value type，每次 parent body
+    // 重新求值都会重建 View，`private let` 会同步重建 renderer → 触发 didSet
+    // 让 coordinator generation 翻转、view-held cache 失效 → 反复重光栅化。
+    // @State 把实例托管给 SwiftUI 的状态机，跨 struct 重建保持身份稳定，
+    // 让 isSameMathRenderer / isSameSVGBlockRenderer 守卫真正生效。
+    // Copilot PR #5 R4 #2 & suppressed #3.
+    @State private var mathRenderer = MathJaxRenderer()
+    @State private var svgBlockRenderer = SwiftDrawSVGBlockRenderer()
 }
 
 // MARK: - EditorTab
@@ -212,10 +216,10 @@ private struct StreamTab: View {
     }
 
     @State private var streamSource = MarkdownStreamingSource()
-    // Stored once so the JSContext inside MathJaxRenderer is not rebuilt every body pass.
-    private let mathRenderer = MathJaxRenderer()
-    // Stored once so the SwiftDraw rasterizer state is reused across body passes.
-    private let svgBlockRenderer = SwiftDrawSVGBlockRenderer()
+    // @State 跨 View 重建保持 renderer 身份稳定，避免反复 setRenderer 翻转
+    // coordinator generation；与 RenderTab 同款（Copilot PR #5 R4 #2 & suppressed #3）。
+    @State private var mathRenderer = MathJaxRenderer()
+    @State private var svgBlockRenderer = SwiftDrawSVGBlockRenderer()
     @State private var isRunning = false
     @State private var hasOutput = false
     @State private var taskHandle: Task<Void, Never>?

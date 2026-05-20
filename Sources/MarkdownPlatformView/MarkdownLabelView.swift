@@ -623,7 +623,17 @@ public final class MarkdownLabelView: UIView {
     public var svgBlockRenderer: (any SVGBlockRendering)? {
         // setRenderer 异步派发；落地前已渲染的 svg 块仍降级为高亮源码，并在下次
         // updateContent/relayout 时解析（与 mathRenderer 同款最终一致性）。
-        didSet { Task { await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer) } }
+        // 设为 nil 即「运行时禁用」：清 view-held + transient renderer 的 svg
+        // cache 并触发 updateContent，已解析的 svg 块降级回高亮源码，让
+        // .svgRenderer(nil) 的「disable」文档契约真正生效（Copilot PR #5 R4 #1）。
+        didSet {
+            Task { await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer) }
+            if self.svgBlockRenderer == nil {
+                self._svgBlockCache.removeAll()
+                self._cachedRenderer?.svgBlockCache.removeAll()
+                self.updateContent()
+            }
+        }
     }
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
     private var _tableOverlays: [Int: (
@@ -1929,7 +1939,17 @@ public final class MarkdownLabelView: NSView {
     public var svgBlockRenderer: (any SVGBlockRendering)? {
         // setRenderer 异步派发；落地前已渲染的 svg 块仍降级为高亮源码，并在下次
         // updateContent/relayout 时解析（与 mathRenderer 同款最终一致性）。
-        didSet { Task { await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer) } }
+        // 设为 nil 即「运行时禁用」：清 view-held + transient renderer 的 svg
+        // cache 并触发 updateContent，已解析的 svg 块降级回高亮源码，让
+        // .svgRenderer(nil) 的「disable」文档契约真正生效（Copilot PR #5 R4 #1）。
+        didSet {
+            Task { await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer) }
+            if self.svgBlockRenderer == nil {
+                self._svgBlockCache.removeAll()
+                self._cachedRenderer?.svgBlockCache.removeAll()
+                self.updateContent()
+            }
+        }
     }
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
     private var _tableOverlays: [Int: (
