@@ -52,6 +52,31 @@ struct SVGBlockRenderTests {
         }()
         #expect(a.isEqual(to: b))
     }
+
+    @Test("miss 状态 enumerateAttribute 对相同 value 合并成单次回调（验证：Copilot R3 #2/#3 假设不成立，去重保留为防御性代码）")
+    func missEnumerationCoalescesSameValue() {
+        // Copilot R3 #2/#3 假设：SyntaxHighlighter 切多 token run 会让
+        // enumerateAttribute 对同一 svg payload 多次回调 → 重复 dispatch。
+        // 实测：Foundation 的 `enumerateAttribute(_:in:options:using:)` 文档
+        // 即「returns the maximum range over which the attribute's value applies」，
+        // 同 value 的 .markdownSVGBlockSource 跨多 foregroundColor token run
+        // 仍合并成**单次**回调（同 attribute 不同 value 才会分段）。
+        // 本测试将假设钉死：若一日 enumeration 改成按 run 拆分（如 token-by-token
+        // 上色发生在加 marker 之后），本测试红，去重才真正生效——届时需要
+        // 双向确认（修测试 or 升级 dedup 实现）。
+        let body = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\" fill=\"red\"/></svg>"
+        let out = render(.codeBlock(language: "svg", body: body))
+        var callbackCount = 0
+        var distinctValues: Set<String> = []
+        out.enumerateAttribute(.markdownSVGBlockSource, in: NSRange(location: 0, length: out.length)) { v, _, _ in
+            if let s = v as? String {
+                callbackCount += 1
+                distinctValues.insert(s)
+            }
+        }
+        #expect(callbackCount == 1, "expect single coalesced callback for same value (Copilot R3 dedup premise is moot in practice; got \(callbackCount))")
+        #expect(distinctValues.count == 1)
+    }
 }
 
 private func makeImage(width: CGFloat, height: CGFloat) -> PlatformImage {

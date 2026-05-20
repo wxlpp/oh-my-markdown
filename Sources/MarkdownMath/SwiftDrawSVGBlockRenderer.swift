@@ -64,10 +64,12 @@ public final class SwiftDrawSVGBlockRenderer: SVGBlockRendering, @unchecked Send
         // SwiftDraw 平台 rasterize 标签差异：UIKit `rasterize(size:scale:)` 返回的
         // UIImage.size 天然是点；AppKit `rasterize(with:scale:)` 返回 NSImage.size
         // 等于 size×scale（像素），须显式回填点尺寸（与 SVGRasterizer 同款契约）。
+        // 注：rasterize 与 guard 必须共用 effectiveScale —— 否则 0/NaN/inf scale
+        // 被 guard 兜底却把恶值喂进 SwiftDraw（Copilot PR #5 R3 #1）。
         #if canImport(UIKit)
-        let image = drawing.rasterize(size: target, scale: scale)
+        let image = drawing.rasterize(size: target, scale: effectiveScale)
         #elseif canImport(AppKit)
-        let image = drawing.rasterize(with: target, scale: scale)
+        let image = drawing.rasterize(with: target, scale: effectiveScale)
         image.size = target
         #else
         return .failed

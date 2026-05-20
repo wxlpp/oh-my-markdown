@@ -1100,6 +1100,10 @@ public final class MarkdownLabelView: UIView {
         let availableWidth = max(bounds.width, 1)
         // 同步枚举收集 svg 源串。代际相关的 key 构造推迟到下面唯一的 Task 内一次性
         // 完成（generation 受 actor 隔离），与 triggerMathLoads 同形。
+        // 注：enumerateAttribute 对相同 value 的 .markdownSVGBlockSource 合并成单次
+        // 回调（Foundation 文档：returns the maximum range over which the value applies），
+        // 故每个 svg block 自然只产一项，无需 Set 去重（详见 SVGBlockRenderTests
+        // missEnumerationCoalescesSameValue —— Copilot PR #5 R3 #2/#3 假设不成立）。
         var svgs: [String] = []
         str.enumerateAttribute(.markdownSVGBlockSource, in: safe) { value, _, _ in
             guard let payload = value as? String else { return }
@@ -2492,6 +2496,10 @@ public final class MarkdownLabelView: NSView {
         let availableWidth = max(bounds.width, 1)
         // 同步枚举收集 svg 源串。代际相关的 key 构造推迟到下面唯一的 Task 内一次性
         // 完成（generation 受 actor 隔离），与 triggerMathLoads 同形。
+        // 注：enumerateAttribute 对相同 value 的 .markdownSVGBlockSource 合并成单次
+        // 回调（Foundation 文档：returns the maximum range over which the value applies），
+        // 故每个 svg block 自然只产一项，无需 Set 去重（详见 SVGBlockRenderTests
+        // missEnumerationCoalescesSameValue —— Copilot PR #5 R3 #2/#3 假设不成立）。
         var svgs: [String] = []
         str.enumerateAttribute(.markdownSVGBlockSource, in: safe) { value, _, _ in
             guard let payload = value as? String else { return }
