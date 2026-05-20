@@ -26,11 +26,17 @@ public struct MarkdownText: View {
     }
 
     public var body: some View {
-        _MarkdownTextRepresentable(source: self.source, style: self.style, mathRenderer: self.mathRenderer)
+        _MarkdownTextRepresentable(
+            source: self.source,
+            style: self.style,
+            mathRenderer: self.mathRenderer,
+            svgBlockRenderer: self.svgBlockRenderer
+        )
     }
 
     @Environment(\.markdownStyle) private var style
     @Environment(\.markdownMathRenderer) private var mathRenderer
+    @Environment(\.markdownSVGBlockRenderer) private var svgBlockRenderer
 
     private let source: String
 }
@@ -44,11 +50,13 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
         var lastSource = ""
         var lastStyle: RenderStyle?
         var lastMathRenderer: (any MathRendering)?
+        var lastSVGBlockRenderer: (any SVGBlockRendering)?
     }
 
     let source: String
     let style: RenderStyle
     let mathRenderer: (any MathRendering)?
+    let svgBlockRenderer: (any SVGBlockRendering)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -71,6 +79,10 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
         if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
             uiView.mathRenderer = self.mathRenderer
             context.coordinator.lastMathRenderer = self.mathRenderer
+        }
+        if !isSameSVGBlockRenderer(context.coordinator.lastSVGBlockRenderer, self.svgBlockRenderer) {
+            uiView.svgBlockRenderer = self.svgBlockRenderer
+            context.coordinator.lastSVGBlockRenderer = self.svgBlockRenderer
         }
         let old = context.coordinator.lastSource
         guard old != self.source else {
@@ -103,11 +115,13 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
         var lastSource = ""
         var lastStyle: RenderStyle?
         var lastMathRenderer: (any MathRendering)?
+        var lastSVGBlockRenderer: (any SVGBlockRendering)?
     }
 
     let source: String
     let style: RenderStyle
     let mathRenderer: (any MathRendering)?
+    let svgBlockRenderer: (any SVGBlockRendering)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -125,6 +139,10 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
         if !isSameMathRenderer(context.coordinator.lastMathRenderer, self.mathRenderer) {
             nsView.mathRenderer = self.mathRenderer
             context.coordinator.lastMathRenderer = self.mathRenderer
+        }
+        if !isSameSVGBlockRenderer(context.coordinator.lastSVGBlockRenderer, self.svgBlockRenderer) {
+            nsView.svgBlockRenderer = self.svgBlockRenderer
+            context.coordinator.lastSVGBlockRenderer = self.svgBlockRenderer
         }
         let old = context.coordinator.lastSource
         guard old != self.source else {
