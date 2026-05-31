@@ -98,9 +98,14 @@ public enum TableMeasurement {
 /// The renderer is a pure value type with no mutable state — it is safe to
 /// share across threads and to instantiate multiple times cheaply.
 public struct AttributedStringRenderer: @unchecked Sendable {
-    public init(style: RenderStyle = .default, availableWidth: CGFloat = .greatestFiniteMagnitude) {
+    public init(
+        style: RenderStyle = .default,
+        availableWidth: CGFloat = .greatestFiniteMagnitude,
+        placeholderMode: PlaceholderMode = .streaming
+    ) {
         self.style = style
         self.availableWidth = availableWidth
+        self.placeholderMode = placeholderMode
         let para = NSMutableParagraphStyle()
         para.lineSpacing = 4
         para.paragraphSpacing = style.paragraphSpacing
@@ -120,6 +125,10 @@ public struct AttributedStringRenderer: @unchecked Sendable {
     public let style: RenderStyle
     /// Available render width used to compute table column tab stops.
     public let availableWidth: CGFloat
+    /// 异步渲染未命中分支的占位形态：默认 `.streaming` 保留高亮源码行为；
+    /// `.static` 让 SVG/Math 未命中分支返回透明 attachment（最小布局抖动）。
+    /// Async-render miss placeholder mode; defaults to `.streaming` for backward compat.
+    public let placeholderMode: PlaceholderMode
     /// Pre-computed block separator — avoids allocating NSMutableParagraphStyle per blockSeparator() call.
     public let separator: NSAttributedString
     /// Cache of loaded images, keyed by source URL string. Updated by MarkdownLabelView after async load.
@@ -269,16 +278,46 @@ public struct AttributedStringRenderer: @unchecked Sendable {
             )
             return m
         }
-        // Miss → keep the existing syntax-highlighted code-block rendering as the
-        // (readable) degraded state, tagged so the platform layer can async-trigger.
-        let highlighted = self.renderHighlightedCodeBlock(language: "svg", body: svg)
-        let result = NSMutableAttributedString(attributedString: highlighted)
-        result.addAttribute(
-            .markdownSVGBlockSource,
-            value: svg,
-            range: NSRange(location: 0, length: result.length)
-        )
-        return result
+        // Miss → 占位形态由 placeholderMode 决定：streaming 保留旧路径（高亮源码作
+        // 为可读降级态），static 改为透明 attachment（按 viewBox aspect 预留高度，
+        // 最小化 setMarkdown 切换时的「先看到源码 → 闪到 SVG」抖动）。两条路径都
+        // 必须打 .markdownSVGBlockSource 标记，平台层据此异步触发渲染。
+        // Miss behaviour depends on `placeholderMode`. Streaming keeps the readable
+        // highlighted source (legacy); static emits a transparent attachment sized by
+        // the SVG viewBox aspect (fallback 0.6) to minimise layout shift on switch.
+        switch self.placeholderMode {
+        case .streaming:
+            let highlighted = self.renderHighlightedCodeBlock(language: "svg", body: svg)
+            let result = NSMutableAttributedString(attributedString: highlighted)
+            result.addAttribute(
+                .markdownSVGBlockSource,
+                value: svg,
+                range: NSRange(location: 0, length: result.length)
+            )
+            return result
+        case .static:
+            let aspect = SVGViewBoxParser.parseAspect(from: svg) ?? 0.6
+            let width = self.availableWidth.isFinite ? self.availableWidth : 480
+            let height = width * aspect
+            let att = self.transparentAttachment(width: width, height: height)
+            let para = NSMutableParagraphStyle()
+            para.alignment = .center
+            // 与 hit 路径（renderSVGBlock cache-hit）的 paragraphSpacing=0 对齐，
+            // 避免静态 miss → hit 翻转时段落间距引起的垂直跳动。
+            para.paragraphSpacing = 0
+            let m = NSMutableAttributedString(attachment: att)
+            m.addAttribute(
+                .paragraphStyle,
+                value: para.copy() as! NSParagraphStyle,
+                range: NSRange(location: 0, length: m.length)
+            )
+            m.addAttribute(
+                .markdownSVGBlockSource,
+                value: svg,
+                range: NSRange(location: 0, length: m.length)
+            )
+            return m
+        }
     }
 
     // MARK: Blockquote
@@ -833,6 +872,42 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         para.alignment = .center
         para.paragraphSpacing = self.style.paragraphSpacing
         let base = self.bodyAttributes().merging([.paragraphStyle: para]) { _, new in new }
+        // Static-miss 分支：缓存未命中时返回按 bodyFont.pointSize 预留高度的透明
+        // attachment（block math 恒 display，高度 ≈ pointSize × 2），同时打
+        // .markdownMathSource 标记以触发平台层异步渲染。Hit 时仍走 renderMath
+        // 命中分支，输出与 streaming 一致的 attachment（避免双 attachment 视觉差）。
+        // Streaming mode 保留旧行为：miss 即 latex 源串高亮文本 + marker。
+        switch self.placeholderMode {
+        case .static:
+            let key = MathCacheKey(
+                latex: latex, display: true,
+                pointSize: self.effectiveMathPointSize(),
+                colorHex: MathMetrics.colorHex(self.mathColor()),
+                rasterScale: self.mathRasterScale,
+                rendererGeneration: self.mathRendererGeneration
+            )
+            if self.mathCache[key] == nil {
+                let pointSize = self.style.bodyFont.pointSize
+                let height = pointSize * 2.0
+                let width = self.availableWidth.isFinite ? self.availableWidth : pointSize * 10
+                let att = self.transparentAttachment(width: width, height: height)
+                let m = NSMutableAttributedString(attachment: att)
+                m.addAttribute(
+                    .paragraphStyle,
+                    value: para.copy() as! NSParagraphStyle,
+                    range: NSRange(location: 0, length: m.length)
+                )
+                m.addAttribute(
+                    .markdownMathSource,
+                    value: self.mathPayload(latex: latex, display: true),
+                    range: NSRange(location: 0, length: m.length)
+                )
+                return m
+            }
+            // Cache hit → fall through to renderMath which emits the cached attachment.
+        case .streaming:
+            break  // 既有行为：renderMath 内部的 miss 分支按 streaming 语义产出高亮 latex 源。
+        }
         let body = self.renderMath(latex: latex, display: true, baseAttributes: base)
         let m = NSMutableAttributedString(attributedString: body)
         m.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: m.length))
@@ -849,4 +924,21 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         ]
     }
 
+}
+
+// MARK: - Transparent placeholder helper
+
+extension AttributedStringRenderer {
+    /// Static-mode 占位用的透明 attachment：`image == nil`、`bounds` 是声明大小，
+    /// TextKit 据此自然留白，避免 setMarkdown 切换时段落高度先收后扩造成的视觉抖动。
+    /// 高度若 ≤ 0 会被夹到 1 以确保 layout 仍能成行（防御性）。
+    ///
+    /// Returns a transparent placeholder attachment (image=nil) sized to the
+    /// requested bounds; TextKit reserves the height as-is. Height clamps to >= 1.
+    fileprivate func transparentAttachment(width: CGFloat, height: CGFloat) -> NSTextAttachment {
+        let att = NSTextAttachment()
+        att.image = nil
+        att.bounds = CGRect(x: 0, y: 0, width: width, height: max(1, height))
+        return att
+    }
 }

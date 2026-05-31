@@ -104,3 +104,20 @@ public actor SVGBlockLoadCoordinator {
         }
     }
 }
+
+extension SVGBlockLoadCoordinator {
+    /// 进程级共享实例（**opt-in**）。MarkdownLabelView **默认不使用**——每个 view
+    /// 仍持有自己的 `init()` 实例以保证测试隔离（不同 test 各自 setRenderer 不会
+    /// 互清 cache）。需要跨 view cache 的调用方可在装配处显式接入这个实例。
+    ///
+    /// 既存 LRU(256) / negative(1024) / dedup / 代际逻辑全部继承——共用此实例的
+    /// 所有调用者共享 cache。`setRenderer` 会清整体 cache + 代际自增，因此**共用
+    /// 此实例的调用方应保证全 process 用同一个 SVGBlockRendering 实例**，否则
+    /// setRenderer 会反复清 cache（spec §7 已知约束）。
+    ///
+    /// A process-wide shared coordinator instance, **opt-in**. `MarkdownLabelView`
+    /// does NOT use it by default; each view owns a private `init()` instance to
+    /// keep tests independent. Call sites that want cross-view cache reuse must
+    /// wire this in explicitly.
+    public static let shared = SVGBlockLoadCoordinator()
+}

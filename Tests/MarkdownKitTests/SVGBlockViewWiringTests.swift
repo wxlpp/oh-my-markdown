@@ -171,24 +171,34 @@ struct SVGBlockViewWiringTests {
         view.layoutSubtreeIfNeeded()
         #endif
         // 注：先 setMarkdown，**不**注入 renderer
+        // Task 4 之后 setMarkdown → renderMode = .static，miss 路径产出「透明 attachment
+        // + .markdownSVGBlockSource marker」（不再是纯源码代码块），因此 "stuck in miss"
+        // 信号从 `markerCount >= 1 AND attachmentCount == 0` 升级为
+        // `markerCount >= 1 AND _firstSVGAttachmentImageSizeForTesting() == nil`
+        // ——marker 在 + 无已解析图像 = 仍处 miss。
         view.setMarkdown("```svg\n<svg viewBox=\"0 0 10 6\"/>\n```\n\ntail")
         var markerPresent = false
         for _ in 0 ..< 100 {
             await Task.yield()
             try? await Task.sleep(nanoseconds: 20_000_000)
             let s = view._renderedSVGBlockStateForTesting()
-            if s.markerCount >= 1, s.attachmentCount == 0 { markerPresent = true; break }
+            if s.markerCount >= 1, view._firstSVGAttachmentImageSizeForTesting() == nil {
+                markerPresent = true; break
+            }
         }
-        #expect(markerPresent, "前置：renderer 注入前应停在 miss marker 状态")
+        #expect(markerPresent, "前置：renderer 注入前应停在 miss marker 状态（static-miss 含透明 attachment 但无 image）")
 
         // 后注入 renderer，源串不变。didSet 必须触发解析。
+        // 解析完成信号：hit 路径产出 attachment with image（无 marker）。
         view.svgBlockRenderer = ImgSVGRenderer()
         var resolved = false
         for _ in 0 ..< 300 {
             await Task.yield()
             try? await Task.sleep(nanoseconds: 25_000_000)
             let s = view._renderedSVGBlockStateForTesting()
-            if s.attachmentCount >= 1, s.markerCount == 0 { resolved = true; break }
+            if s.markerCount == 0, view._firstSVGAttachmentImageSizeForTesting() != nil {
+                resolved = true; break
+            }
         }
         #expect(resolved, "nil→非nil 切换且源串不变时，svgBlockRenderer 的 didSet 必须主动触发 updateContent → triggerSVGBlockLoads → 解析")
     }
@@ -207,26 +217,32 @@ struct SVGBlockViewWiringTests {
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
         view.setMarkdown("```svg\n<svg viewBox=\"0 0 10 6\"/>\n```\n\ntail")
-        // 等异步光栅化落地为 attachment
+        // 等异步光栅化落地为 attachment（hit 路径：有 image 的 attachment、无 marker）。
         var resolved = false
         for _ in 0 ..< 200 {
             await Task.yield()
             try? await Task.sleep(nanoseconds: 30_000_000)
             let s = view._renderedSVGBlockStateForTesting()
-            if s.attachmentCount >= 1, s.markerCount == 0 { resolved = true; break }
+            if s.markerCount == 0, view._firstSVGAttachmentImageSizeForTesting() != nil {
+                resolved = true; break
+            }
         }
-        #expect(resolved, "前置：renderer 注入后应有 attachment")
+        #expect(resolved, "前置：renderer 注入后应有 attachment with image")
 
         // 切 nil → 应清 view-held cache + updateContent → 已渲染 svg 回到 miss
-        // 形态（markerCount >=1 占位 + attachmentCount == 0）
+        // 形态。Task 4 之后 setMarkdown 路径下的 miss = 透明 attachment + marker，
+        // 因此 degraded 信号是 `markerCount >= 1 AND attachment.image == nil`
+        // （marker 回来 + image 没了 = 真的降回 miss）。
         view.svgBlockRenderer = nil
         var degraded = false
         for _ in 0 ..< 100 {
             await Task.yield()
             try? await Task.sleep(nanoseconds: 20_000_000)
             let s = view._renderedSVGBlockStateForTesting()
-            if s.attachmentCount == 0, s.markerCount >= 1 { degraded = true; break }
+            if s.markerCount >= 1, view._firstSVGAttachmentImageSizeForTesting() == nil {
+                degraded = true; break
+            }
         }
-        #expect(degraded, "svgBlockRenderer = nil 应清 view-held svg cache 并通过 updateContent 把已渲染 svg 降级回高亮源码 + .markdownSVGBlockSource 占位")
+        #expect(degraded, "svgBlockRenderer = nil 应清 view-held svg cache 并通过 updateContent 把已渲染 svg 降级回 miss 形态（marker 在 + 无 image attachment）")
     }
 }
