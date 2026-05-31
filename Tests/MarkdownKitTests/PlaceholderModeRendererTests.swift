@@ -27,18 +27,41 @@ struct PlaceholderModeRendererTests {
         }
         #expect(foundMarker)
 
-        // 应含 NSTextAttachment 且 image == nil（透明），bounds 按 viewBox aspect
+        // 应含 NSTextAttachment 且 image == nil（透明），bounds 按 fit-without-upscale：
+        // viewBox=480×320，availableWidth=600 → target = (min(480, 600), 480 × 320/480)
+        //                                              = (480, 320)
+        // 与 SwiftDraw 落地后的 image.size 完全一致，避免 layout shift。
         var foundTransparentAttachment = false
         result.enumerateAttribute(.attachment, in: full) { v, _, _ in
             guard let att = v as? NSTextAttachment else { return }
             if att.image == nil {
                 foundTransparentAttachment = true
-                let expectedH: CGFloat = 600 * (320.0 / 480.0)
-                #expect(abs(att.bounds.size.height - expectedH) < 1)
-                #expect(abs(att.bounds.size.width - 600) < 1)
+                #expect(abs(att.bounds.size.width - 480) < 1)
+                #expect(abs(att.bounds.size.height - 320) < 1)
             }
         }
         #expect(foundTransparentAttachment)
+    }
+
+    @Test func svgStaticMissUsesAvailableWidthWhenViewBoxExceedsIt() {
+        // viewBox 比 availableWidth 大 → fit-width 收紧到 availableWidth
+        let svg = #"<svg viewBox="0 0 1200 600"></svg>"#
+        let renderer = AttributedStringRenderer(
+            style: .default, availableWidth: 400, placeholderMode: .static)
+        let block = BlockNode.codeBlock(language: "svg", body: svg)
+        let result = renderer.renderBlock(block)
+        let full = NSRange(location: 0, length: result.length)
+        var w: CGFloat = -1
+        var h: CGFloat = -1
+        result.enumerateAttribute(.attachment, in: full) { v, _, _ in
+            if let att = v as? NSTextAttachment, att.image == nil {
+                w = att.bounds.size.width
+                h = att.bounds.size.height
+            }
+        }
+        // target = (min(1200, 400), 400 × 600/1200) = (400, 200)
+        #expect(abs(w - 400) < 1)
+        #expect(abs(h - 200) < 1)
     }
 
     @Test func svgStreamingMissEmitsHighlightedSourceWithMarker() {
@@ -143,6 +166,62 @@ struct PlaceholderModeRendererTests {
             }
             #expect(hitAttachmentWithImage, "cache hit branch should emit attachment with image regardless of mode (\(mode))")
         }
+    }
+
+    // MARK: 关键 — static-miss attachment.bounds 必须 == hit 落地后 attachment.bounds
+    //
+    // 这是「文字 reflow / 位置跳动」体感的根因守门：miss → hit 切换瞬间，TextKit 用
+    // attachment.bounds 排版；只要两路 bounds 完全相同，layout 就不会动。SwiftDraw 的
+    // image.size 用 fit-without-upscale 算法（targetW = min(native, availableWidth)），
+    // static-miss 必须同构造一份对应 size 的透明 attachment。
+
+    @Test func svgStaticMissBoundsMatchSwiftDrawFitWithoutUpscale() {
+        // 场景：viewBox 比 availableWidth 小（很常见，oh-my-exam 的题目柱状图都是
+        // viewBox=0 0 480 320，view 宽 600+）。SwiftDraw 不放大，image.size = native。
+        let svg = #"<svg viewBox="0 0 480 320"></svg>"#
+        let availableWidth: CGFloat = 600
+
+        // 1) Static-miss 路径
+        let missRenderer = AttributedStringRenderer(
+            style: .default, availableWidth: availableWidth, placeholderMode: .static)
+        let missResult = missRenderer.renderBlock(BlockNode.codeBlock(language: "svg", body: svg))
+        var missBounds = CGRect.zero
+        missResult.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: missResult.length)
+        ) { v, _, _ in
+            if let att = v as? NSTextAttachment, att.image == nil { missBounds = att.bounds }
+        }
+
+        // 2) Hit 路径——seed cache with image at SwiftDraw 算出的 target = (480, 320)
+        //    （fit-without-upscale: min(480, 600) = 480；高 480 × 320/480 = 320）
+        let nativeTargetSize = CGSize(width: 480, height: 320)
+        #if canImport(UIKit)
+        let stub = UIGraphicsImageRenderer(size: nativeTargetSize).image { _ in }
+        #elseif canImport(AppKit)
+        let stub = NSImage(size: nativeTargetSize)
+        #endif
+        let key = SVGBlockCacheKey(
+            svg: svg, availableWidth: availableWidth, rasterScale: 1, rendererGeneration: 0)
+        var hitRenderer = AttributedStringRenderer(
+            style: .default, availableWidth: availableWidth, placeholderMode: .static)
+        hitRenderer.svgRasterScale = 1
+        hitRenderer.svgRendererGeneration = 0
+        hitRenderer.svgBlockCache[key] = SVGBlockGlyph(image: stub)
+        let hitResult = hitRenderer.renderBlock(BlockNode.codeBlock(language: "svg", body: svg))
+        var hitBounds = CGRect.zero
+        hitResult.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: hitResult.length)
+        ) { v, _, _ in
+            if let att = v as? NSTextAttachment, att.image != nil { hitBounds = att.bounds }
+        }
+
+        // 关键不变量：miss.bounds == hit.bounds，保证 swap 瞬间 layout 不动
+        #expect(abs(missBounds.size.width - hitBounds.size.width) < 0.001,
+                "miss width \(missBounds.size.width) ≠ hit width \(hitBounds.size.width)")
+        #expect(abs(missBounds.size.height - hitBounds.size.height) < 0.001,
+                "miss height \(missBounds.size.height) ≠ hit height \(hitBounds.size.height)")
     }
 
     // MARK: math cache hit 两 mode 一致（钉住 static-mode "命中走 renderMath fall-through" 的安全论证）

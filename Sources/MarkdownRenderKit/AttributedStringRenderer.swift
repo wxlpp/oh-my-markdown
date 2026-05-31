@@ -296,10 +296,30 @@ public struct AttributedStringRenderer: @unchecked Sendable {
             )
             return result
         case .static:
-            let aspect = SVGViewBoxParser.parseAspect(from: svg) ?? 0.6
-            let width = self.availableWidth.isFinite ? self.availableWidth : 480
-            let height = width * aspect
-            let att = self.transparentAttachment(width: width, height: height)
+            // 透明占位 attachment 的尺寸 **必须** 与 hit 落地后的 attachment.bounds 一致
+            // 才能避免「miss → hit 切换瞬间」文字 reflow / 跳动。Hit 路径用
+            // `glyph.image.size`（point 单位），而 SwiftDrawSVGBlockRenderer 的
+            // `image.size` 按 fit-without-upscale 公式产出：
+            //   target.width  = min(native.width, availableWidth)
+            //   target.height = target.width × native.height / native.width
+            // 这里复用同一公式。viewBox 解析失败 → 0.6 aspect 兜底（此分支 hit
+            // 落地后 image.size 也无法预测——不在 parity 范围内）。
+            let targetSize: CGSize
+            if let native = SVGViewBoxParser.parseSize(from: svg) {
+                let targetWidth: CGFloat
+                if self.availableWidth.isFinite, self.availableWidth > 0 {
+                    targetWidth = min(native.width, self.availableWidth)
+                } else {
+                    targetWidth = native.width
+                }
+                let targetHeight = targetWidth * native.height / native.width
+                targetSize = CGSize(width: targetWidth, height: targetHeight)
+            } else {
+                let w = (self.availableWidth.isFinite && self.availableWidth > 0)
+                    ? self.availableWidth : 480
+                targetSize = CGSize(width: w, height: w * 0.6)
+            }
+            let att = self.transparentAttachment(width: targetSize.width, height: targetSize.height)
             let para = NSMutableParagraphStyle()
             para.alignment = .center
             // 与 hit 路径（renderSVGBlock cache-hit）的 paragraphSpacing=0 对齐，
