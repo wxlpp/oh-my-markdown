@@ -497,6 +497,8 @@ public final class MarkdownLabelView: UIView {
     // MARK: Streaming
 
     public func setMarkdown(_ source: String) {
+        // 完整重置 → 静态首屏。cache-miss 形态由 renderer 看 `.static` 出透明 attachment。
+        self.renderMode = .static
         self._parseSerial += 1
         self._parseTask?.cancel()
         self._parseTask = nil
@@ -506,6 +508,8 @@ public final class MarkdownLabelView: UIView {
     }
 
     public func appendMarkdown(_ chunk: String) {
+        // 增量流式 → 保持既有 streaming 行为，cache-miss 显示源码占位。
+        self.renderMode = .streaming
         self.streamingSource += chunk
         self.scheduleParse(delayNanoseconds: 50_000_000)
     }
@@ -582,6 +586,21 @@ public final class MarkdownLabelView: UIView {
     // Cached renderer — invalidated when renderStyle or available width changes.
     private var _cachedRenderer: AttributedStringRenderer?
     private var _cachedRendererWidth: CGFloat = 0
+    /// 占位 mode 跟踪：`setMarkdown` 翻 `.static`、`appendMarkdown` 翻 `.streaming`。
+    /// 传给 `AttributedStringRenderer.init(...)` 决定 cache-miss 占位形态（透明 vs 源码）。
+    /// 默认 `.static`（构造时空内容场景）。
+    /// `_cachedRenderer.placeholderMode` 是 `let`，因此 mode 真正翻转时必须把
+    /// `_cachedRenderer` 清掉，下次 `cachedRenderer` 取值会用新 mode 重建。
+    /// Tracks placeholder mode; flipped by setMarkdown/appendMarkdown.
+    /// `public internal(set)`: tests read, only the module writes.
+    public internal(set) var renderMode: PlaceholderMode = .static {
+        didSet {
+            if oldValue != self.renderMode {
+                // mode 翻转 → cached renderer 的 placeholderMode 是 let，必须重建。
+                self._cachedRenderer = nil
+            }
+        }
+    }
     /// Canonical mutable store — avoids O(n) mutableCopy() per streaming token.
     private var _liveString = NSMutableAttributedString()
     /// Last measured intrinsic height — gates invalidateIntrinsicContentSize() calls.
@@ -696,7 +715,8 @@ public final class MarkdownLabelView: UIView {
     private var cachedRenderer: AttributedStringRenderer {
         let w = max(bounds.width, 1)
         if self._cachedRenderer == nil || abs(w - self._cachedRendererWidth) > 0.5 {
-            var renderer = AttributedStringRenderer(style: renderStyle, availableWidth: w)
+            var renderer = AttributedStringRenderer(
+                style: renderStyle, availableWidth: w, placeholderMode: self.renderMode)
             renderer.imageCache = self._imageCache
             // Re-seed view-held math state so resolved glyphs survive the
             // renderer recreation `resetLayout()` performs on width churn
@@ -1291,7 +1311,8 @@ public final class MarkdownLabelView: UIView {
             // Reusing the existing UIScrollView preserves contentOffset so the user's
             // horizontal scroll position is not reset on every streaming token.
             if let existing = _tableOverlays[i], abs(existing.naturalWidth - naturalWidth) < 0.5 {
-                let renderer = AttributedStringRenderer(style: renderStyle, availableWidth: naturalWidth)
+                let renderer = AttributedStringRenderer(
+                    style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode)
                 let tableStr = renderer.renderBlock(block)
                 existing.content.update(tableString: tableStr)
                 let newH = existing.content.frame.height
@@ -1316,7 +1337,8 @@ public final class MarkdownLabelView: UIView {
 
             // Column structure changed — (re)create the scroll view.
             self._tableOverlays[i]?.scroll.removeFromSuperview()
-            let renderer = AttributedStringRenderer(style: renderStyle, availableWidth: naturalWidth)
+            let renderer = AttributedStringRenderer(
+                style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode)
             let tableStr = renderer.renderBlock(block)
             let contentView = TableContentView(
                 tableString: tableStr,
@@ -1918,6 +1940,8 @@ public final class MarkdownLabelView: NSView {
     }
 
     public func setMarkdown(_ source: String) {
+        // 完整重置 → 静态首屏。cache-miss 形态由 renderer 看 `.static` 出透明 attachment。
+        self.renderMode = .static
         self._parseSerial += 1
         self._parseTask?.cancel()
         self._parseTask = nil
@@ -1927,6 +1951,8 @@ public final class MarkdownLabelView: NSView {
     }
 
     public func appendMarkdown(_ chunk: String) {
+        // 增量流式 → 保持既有 streaming 行为，cache-miss 显示源码占位。
+        self.renderMode = .streaming
         self.streamingSource += chunk
         self.scheduleParse(delayNanoseconds: 50_000_000)
     }
@@ -1947,6 +1973,21 @@ public final class MarkdownLabelView: NSView {
     // Cached renderer — invalidated when renderStyle or available width changes.
     private var _cachedRenderer: AttributedStringRenderer?
     private var _cachedRendererWidth: CGFloat = 0
+    /// 占位 mode 跟踪：`setMarkdown` 翻 `.static`、`appendMarkdown` 翻 `.streaming`。
+    /// 传给 `AttributedStringRenderer.init(...)` 决定 cache-miss 占位形态（透明 vs 源码）。
+    /// 默认 `.static`（构造时空内容场景）。
+    /// `_cachedRenderer.placeholderMode` 是 `let`，因此 mode 真正翻转时必须把
+    /// `_cachedRenderer` 清掉，下次 `cachedRenderer` 取值会用新 mode 重建。
+    /// Tracks placeholder mode; flipped by setMarkdown/appendMarkdown.
+    /// `public internal(set)`: tests read, only the module writes.
+    public internal(set) var renderMode: PlaceholderMode = .static {
+        didSet {
+            if oldValue != self.renderMode {
+                // mode 翻转 → cached renderer 的 placeholderMode 是 let，必须重建。
+                self._cachedRenderer = nil
+            }
+        }
+    }
     /// Canonical mutable store — avoids O(n) mutableCopy() per streaming token.
     private var _liveString = NSMutableAttributedString()
     /// Last measured intrinsic height — gates invalidateIntrinsicContentSize() calls.
@@ -2057,7 +2098,8 @@ public final class MarkdownLabelView: NSView {
     private var cachedRenderer: AttributedStringRenderer {
         let w = max(bounds.width, 1)
         if self._cachedRenderer == nil || abs(w - self._cachedRendererWidth) > 0.5 {
-            var renderer = AttributedStringRenderer(style: renderStyle, availableWidth: w)
+            var renderer = AttributedStringRenderer(
+                style: renderStyle, availableWidth: w, placeholderMode: self.renderMode)
             renderer.imageCache = self._imageCache
             // Re-seed view-held math state so resolved glyphs survive the
             // renderer recreation `resetLayout()` performs on width churn
@@ -2394,7 +2436,8 @@ public final class MarkdownLabelView: NSView {
 
             // Same column structure — update content in place to preserve scroll offset.
             if let existing = _tableOverlays[i], abs(existing.naturalWidth - naturalWidth) < 0.5 {
-                let renderer = AttributedStringRenderer(style: renderStyle, availableWidth: naturalWidth)
+                let renderer = AttributedStringRenderer(
+                    style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode)
                 let tableStr = renderer.renderBlock(block)
                 existing.content.update(tableString: tableStr)
                 let newH = existing.content.frame.height
@@ -2419,7 +2462,8 @@ public final class MarkdownLabelView: NSView {
 
             // Column structure changed — (re)create the scroll view.
             self._tableOverlays[i]?.scroll.removeFromSuperview()
-            let renderer = AttributedStringRenderer(style: renderStyle, availableWidth: naturalWidth)
+            let renderer = AttributedStringRenderer(
+                style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode)
             let tableStr = renderer.renderBlock(block)
             let contentView = TableContentView(
                 tableString: tableStr,
