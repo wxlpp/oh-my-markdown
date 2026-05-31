@@ -2,11 +2,6 @@
 @testable import MarkdownRenderKit
 import Foundation
 import Testing
-#if canImport(UIKit)
-import UIKit
-#elseif canImport(AppKit)
-import AppKit
-#endif
 
 @Suite("MarkdownLabelView renderMode tracking")
 @MainActor
@@ -56,22 +51,9 @@ struct MarkdownLabelViewRenderModeTests {
         #expect(view.renderMode == .streaming)
     }
 
-    /// 不直接 inspect 私有 `_cachedRenderer`——通过 mode 字段的最终一致性旁证：
-    /// static → streaming → static 的链路必须真的把 renderMode 写到 `.static`，
-    /// 而非粘在 `.streaming`。`_cachedRenderer` 失效由 `didSet` 在 mode 真正翻转
-    /// 时清掉；下次 `cachedRenderer` 取值会用新 mode 构造 `AttributedStringRenderer`。
-    /// 端到端的「下次 render 用新 mode」由既有 SVGBlockViewWiringTests +
-    /// StreamingSVGBlockCacheSurvivesRendererRecreationTests 的 streaming-miss
-    /// regression 套件兜底——一旦透传链路断掉，那边会立刻变红。
-    /// Soft test: contract = mode toggles invalidate cached renderer; the
-    /// streaming-miss regression suites catch any wiring breakage.
-    @Test func renderModeToggleInvalidatesCachedRenderer() {
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 400, height: 800))
-        view.setMarkdown("```svg\n<svg viewBox=\"0 0 10 6\"/>\n```")
-        #expect(view.renderMode == .static)
-        view.appendMarkdown("\n\nmore")
-        #expect(view.renderMode == .streaming)
-        view.setMarkdown("again")
-        #expect(view.renderMode == .static)
-    }
+    // 「mode 翻转后下次 render 用新 mode」由既有 streaming-miss regression suites
+    // 兜底（SVGBlockViewWiringTests / StreamingSVGBlockCacheSurvivesRendererRecreationTests）：
+    // 一旦 _cachedRenderer 失效或 placeholderMode 透传断掉，那边会立刻变红。
+    // 因此这里不再单独写一个 toggle test——前面 5 个 mode-字段最终一致性测试 +
+    // 端到端 regression 套件已经覆盖了完整链路。
 }
