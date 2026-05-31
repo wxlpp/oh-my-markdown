@@ -107,8 +107,12 @@ public actor MathLoadCoordinator {
 }
 
 extension MathLoadCoordinator {
-    /// 进程级共享实例。所有 MarkdownLabelView 默认引用，cache 跨 view 不重建。
-    /// 约束同 `SVGBlockLoadCoordinator.shared`：调用方应保证全 process 用同一个
-    /// MathRendering 实例，否则 setRenderer 会反复清 cache。Tests 通过 `init()` 取独立实例。
+    /// 进程级共享实例（**opt-in**）。MarkdownLabelView **默认不使用**——每个 view
+    /// 仍持有自己的 `init()` 实例以保证测试隔离。需要跨 view cache 的调用方可在
+    /// 装配处显式接入。约束同 `SVGBlockLoadCoordinator.shared`：共用此实例的调用
+    /// 方应保证全 process 用同一个 MathRendering，否则 setRenderer 会反复清 cache。
+    ///
+    /// A process-wide shared coordinator instance, **opt-in**. `MarkdownLabelView`
+    /// does NOT use it by default; each view owns a private `init()` instance.
     public static let shared = MathLoadCoordinator()
 }

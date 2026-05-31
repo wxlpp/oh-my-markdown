@@ -607,9 +607,10 @@ public final class MarkdownLabelView: UIView {
     /// Source URLs currently being fetched (prevents duplicate requests).
     private var _imageLoading: Set<String> = []
     /// Platform-agnostic async math render coordinator (dedup/三态/代际).
-    /// 默认引用 `.shared`：cross-view cache（同 process 全部 MarkdownLabelView 共用）。
-    /// 等价的 `init()` 版本仍可由 tests / 多 renderer 隔离场景手动构造（参见 spec §7 已知约束）。
-    private let _mathCoordinator: MathLoadCoordinator = .shared
+    /// View-private by default to keep test isolation (each MarkdownLabelView
+    /// 自带独立 coordinator，避免不同 test 的 setRenderer 互相清 cache)。需要
+    /// 跨 view 共享 cache 的调用方可显式注入 `MathLoadCoordinator.shared`。
+    private let _mathCoordinator = MathLoadCoordinator()
     /// View-held math glyph cache / raster scale / renderer generation —
     /// the **canonical store** for async math write-back, mirroring
     /// `_imageCache`. The transient `_cachedRenderer` is discarded by
@@ -627,9 +628,10 @@ public final class MarkdownLabelView: UIView {
         didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
     }
     /// Platform-agnostic async ```svg block render coordinator (dedup/三态/代际).
-    /// 默认引用 `.shared`：cross-view cache（同 process 全部 MarkdownLabelView 共用）。
-    /// 等价的 `init()` 版本仍可由 tests / 多 renderer 隔离场景手动构造（参见 spec §7 已知约束）。
-    private let _svgBlockCoordinator: SVGBlockLoadCoordinator = .shared
+    /// View-private by default to keep test isolation (each MarkdownLabelView
+    /// 自带独立 coordinator，避免不同 test 的 setRenderer 互相清 cache)。需要
+    /// 跨 view 共享 cache 的调用方可显式注入 `SVGBlockLoadCoordinator.shared`。
+    private let _svgBlockCoordinator = SVGBlockLoadCoordinator()
     /// View-held svg-block glyph cache / raster scale / renderer generation —
     /// the **canonical store** for async svg write-back, mirroring `_mathCache`
     /// discipline. The transient `_cachedRenderer` is discarded by `resetLayout()`
@@ -1970,9 +1972,10 @@ public final class MarkdownLabelView: NSView {
     /// Source URLs currently being fetched (prevents duplicate requests).
     private var _imageLoading: Set<String> = []
     /// Platform-agnostic async math render coordinator (dedup/三态/代际).
-    /// 默认引用 `.shared`：cross-view cache（同 process 全部 MarkdownLabelView 共用）。
-    /// 等价的 `init()` 版本仍可由 tests / 多 renderer 隔离场景手动构造（参见 spec §7 已知约束）。
-    private let _mathCoordinator: MathLoadCoordinator = .shared
+    /// View-private by default to keep test isolation (each MarkdownLabelView
+    /// 自带独立 coordinator，避免不同 test 的 setRenderer 互相清 cache)。需要
+    /// 跨 view 共享 cache 的调用方可显式注入 `MathLoadCoordinator.shared`。
+    private let _mathCoordinator = MathLoadCoordinator()
     /// View-held math glyph cache / raster scale / renderer generation —
     /// the **canonical store** for async math write-back, mirroring
     /// `_imageCache`. The transient `_cachedRenderer` is discarded by
@@ -1990,9 +1993,10 @@ public final class MarkdownLabelView: NSView {
         didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
     }
     /// Platform-agnostic async ```svg block render coordinator (dedup/三态/代际).
-    /// 默认引用 `.shared`：cross-view cache（同 process 全部 MarkdownLabelView 共用）。
-    /// 等价的 `init()` 版本仍可由 tests / 多 renderer 隔离场景手动构造（参见 spec §7 已知约束）。
-    private let _svgBlockCoordinator: SVGBlockLoadCoordinator = .shared
+    /// View-private by default to keep test isolation (each MarkdownLabelView
+    /// 自带独立 coordinator，避免不同 test 的 setRenderer 互相清 cache)。需要
+    /// 跨 view 共享 cache 的调用方可显式注入 `SVGBlockLoadCoordinator.shared`。
+    private let _svgBlockCoordinator = SVGBlockLoadCoordinator()
     /// View-held svg-block glyph cache / raster scale / renderer generation —
     /// the **canonical store** for async svg write-back, mirroring `_mathCache`
     /// discipline. The transient `_cachedRenderer` is discarded by `resetLayout()`
