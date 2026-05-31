@@ -104,3 +104,16 @@ public actor SVGBlockLoadCoordinator {
         }
     }
 }
+
+extension SVGBlockLoadCoordinator {
+    /// 进程级共享实例。所有 MarkdownLabelView 默认引用，cache 跨 view 不重建。
+    ///
+    /// 既存 LRU(256) / negative(1024) / dedup / 代际逻辑全部继承——同 process
+    /// 全部 markdown 视图共用这一份。`setRenderer` 调用会清整体 cache + 代际自增，
+    /// 因此**所有 view 应该共用同一个 renderer 实例**（MarkdownKit 的 SwiftUI
+    /// 注入约定下成立）；若不同 view 注入不同 renderer，cache 会被互相清掉——
+    /// 这条约束记录在此，不视为 bug。
+    ///
+    /// Tests requiring isolation can construct independent instances via `init()`.
+    public static let shared = SVGBlockLoadCoordinator()
+}
