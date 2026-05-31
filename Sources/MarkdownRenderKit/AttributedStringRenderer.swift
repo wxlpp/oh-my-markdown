@@ -877,7 +877,8 @@ public struct AttributedStringRenderer: @unchecked Sendable {
         // .markdownMathSource 标记以触发平台层异步渲染。Hit 时仍走 renderMath
         // 命中分支，输出与 streaming 一致的 attachment（避免双 attachment 视觉差）。
         // Streaming mode 保留旧行为：miss 即 latex 源串高亮文本 + marker。
-        if self.placeholderMode == .static {
+        switch self.placeholderMode {
+        case .static:
             let key = MathCacheKey(
                 latex: latex, display: true,
                 pointSize: self.effectiveMathPointSize(),
@@ -904,6 +905,8 @@ public struct AttributedStringRenderer: @unchecked Sendable {
                 return m
             }
             // Cache hit → fall through to renderMath which emits the cached attachment.
+        case .streaming:
+            break  // 既有行为：renderMath 内部的 miss 分支按 streaming 语义产出高亮 latex 源。
         }
         let body = self.renderMath(latex: latex, display: true, baseAttributes: base)
         let m = NSMutableAttributedString(attributedString: body)

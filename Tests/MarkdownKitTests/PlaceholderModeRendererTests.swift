@@ -145,6 +145,51 @@ struct PlaceholderModeRendererTests {
         }
     }
 
+    // MARK: math cache hit 两 mode 一致（钉住 static-mode "命中走 renderMath fall-through" 的安全论证）
+
+    @Test func mathCacheHitIdenticalAcrossModes() {
+        let latex = #"x = \frac{a}{b}"#
+        var style = RenderStyle.default
+        #if canImport(UIKit)
+        style.bodyFont = .systemFont(ofSize: 17, weight: .regular)
+        #elseif canImport(AppKit)
+        style.bodyFont = .systemFont(ofSize: 17)
+        #endif
+        // 同 renderer 内部 mathProbe / renderMath 的 key 构造（display=true 因 mathBlock 恒块级）
+        let key = MathCacheKey(
+            latex: latex, display: true,
+            pointSize: MathMetrics.effectivePointSize(textPointSize: 17, mathScale: style.mathScale),
+            colorHex: MathMetrics.colorHex(style.mathColorOverride ?? style.textColor),
+            rasterScale: 1,
+            rendererGeneration: 0
+        )
+        #if canImport(UIKit)
+        let dummyImage = UIGraphicsImageRenderer(size: CGSize(width: 80, height: 32)).image { _ in }
+        #elseif canImport(AppKit)
+        let dummyImage = NSImage(size: CGSize(width: 80, height: 32))
+        #endif
+        let glyph = MathRenderedGlyph(image: dummyImage, baselineOffsetEx: 0)
+
+        for mode in [PlaceholderMode.static, .streaming] {
+            var renderer = AttributedStringRenderer(
+                style: style, availableWidth: 600, placeholderMode: mode)
+            renderer.mathRasterScale = 1
+            renderer.mathRendererGeneration = 0
+            renderer.mathCache[key] = glyph
+            let block = BlockNode.mathBlock(latex: latex)
+            let result = renderer.renderBlock(block)
+
+            let full = NSRange(location: 0, length: result.length)
+            var hitAttachmentWithImage = false
+            result.enumerateAttribute(.attachment, in: full) { v, _, _ in
+                if let att = v as? NSTextAttachment, att.image != nil { hitAttachmentWithImage = true }
+            }
+            #expect(
+                hitAttachmentWithImage,
+                "math cache hit 应在两 mode 下都通过 renderMath fall-through 走 hit 分支，产出携带 image 的 attachment（mode=\(mode)）")
+        }
+    }
+
     // MARK: 默认 mode 保留旧行为
 
     @Test func defaultModeIsStreaming() {
