@@ -17,8 +17,15 @@ enum SVGRasterizerError: Error { case parseFailed, rasterizeFailed }
 /// 无 `viewBox`）不受支持，会抛 `.parseFailed`（由 Task 14 配置侧保证不产生此类输出）。
 ///
 /// 两条硬约束：
-/// 1. SwiftDraw 不支持 CSS `ex` 单位（`SVG(data:)` 直接返回 nil），喂给 SwiftDraw
-///    前必须把根 svg 元素 width/height 的 `<num>ex` 改写为 `<num>px`。
+/// 1. 根 svg 元素 width/height 的 `<num>ex` 必须改写为 `<num>px` 再喂给 SwiftDraw。
+///    **注意这条的理由已经变了**：原文写的是「SwiftDraw 不支持 `ex`，`SVG(data:)`
+///    直接返回 nil」——那在 pin 着 `4d09d03` 的时候成立，自 SwiftDraw `0.29.0` 起
+///    **不再成立**（它新增了 `.em` / `.ex`，见其 `DOM.swift`）。
+///    归一化仍然必须做，但现在是为了**尺寸正确**而不是为了「能解析」：SwiftDraw 按
+///    **1ex = 1pt** 解析，而 MathJax 的 `ex` 是相对于当前字体的 x-height，两者不等。
+///    不归一化的话不再是「解析失败」，而是**静默渲出一个尺寸错误的公式**——从显式
+///    失败退化成静默错误，比原来更难发现。
+
 /// 2. 返回的 `image.size` 必须是「点」单位（目标文本空间渲染尺寸），不是像素。
 ///    SwiftDraw 的 rasterize API 分平台（标签/返回类型不同），点尺寸契约在两平台
 ///    分别成立：UIKit `rasterize(size:scale:)` 返回的 `UIImage.size` 天然是点；

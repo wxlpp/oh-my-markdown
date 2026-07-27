@@ -1,7 +1,5 @@
 # MarkdownKit
 
-![GitHub tag (latest SemVer)](https://github.com/wxlpp/MarkdownKit/actions/workflows/ci.yml/badge.svg?branch=main)
-
 A lightweight Markdown rendering and source editing library for iOS and macOS, built with **TextKit 2** and [swift-markdown](https://github.com/swiftlang/swift-markdown).
 
 ## ✨ Features
@@ -37,7 +35,7 @@ Or add it to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/wxlpp/MarkdownKit.git", branch: "main")
+    .package(url: "https://github.com/wxlpp/MarkdownKit.git", .upToNextMinor(from: "0.1.2"))
 ]
 ```
 

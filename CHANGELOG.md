@@ -9,6 +9,28 @@ MarkdownKit adheres to [Semantic Versioning](http://semver.org/).
 
 ### Removed
 
+## [0.1.2](https://github.com/wxlpp/MarkdownKit/releases/tag/v0.1.2)
+### Changed
+- `swift-markdown` 依赖从 `from: "0.8.0"` 收紧为 `.upToNextMinor(from: "0.8.0")`。
+  理由与 0.1.1 的 SwiftDraw 同源：`from:` 对 0.x 等价 upToNextMajor，会静默吃下未来
+  每一个 0.x minor。
+### Fixed
+- `SVGRasterizer` 的「硬约束 1」注释已过期并被更正：SwiftDraw 自 `0.29.0` 起**支持**
+  `ex` 单位（新增 `.em` / `.ex`）。`normalizeUnits` 仍然必须做，但理由从「不归一化就
+  解析失败」变成「不归一化就静默渲出错误尺寸」——SwiftDraw 按 1ex = 1pt 解析，与
+  MathJax 的字体相对 x-height 不等。**这是从显式失败退化成静默错误，更难发现。**
+- README 的安装示例从 `branch: "main"` 改为版本引用（v0.1.1 的全部意义就是能被按版本
+  引用，门面文档却还教人用 branch）；删掉指向不存在 workflow 的失效 CI badge。
+
+### ⚠️ 已知但未修（需要各自的测试才能动）
+- **解析期取消会被记成永久失败**：SwiftDraw `0.29.0` 在 XML 解析循环里加了
+  `try Task.checkCancellation()`。`SVG(data:)` 是 `init?` + `try?`，所以**取消会变成
+  nil** → 在本包里映射成 `.parseFailed` → `.failed` → 进 `MathLoadCoordinator` /
+  `SVGBlockLoadCoordinator` 的 **negative 缓存**，而 `loadIfNeeded` 见到 negative 就
+  永不重试。今天不触发，只因为两个 coordinator 的 `Task {}` 从不 `.cancel()`；一旦
+  按 `MathJaxRenderer` 注释里写的计划做细粒度取消，这就是个真 bug。修它需要「cancelled
+  不得进 negative cache」的断言，不在本次范围。
+
 ## [0.1.1](https://github.com/wxlpp/MarkdownKit/releases/tag/v0.1.1)
 ### Changed
 - **SwiftDraw 依赖从裸 revision pin 改为版本区间 `.upToNextMinor(from: "0.29.0")`。**

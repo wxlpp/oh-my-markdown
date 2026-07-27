@@ -16,7 +16,10 @@ let package = Package(
         .library(name: "MarkdownMath", targets: ["MarkdownMath"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.8.0"),
+        // swift-markdown 是 0.x：`from:` 等价 upToNextMajor（0.x 无特殊处理），会静默吃下
+        // 未来每一个 0.x minor。用 upToNextMinor，与下面 SwiftDraw 那条一致——升 minor
+        // 时是显式动作。
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", .upToNextMinor(from: "0.8.0")),
         // MathJaxSwift: locked revision 00e9c3df… is upstream tag v3.5.0 → semver pin.
         .package(url: "https://github.com/colinc86/MathJaxSwift.git", .upToNextMajor(from: "3.5.0")),
         // SwiftDraw: 曾经 pin 在裸 `main` commit `4d09d03` 上，因为当时没有 semver tag
