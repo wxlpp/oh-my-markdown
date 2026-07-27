@@ -19,9 +19,15 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.8.0"),
         // MathJaxSwift: locked revision 00e9c3df… is upstream tag v3.5.0 → semver pin.
         .package(url: "https://github.com/colinc86/MathJaxSwift.git", .upToNextMajor(from: "3.5.0")),
-        // SwiftDraw: locked revision is a bare `main` commit with no semver tag pointing
-        // at it; switching to a version range would change Package.resolved. Pin exactly.
-        .package(url: "https://github.com/swhitty/SwiftDraw.git", revision: "4d09d0311f3f116927e7c86b2a9d3d7fe148cc86"),
+        // SwiftDraw: 曾经 pin 在裸 `main` commit `4d09d03` 上，因为当时没有 semver tag
+        // 指向它。**那条理由已经过期**——`0.29.0`（2026-07-19）包含该 commit（它领先 16 个
+        // commit、behind_by=0），所以换成版本区间不丢任何东西。
+        //
+        // 必须换掉的原因不是洁癖：**只要本包含有 revision 依赖，它自己就永远无法被下游按
+        // 版本引用**。SwiftPM 会直接拒绝解析，报 "package 'markdownkit' is required using
+        // a stable-version but 'markdownkit' depends on an unstable-version package
+        // 'swiftdraw'"。打了 tag 也没用——这正是 v0.1.0 发出去之后才发现的。
+        .package(url: "https://github.com/swhitty/SwiftDraw.git", .upToNextMinor(from: "0.29.0")),
     ],
     targets: [
         // MARK: - MarkdownCore
