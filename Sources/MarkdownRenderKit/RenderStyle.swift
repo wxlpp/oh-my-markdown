@@ -207,4 +207,73 @@ public struct RenderStyle: @unchecked Sendable {
         default: self.h6Font
         }
     }
+
+    /// Copies platform style objects into immutable values on the main actor.
+    /// Direct custom snapshots use unique identities unless a wrapper owns one.
+    /// Fixed custom fonts opt out of automatic scaling until Task 11's helper.
+    @MainActor
+    public func snapshot(generation: UInt64) -> RenderConfigurationSnapshot {
+        snapshot(generation: generation, usesPreferredMetrics: false)
+    }
+
+    @MainActor
+    package func snapshot(generation: UInt64, configurationID: MarkdownConfigurationID? = nil, usesPreferredMetrics: Bool) -> RenderConfigurationSnapshot {
+        let fonts: [MarkdownTextRole: PlatformFont] = [
+            .body: bodyFont, .code: codeFont, .heading(level: 1): h1Font,
+            .heading(level: 2): h2Font, .heading(level: 3): h3Font,
+            .heading(level: 4): h4Font, .heading(level: 5): h5Font,
+            .heading(level: 6): h6Font, .listMarker: bodyFont,
+            .table: bodyFont, .caption: bodyFont,
+        ]
+        let descriptors = fonts.mapValues {
+            // Platform font descriptors support secure coding. A failure is a
+            // violated platform invariant, not permission to silently lose style.
+            try! NSKeyedArchiver.archivedData(withRootObject: $0.fontDescriptor, requiringSecureCoding: true)
+        }
+        let typography = TypographyTokens(pointSizes: fonts.mapValues { Double($0.pointSize) }, usesPreferredMetrics: usesPreferredMetrics, fontNames: fonts.mapValues(\.fontName), fontDescriptors: descriptors)
+        var additional: [String: ColorToken] = [
+            "codeBackground": codeBackgroundColor.rgbaToken,
+            "inlineCode": inlineCodeTextColor.rgbaToken,
+            "inlineCodeBackground": inlineCodeBgColor.rgbaToken,
+            "quote": quoteColor.rgbaToken,
+            "quoteBar": quoteBarColor.rgbaToken,
+            "headingBorder": headingBorderColor.rgbaToken,
+            "mathToken": mathTokenColor.rgbaToken,
+        ]
+        additional["mathOverride"] = mathColorOverride?.rgbaToken
+        let colors = ColorTokens(body: textColor.rgbaToken, secondary: secondaryTextColor.rgbaToken, code: codeTextColor.rgbaToken, link: linkColor.rgbaToken, additional: additional)
+        let spacing = SpacingTokens(paragraph: Double(paragraphSpacing), block: Double(paragraphSpacing), codeInsets: 8, quoteIndent: Double(quoteIndent))
+        // The built-in identity includes every normalized token. Length-prefixed
+        // strings avoid ambiguity; sorted roles/keys avoid dictionary order.
+        func field(_ value: String) -> String { "\(value.utf8.count):\(value)" }
+        func color(_ value: ColorToken) -> String { [value.red, value.green, value.blue, value.alpha].map { String($0 == 0 ? 0 : $0) }.joined(separator: ",") }
+        var identity = "preferred:\(usesPreferredMetrics)"
+        for role in fonts.keys.sorted(by: { $0.identity < $1.identity }) {
+            identity += field(role.identity) + field(typography.fontNames[role]!) + field(String(typography.pointSizes[role]!))
+            // Custom descriptor bytes remain preserved above; built-in system
+            // descriptors are fully determined by the normalized font name/size.
+        }
+        for value in [colors.body, colors.secondary, colors.code, colors.link] { identity += field(color(value)) }
+        for key in additional.keys.sorted() { identity += field(key) + field(color(additional[key]!)) }
+        for value in [spacing.paragraph, spacing.block, spacing.codeInsets, spacing.quoteIndent, Double(mathScale)] { identity += field(String(value == 0 ? 0 : value)) }
+        let id = configurationID ?? (usesPreferredMetrics ? .semantic(namespace: "MarkdownKit.default:" + identity, version: 1) : .uniqueInstance())
+        return RenderConfigurationSnapshot(id: id, typography: typography, colors: colors, spacing: spacing, generation: generation, mathScale: Double(mathScale))
+    }
+}
+
+@MainActor
+private extension PlatformColor {
+    var rgbaToken: ColorToken {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        #if canImport(UIKit)
+        let resolved = resolvedColor(with: UITraitCollection.current)
+        if !resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
+            var white: CGFloat = 0
+            if resolved.getWhite(&white, alpha: &alpha) { red = white; green = white; blue = white }
+        }
+        #elseif canImport(AppKit)
+        if let rgb = usingColorSpace(.sRGB) { rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha) }
+        #endif
+        return ColorToken(red: Double(red), green: Double(green), blue: Double(blue), alpha: Double(alpha))
+    }
 }

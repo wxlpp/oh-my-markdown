@@ -1,5 +1,16 @@
 import Foundation
 
+/// Wrapper-owned identity isolates custom producer cache namespaces by default.
+public struct MathRendererConfiguration: Sendable {
+    package let renderer: any MathRendering
+    public let configurationID: MarkdownConfigurationID
+
+    public init(renderer: any MathRendering, configurationID: MarkdownConfigurationID = .uniqueInstance()) {
+        self.renderer = renderer
+        self.configurationID = configurationID
+    }
+}
+
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)

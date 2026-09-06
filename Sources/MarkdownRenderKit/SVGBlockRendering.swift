@@ -1,4 +1,15 @@
 import Foundation
+
+/// Wrapper-owned identity isolates custom producer cache namespaces by default.
+public struct SVGRendererConfiguration: Sendable {
+    package let renderer: any SVGBlockRendering
+    public let configurationID: MarkdownConfigurationID
+
+    public init(renderer: any SVGBlockRendering, configurationID: MarkdownConfigurationID = .uniqueInstance()) {
+        self.renderer = renderer
+        self.configurationID = configurationID
+    }
+}
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)

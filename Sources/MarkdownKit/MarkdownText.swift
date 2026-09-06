@@ -1,6 +1,6 @@
-@_exported import MarkdownCore
-@_exported import MarkdownPlatformView
-@_exported import MarkdownRenderKit
+import MarkdownCore
+import MarkdownPlatformView
+import MarkdownRenderKit
 import SwiftUI
 
 // MARK: - MarkdownText
