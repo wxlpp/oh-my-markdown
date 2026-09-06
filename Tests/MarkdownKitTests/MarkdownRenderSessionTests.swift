@@ -6,18 +6,51 @@ import Synchronization
 import Testing
 
 @MainActor final class RecordingRenderSink: RenderSessionSink {
+    let sideEffects = RenderSideEffectProbe()
     var tokens: [RenderCommitToken] = []
     var strings: [String] = []
     var errors: [RenderSessionError] = []
     var models: [RenderDisplayModel] = []
     func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken) {
+        self.sideEffects.record()
         self.tokens.append(token)
         self.strings.append(snapshot.attributedString.string)
         self.models.append(snapshot.displayModel)
     }
 
     func receive(error: RenderSessionError) {
+        self.sideEffects.record()
         self.errors.append(error)
+    }
+}
+
+final class RenderSideEffectProbe: Sendable {
+    private let calls = Mutex(0)
+    func record() {
+        self.calls.withLock { $0 += 1 }
+    }
+
+    var count: Int {
+        self.calls.withLock { $0 }
+    }
+}
+
+/// Observes actor release from the generic executor while MainActor is held.
+final class WeakActorLifetime<Value: Actor>: Sendable {
+    private final class Storage {
+        weak var value: Value?
+        init(_ value: Value?) {
+            self.value = value
+        }
+    }
+
+    private let storage: Mutex<Storage>
+    init(_ value: Value?) {
+        self.storage = Mutex(Storage(value))
+    }
+
+    var value: Value? {
+        self.storage.withLock { $0.value }
     }
 }
 
@@ -79,6 +112,72 @@ final class ManualRenderClock: RenderSessionClock {
 }
 
 @Suite(.serialized) @MainActor struct MarkdownRenderSessionTests {
+    /// Deliberately holds MainActor across teardown and the weak-release assertion.
+    /// The detached observer only owns a weak actor box, so it cannot mask a cycle.
+    private func releaseOwnersBeforeAllowingQueuedPublication(
+        queued: DispatchSemaphore, session: inout MarkdownRenderSession?,
+        driver: inout MarkdownRenderSessionDriver?, sink: inout RecordingRenderSink?,
+        weakSession: WeakActorLifetime<MarkdownRenderSession>
+    ) {
+        #expect(queued.wait(timeout: .now() + 10) == .success)
+        driver?.send(.dismantle)
+        driver = nil
+        session = nil
+        sink = nil
+        let released = DispatchSemaphore(value: 0)
+        Task.detached {
+            _ = await eventually { weakSession.value == nil }
+            released.signal()
+        }
+        #expect(released.wait(timeout: .now() + 12) == .success)
+        #expect(weakSession.value == nil)
+    }
+
+    @Test(arguments: [false, true]) func queuedPublicationDoesNotRetainReleasedOwners(error: Bool) async throws {
+        let gate = ParseGate()
+        let executor = ParseExecutor(maxActive: 2, maxWaitingTokens: 64, parser: gate.parse)
+        let clock = ManualRenderClock()
+        let registry = RenderSessionSinkRegistry()
+        var sink: RecordingRenderSink? = RecordingRenderSink()
+        var session: MarkdownRenderSession? = MarkdownRenderSession(executor: executor, registry: registry, clock: clock)
+        try registry.register(#require(sink), for: #require(session?.id))
+        var driver: MarkdownRenderSessionDriver? = try MarkdownRenderSessionDriver(session: #require(session))
+        let weakSession = WeakActorLifetime(session)
+        let weakDriver = WeakLifetime(driver)
+        let weakSink = WeakLifetime(sink)
+        let probe = try #require(sink?.sideEffects)
+        driver?.send(.setSource("hello", MarkdownRenderConfiguration.default.snapshot(generation: 1)))
+        #expect(await eventually { gate.jobs.count == 1 })
+        let old = try #require(gate.jobs.first?.submission)
+        let queued = DispatchSemaphore(value: 0)
+        if error {
+            clock.advance(by: .seconds(2))
+            Task.detached { [weak session] in await session?.receive(.busy(submission: old)) }
+        } else {
+            gate.release("hello")
+        }
+        let observer = Task.detached { [weak session] in
+            let checked = await eventually { await session?.submission == nil }
+            queued.signal()
+            return checked
+        }
+        self.releaseOwnersBeforeAllowingQueuedPublication(
+            queued: queued, session: &session, driver: &driver, sink: &sink, weakSession: weakSession
+        )
+        #expect(weakDriver.value == nil)
+        #expect(weakSink.value == nil)
+        #expect(registry.count == 0)
+        // The queued message's exact authorization was revoked in the same
+        // MainActor turn, so even a still-live sink could not be invoked.
+        #expect(!registry.withAuthorizedSink(for: old.commitToken) { $0.receive(error: .parseBusy) })
+        #expect(await observer.value)
+        gate.release("hello")
+        #expect(await eventually { await executor.diagnostics.activeCount == 0 })
+        #expect(await eventually { weakSession.value == nil })
+        #expect(probe.count == 0)
+        #expect(clock.sleepCalls == 0)
+    }
+
     @Test func replacingAndReleasingSessionCancelsItsPreparationWithoutRetainingIt() async throws {
         let executor = ParseExecutor(maxActive: 2, maxWaitingTokens: 64) { MarkdownDocument(parsing: $0.source) }
         let preparationClock = ManualRenderClock()

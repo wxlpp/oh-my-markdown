@@ -11,10 +11,10 @@ package struct ParseSessionToken: Hashable {
     package let rawValue: UUID
     private let lifetime = Lifetime()
 
-    /// Construct once per logical session, then copy the token. Reconstructing the
-    /// same UUID would create a different lifetime and is not a supported operation.
-    package init(rawValue: UUID) {
-        self.rawValue = rawValue
+    /// Identity and lifetime are created together. Copy this value to refer to
+    /// the same session; callers cannot reconstruct an identity with a fresh lifetime.
+    package init() {
+        self.rawValue = UUID()
     }
 
     package var isRevoked: Bool {
@@ -116,6 +116,12 @@ package enum RenderSessionError: Error, Equatable {
     case preparationFailed
 }
 
+/// A delivery owns only immutable render values, never the session or its sink.
+package enum RenderSessionDelivery {
+    case snapshot(model: RenderDisplayModel, configuration: RenderConfigurationSnapshot)
+    case error(RenderSessionError)
+}
+
 @MainActor
 package protocol RenderSessionSink: AnyObject {
     func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken)
@@ -150,6 +156,25 @@ package final class RenderSessionSinkRegistry {
             return
         }
         self.authorizedTokens[token.sessionID] = token
+    }
+
+    /// Queue a value-only delivery without making the session wait for MainActor.
+    /// The task owns this registry (which has weak sinks), never a session, driver
+    /// or promoted sink. Authorization and all effects share one synchronous turn.
+    package nonisolated func enqueue(_ delivery: RenderSessionDelivery, token: RenderCommitToken) {
+        Task { @MainActor [registry = self, delivery, token] in
+            registry.withAuthorizedSink(for: token) { sink in
+                switch delivery {
+                case .snapshot(let model, let configuration):
+                    let snapshot = RenderMaterializer(configuration: configuration).materialize(
+                        model, resources: .init(values: [:])
+                    )
+                    sink.replaceSnapshot(snapshot, token: token)
+                case .error(let error):
+                    sink.receive(error: error)
+                }
+            }
+        }
     }
 
     /// Authorization, weak promotion and every side effect form one MainActor turn.

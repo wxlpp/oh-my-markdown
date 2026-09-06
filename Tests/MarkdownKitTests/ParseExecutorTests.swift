@@ -2,6 +2,19 @@ import Foundation
 import MarkdownCore
 @testable import MarkdownPlatformView
 import Synchronization
+
+#if PARSE_TOKEN_CONSTRUCTION_NEGATIVE
+/// Compile this checked-in fixture with -D PARSE_TOKEN_CONSTRUCTION_NEGATIVE.
+/// Equal identities must not be reconstructed with independent lifetime state.
+func rejectedTokenReconstruction(_ identity: UUID) {
+    _ = ParseSessionToken(rawValue: identity)
+}
+
+#elseif PARSE_TOKEN_CONSTRUCTION_POSITIVE
+func acceptedTokenConstruction() -> ParseSessionToken {
+    ParseSessionToken()
+}
+#else
 import Testing
 
 /// A synchronous parser gate. Tests release individual inputs, never infer progress from sleep.
@@ -64,7 +77,7 @@ func eventually(isolation: isolated (any Actor)? = #isolation, _ predicate: () a
     return true
 }
 
-func parseJob(_ source: String, token: ParseSessionToken = .init(rawValue: UUID())) -> ParseJob {
+func parseJob(_ source: String, token: ParseSessionToken = .init()) -> ParseJob {
     ParseJob(
         submission: ParseSubmission(
             id: UUID(), sessionToken: token,
@@ -77,6 +90,24 @@ func parseJob(_ source: String, token: ParseSessionToken = .init(rawValue: UUID(
 }
 
 @Suite(.serialized) struct ParseExecutorTests {
+    @Test func tokenCopiesShareRevocationAndDictionaryIdentity() {
+        let original = ParseSessionToken()
+        let copy = original
+        let independent = ParseSessionToken()
+        var entries = [original: "original"]
+        entries[copy] = "replacement"
+        #expect(entries.count == 1)
+        #expect(entries[original] == "replacement")
+        #expect(original.rawValue == copy.rawValue)
+        #expect(original != independent)
+        #expect(original.rawValue != independent.rawValue)
+        copy.revoke()
+        #expect(original.isRevoked)
+        #expect(copy.isRevoked)
+        #expect(!independent.isRevoked)
+        #expect(entries.keys.first?.isRevoked == true)
+    }
+
     @Test func absentTokenTombstoneRejectsLateAdmissionWithoutPermanentRegistryEntry() async {
         let executor = ParseExecutor(maxActive: 2, maxWaitingTokens: 64) { MarkdownDocument(parsing: $0.source) }
         let job = parseJob("too late")
@@ -173,7 +204,7 @@ func parseJob(_ source: String, token: ParseSessionToken = .init(rawValue: UUID(
         let gate = ParseGate()
         let executor = ParseExecutor(maxActive: 2, maxWaitingTokens: 64, parser: gate.parse)
         let sink = RecordingParseSink()
-        let token = ParseSessionToken(rawValue: UUID())
+        let token = ParseSessionToken()
         #expect(await executor.enqueue(parseJob("first", token: token), sink: sink) == .started)
         #expect(await executor.enqueue(parseJob("middle", token: token), sink: sink) == .queued)
         #expect(await executor.enqueue(parseJob("latest", token: token), sink: sink) == .replacedPending)
@@ -192,7 +223,7 @@ func parseJob(_ source: String, token: ParseSessionToken = .init(rawValue: UUID(
         let gate = ParseGate()
         let executor = ParseExecutor(maxActive: 2, maxWaitingTokens: 64, parser: gate.parse)
         let sink = RecordingParseSink()
-        let token = ParseSessionToken(rawValue: UUID())
+        let token = ParseSessionToken()
         _ = await executor.enqueue(parseJob("blocked", token: token), sink: sink)
         _ = await executor.enqueue(parseJob("never", token: token), sink: sink)
         await executor.tombstone(token)
@@ -204,3 +235,4 @@ func parseJob(_ source: String, token: ParseSessionToken = .init(rawValue: UUID(
         #expect(await sink.results.isEmpty)
     }
 }
+#endif

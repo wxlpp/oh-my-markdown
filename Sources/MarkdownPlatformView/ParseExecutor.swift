@@ -53,6 +53,8 @@ package actor ParseResultRegistry {
         let sink = ticket.value
         // An already-promoted message cannot be recalled by unregister. The session's
         // full submission check and synchronous MainActor gate reject its side effects.
+        // MarkdownRenderSession.receive is a non-suspending actor command: this
+        // temporary promotion never spans parsing, retry, preparation or MainActor.
         await sink?.receive(result)
     }
 }

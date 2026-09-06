@@ -4,7 +4,7 @@ import MarkdownRenderKit
 package actor MarkdownRenderSession: ParseResultSink {
     package nonisolated let id: RenderSessionID
     package nonisolated let registry: RenderSessionSinkRegistry
-    private nonisolated let token = ParseSessionToken(rawValue: UUID())
+    private nonisolated let token = ParseSessionToken()
     private let executor: ParseExecutor
     private let clock: any RenderSessionClock
     private let availableWidth: Double
@@ -107,10 +107,12 @@ package actor MarkdownRenderSession: ParseResultSink {
         let admission = await executor.enqueue(ParseJob(submission: next, source: self.source), sink: self)
         // enqueue is short but crossing actors still permits a newer event/teardown.
         guard !self.dismantled, !self.token.isRevoked, self.submission == next, self.currentToken == commitToken else { return }
-        if admission == .busy { await self.receive(.busy(submission: next)) }
+        if admission == .busy { self.receive(.busy(submission: next)) }
     }
 
-    package func receive(_ result: ParseExecutorResult) async {
+    /// Registry promotion retains this actor only for this non-suspending command.
+    /// Parsing, retry clocks, preparation and MainActor delivery are never awaited here.
+    package func receive(_ result: ParseExecutorResult) {
         let received = result.submission
         guard !self.dismantled, !self.token.isRevoked, self.submission == received, self.currentToken == received.commitToken else { return }
         switch result {
@@ -120,7 +122,7 @@ package actor MarkdownRenderSession: ParseResultSink {
             guard self.retryTask == nil else { return }
             if received.attempt >= 3 || self.clock.now() >= self.deadline {
                 self.submission = nil
-                await self.publish(error: .parseBusy, token: received.commitToken)
+                self.publish(error: .parseBusy, token: received.commitToken)
             } else {
                 let clock = clock
                 self.retryTask = Task { [weak self, clock, received] in
@@ -160,27 +162,20 @@ package actor MarkdownRenderSession: ParseResultSink {
     private func publishPrepared(
         _ model: RenderDisplayModel, configuration: RenderConfigurationSnapshot,
         submission received: ParseSubmission
-    ) async {
+    ) {
         guard !self.dismantled, !self.token.isRevoked, self.submission == received,
               self.currentToken == received.commitToken else { return }
         self.submission = nil
         self.preparationTask = nil
-        _ = await MainActor.run { [registry] in
-            registry.withAuthorizedSink(for: received.commitToken) { sink in
-                let snapshot = RenderMaterializer(configuration: configuration).materialize(
-                    model, resources: .init(values: [:])
-                )
-                sink.replaceSnapshot(snapshot, token: received.commitToken)
-            }
-        }
+        self.registry.enqueue(.snapshot(model: model, configuration: configuration), token: received.commitToken)
     }
 
-    private func preparationFailed(_ received: ParseSubmission) async {
+    private func preparationFailed(_ received: ParseSubmission) {
         guard !self.dismantled, !self.token.isRevoked, self.submission == received,
               self.currentToken == received.commitToken else { return }
         self.submission = nil
         self.preparationTask = nil
-        await self.publish(error: .preparationFailed, token: received.commitToken)
+        self.publish(error: .preparationFailed, token: received.commitToken)
     }
 
     private func retry(_ previous: ParseSubmission) async {
@@ -188,16 +183,14 @@ package actor MarkdownRenderSession: ParseResultSink {
         self.retryTask = nil
         if self.clock.now() >= self.deadline {
             self.submission = nil
-            await self.publish(error: .parseBusy, token: previous.commitToken)
+            self.publish(error: .parseBusy, token: previous.commitToken)
         } else {
             await self.submit(commitToken: previous.commitToken, attempt: previous.attempt + 1)
         }
     }
 
-    private func publish(error: RenderSessionError, token: RenderCommitToken) async {
-        _ = await MainActor.run { [registry] in
-            registry.withAuthorizedSink(for: token) { $0.receive(error: error) }
-        }
+    private func publish(error: RenderSessionError, token: RenderCommitToken) {
+        self.registry.enqueue(.error(error), token: token)
     }
 }
 
