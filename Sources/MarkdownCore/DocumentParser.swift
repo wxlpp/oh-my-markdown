@@ -8,7 +8,9 @@ import Markdown
 /// is converted to MarkdownCore's own IR so that higher-level targets never
 /// need to depend on swift-markdown directly.
 public struct MarkdownDocument: Sendable, Equatable {
-    /// Parse a Markdown source string into a document.
+    /// Parse a Markdown source string into a document synchronously.
+    /// cmark-gfm has no cancellation hook: cancelling its calling task does not
+    /// stop an entered parse. UI consumers admit this work through ParseExecutor.
     public init(parsing source: String) {
         self.parsedBlocks = Self.parsePipeline(source)
         self.blocks = self.parsedBlocks.map(\.block)
