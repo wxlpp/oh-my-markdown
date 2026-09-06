@@ -28,7 +28,7 @@ public struct RenderPreparer: Sendable {
   }
 }
 
-/// Accessibility structure is populated by Task 9; this checkpoint establishes
+/// Accessibility structure is populated by Task 10; this checkpoint establishes
 /// the Sendable representation and preserves the source block ranges.
 private struct DisplayBuilder {
   let generation: UInt64

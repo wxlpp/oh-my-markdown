@@ -682,18 +682,47 @@ Dispatch `superpowers-reviewer` over only this commit and require behavior-only 
 ### Task 4B: Route both platform views through the session driver
 
 **Files:**
+- Modify: `Sources/MarkdownRenderKit/RenderPreparer.swift`
+- Modify: `Sources/MarkdownRenderKit/RenderMaterializer.swift`
+- Modify: `Sources/MarkdownRenderKit/RenderDisplayModel.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+iOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+macOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownRenderSession.swift`
 - Modify: `Sources/MarkdownKit/MarkdownText.swift`
 - Modify: `Sources/MarkdownKit/MarkdownStreamingText.swift`
 - Test: `Tests/MarkdownKitTests/PlatformSessionWiringTests.swift`
+- Test: `Tests/MarkdownKitTests/RenderMigrationParityTests.swift`
 
 **Interfaces:**
 - Consumes: Task 3 `MarkdownRenderSessionDriver` and Task 2 snapshots.
 - Produces: thin platform views that synchronously enqueue `RenderSessionEvent` values and receive snapshots through the weak sink registry.
+- Prerequisite to either consumer switch: complete legacy rendering parity in the Task 2 preparer/materializer. Task 2 intentionally supplies only the boundary and basic runs/resources; its initial implementation is not a production replacement for `AttributedStringRenderer`.
 
-- [ ] **Step 1: Write and run the failing driver wiring tests**
+- [ ] **Step 1: Establish differential migration tests while both views still use the legacy renderer**
+
+Add `RenderMigrationParityTests` that render the same source/programmatic IR, style, width, placeholder mode, and deterministic resolved-resource fixtures through the legacy renderer and the new preparation/materialization path. Assert attributed text and normalized attributes, measured TextKit layout, and semantic metadata/results; do not compare platform object identity or update expected output from the new implementation. Include explicit expected strings/URLs/source selections and attachment geometry so a shared omission cannot make both paths pass.
+
+The fixture matrix must cover emphasis/strong/strikethrough; link labels and destinations; inline/fenced code highlighting and backgrounds; nested quotes, ordered/unordered/task lists, table alignment/overflow; headings/body/custom fonts, all existing colors and paragraph styling; source-present and programmatic-source-absent copy mapping; static/streaming placeholders; resolved/missing/failed image/math/SVG resources; and narrow/wide `availableWidth` values. Compare attachment dimensions and baselines, line/fragment bounds, table measurements and overlays, rendered/source text mapping, and link activation metadata handed to the platform. Use the existing rendering, placeholder, SVG degradation, copy, table-measurement, and resource-relayout regression suites as the compatibility baseline on UIKit and AppKit.
+
+Run `swift test --filter RenderMigrationParityTests`; expected FAIL on the Task 2 implementation's missing styling/layout/semantic behavior. Keep both views on the legacy path during this RED phase and the following implementation step.
+
+- [ ] **Step 2: Complete legacy rendering semantics and pass the hard pre-switch gate**
+
+Extend `RenderPreparer`, `RenderDisplayModel`, and `RenderMaterializer` to preserve every existing output-affecting behavior in that matrix: emphasis/strong/strikethrough traits; link destinations and activation metadata handoff; code highlighting/backgrounds; quote/list/table formatting; existing source/copy mapping; placeholder and resolved-resource geometry, baseline/scale handling, and width-dependent layout; and typography/color/paragraph styling. Keep preparation values Sendable and resolve platform fonts/colors/attachments/TextKit state on MainActor. Preserve legacy resource adapters until Task 4C replaces them.
+
+This step migrates existing behavior only. Task 8 still owns the new typed link policy, handler configuration, and policy-generation activation checks; Task 9 owns the exact rendered-selection versus explicit source-copy behavior, typed granularity, and localized commands; Task 10 owns the semantic accessibility tree, virtual platform elements, focus, and announcements; Task 11 owns preferred-metric scaling, new trait-driven adaptation, and maximum-category layout policies. Preserve the current native accessibility exposure and the immutable accessibility data boundary here, but do not implement Task 10's tree/platform accessibility work. Preserve the legacy copy behavior in differential tests until Task 9 intentionally changes it.
+
+**Hard gate:** neither platform view may switch to the session's new snapshots until all differential attributed-string, layout, and semantic tests pass on both platforms and all existing pre-migration regression suites remain green. Missing parity cannot be waived as follow-up work in Tasks 8–11; those tasks add the enhanced policies above. Run these commands before adding driver wiring or changing either consumer:
+
+```bash
+swift test --filter 'RenderMigrationParityTests|MarkdownRenderKitTests|PlaceholderModeRendererTests|TableMeasurementLaidOutEquivalenceTests|ReadOnlyCopyOriginalSourceTests|AsyncMathWritebackRelayoutTests'
+swift test
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+```
+
+Record the differential tests and pre-migration suite results as checkpoint evidence. Expected: PASS while both views still use the legacy renderer. Only then proceed to driver wiring.
+
+- [ ] **Step 3: Write and run the failing driver wiring tests**
 
 Inject a `RecordingSessionDriver` conforming to:
 
@@ -708,7 +737,7 @@ extension MarkdownRenderSessionDriver: RenderSessionDriving {}
 
 Assert set, append, style/renderer change, scale change, and teardown each emit one ordered event; old sink tokens cannot apply snapshots. Run `swift test --filter PlatformSessionWiringTests`; expected FAIL because views do not accept the driver.
 
-- [ ] **Step 2: Install the driver and weak sink**
+- [ ] **Step 4: Install the driver and weak sink after the parity gate passes**
 
 Replace duplicated parse tasks/revision fields/direct source update pipelines with one driver. The main-actor driver/registry authorization is the final authority for the current commit token; the session carries that token through work but cannot authorize publication. Views keep only a diagnostic mirror, not an acceptance guard. Apply snapshots only through:
 
@@ -728,20 +757,20 @@ func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken) {
 
 Both platform views conform to `RenderSessionSink` and strongly retain the current snapshot for at least as long as TextKit retains its attachments. The monotonic assertion is diagnostic only; it is not a second acceptance guard. Dismantle clears TextKit content/current snapshot, sends `.dismantle`, unregisters the sink ID, and releases the driver. Wrap every legacy image/math/SVG object referenced by the published attributed string in Task 2's `LegacyResourceOwner`; add regression coverage proving those resources do not disappear during the migration. Keep old resource cache adapter calls until Task 4C.
 
-- [ ] **Step 3: Run focused green and commit**
+- [ ] **Step 5: Run focused green and commit**
 
 ```bash
-swift test --filter 'PlatformSessionWiringTests|MarkdownLabelViewRenderModeTests|TableMeasurementLaidOutEquivalenceTests'
+swift test --filter 'RenderMigrationParityTests|PlatformSessionWiringTests|MarkdownLabelViewRenderModeTests|TableMeasurementLaidOutEquivalenceTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
 xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
-git add Sources/MarkdownPlatformView Sources/MarkdownKit/MarkdownText.swift Sources/MarkdownKit/MarkdownStreamingText.swift Tests/MarkdownKitTests/PlatformSessionWiringTests.swift
+git add Sources/MarkdownRenderKit/RenderPreparer.swift Sources/MarkdownRenderKit/RenderMaterializer.swift Sources/MarkdownRenderKit/RenderDisplayModel.swift Sources/MarkdownPlatformView Sources/MarkdownKit/MarkdownText.swift Sources/MarkdownKit/MarkdownStreamingText.swift Tests/MarkdownKitTests/PlatformSessionWiringTests.swift Tests/MarkdownKitTests/RenderMigrationParityTests.swift
 git commit -m "refactor: route platform views through render sessions"
 ```
 
-- [ ] **Step 4: Review session migration**
+- [ ] **Step 6: Review session migration**
 
-Dispatch `superpowers-reviewer` over Task 4B with event ordering, weak sink ownership, stale snapshot rejection, driver task ownership, and UIKit/AppKit parity focus.
+Dispatch `superpowers-reviewer` over Task 4B with event ordering, weak sink ownership, stale snapshot rejection, driver task ownership, and UIKit/AppKit parity focus. Require recorded pre-switch differential and full regression evidence; inspect every legacy rendering/semantic behavior listed above and block a consumer switch that still relies on the incomplete Task 2 implementation. Confirm Tasks 8–11 retain ownership of their enhanced policies.
 
 ### Task 4C: Migrate math/SVG resources and remove compatibility render APIs
 

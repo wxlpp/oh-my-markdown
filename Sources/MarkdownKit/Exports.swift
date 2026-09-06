@@ -66,3 +66,5 @@ public typealias MarkdownEditorOptions = MarkdownPlatformView.MarkdownEditorOpti
 public typealias MarkdownEditorEditResult = MarkdownPlatformView.MarkdownEditorEditResult
 public typealias MarkdownEditorInputAction = MarkdownPlatformView.MarkdownEditorInputAction
 public typealias MarkdownEditorCommands = MarkdownPlatformView.MarkdownEditorCommands
+public typealias MathLoadCoordinator = MarkdownPlatformView.MathLoadCoordinator
+public typealias SVGBlockLoadCoordinator = MarkdownPlatformView.SVGBlockLoadCoordinator

@@ -77,7 +77,11 @@ func inspect(_ snapshot: RenderSnapshot) async {
     _ = MarkdownEditorEditResult.self
     _ = MarkdownEditorInputAction.self
     _ = MarkdownEditorCommands.self
+    _ = MathLoadCoordinator.self
+    _ = SVGBlockLoadCoordinator.self
     _ = MarkdownDocument(parsing: "client")
     _ = MarkdownRenderConfiguration.default.snapshot(generation: 0)
+    _ = MathLoadCoordinator()
+    _ = SVGBlockLoadCoordinator()
   }
 #endif
