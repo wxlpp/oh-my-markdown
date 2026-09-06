@@ -4,7 +4,9 @@ import SwiftUI
 import Testing
 
 private final class StubSVGRenderer: SVGBlockRendering, @unchecked Sendable {
-    func render(svg _: String, availableWidth _: CGFloat, scale _: CGFloat) async -> SVGBlockOutcome { .failed }
+    func render(svg _: String, availableWidth _: CGFloat, scale _: CGFloat) async -> SVGBlockOutcome {
+        .failed
+    }
 }
 
 @Suite("svgRenderer modifier + identity")

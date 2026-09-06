@@ -1,9 +1,9 @@
-import Testing
 import Foundation
-@testable import MarkdownPlatformView
 @testable import MarkdownCore
-import MarkdownRenderKit
 @testable import MarkdownMath
+@testable import MarkdownPlatformView
+import MarkdownRenderKit
+import Testing
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -44,7 +44,6 @@ import AppKit
 @MainActor
 @Suite("Streaming math cache survives renderer recreation (Bug 1 math)")
 struct StreamingMathCacheSurvivesRendererRecreationTests {
-
     /// 与 `AsyncMathWritebackRelayoutTests` 同款「缩高敏感」源：8 个会换行的
     /// inline `$...$`。后接若干普通段落，让流式追加把 firstChanged 推过 math
     /// 段、反复触发尾窗重渲。8 个 inline math span ⟺ 解析后应有 8 个 attachment。
@@ -88,7 +87,7 @@ struct StreamingMathCacheSurvivesRendererRecreationTests {
     /// 已解析 math 稳定熬过反复的 renderer 重建；以及窗口内 attachment 数轨迹
     /// （去抖，用于诊断/取证振荡）。`churnWidth` 控制整窗口是否持续抖动宽度。
     private func run(churnWidth: Bool) async -> (heldResolved: Bool, attachTrace: [Int]) {
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 10_000))
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 10000))
         #if canImport(UIKit)
         view.layoutIfNeeded()
         #elseif canImport(AppKit)
@@ -108,7 +107,7 @@ struct StreamingMathCacheSurvivesRendererRecreationTests {
             if ti == 0 { view.setMarkdown(tok) } else { view.appendMarkdown(tok) }
             if churnWidth, ti % 4 == 0 {
                 let w: CGFloat = (ti % 8 == 0) ? 322 : 318
-                view.frame = CGRect(x: 0, y: 0, width: w, height: 10_000)
+                view.frame = CGRect(x: 0, y: 0, width: w, height: 10000)
             }
             // 节奏延时定长（30ms，与观测窗口 :127 同量级）以消除 CI 不确定性；
             // 复现竞态靠上面的 width churn（frame 318/322 跨折行点），与此
@@ -131,7 +130,7 @@ struct StreamingMathCacheSurvivesRendererRecreationTests {
             if churnWidth, step % 3 == 0 {
                 churnToggle.toggle()
                 let w: CGFloat = churnToggle ? 322 : 318
-                view.frame = CGRect(x: 0, y: 0, width: w, height: 10_000)
+                view.frame = CGRect(x: 0, y: 0, width: w, height: 10000)
                 #if canImport(AppKit)
                 view.layoutSubtreeIfNeeded()
                 #endif

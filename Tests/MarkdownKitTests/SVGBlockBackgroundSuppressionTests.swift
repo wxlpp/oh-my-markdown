@@ -1,7 +1,7 @@
+import Foundation
+@testable import MarkdownCore
 @testable import MarkdownPlatformView
 @testable import MarkdownRenderKit
-@testable import MarkdownCore
-import Foundation
 import Testing
 #if canImport(UIKit)
 import UIKit
@@ -33,8 +33,11 @@ struct SVGBlockBackgroundSuppressionTests {
     @Test("miss 状态：`.markdownSVGBlockSource` 占位存在 → 仍画灰底（保留可读降级）")
     func missStateKeepsBackground() {
         let miss = NSMutableAttributedString(string: "<svg/>")
-        miss.addAttribute(.markdownSVGBlockSource, value: "<svg/>",
-                          range: NSRange(location: 0, length: miss.length))
+        miss.addAttribute(
+            .markdownSVGBlockSource,
+            value: "<svg/>",
+            range: NSRange(location: 0, length: miss.length)
+        )
         let dec = self.makeDecorations(liveString: miss, blockStarts: [0])
         #expect(dec.svgBlockIsResolved(at: 0) == false)
     }

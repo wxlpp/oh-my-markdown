@@ -15,7 +15,7 @@ public enum MathSentinel {
     /// 变换串↔原始源码的字节区间对应（单调、覆盖整条变换串）。
     /// 非锚段为仿射：`original = transformedStart 内的偏移 + originalStart`（同长，逐字节 1:1）。
     /// 锚段：变换串里的 `S<idx>S` 整体对应原始公式区间 `originalStart ..< originalEnd`。
-    struct Segment: Sendable, Equatable {
+    struct Segment: Equatable {
         let transformedStart: Int
         let transformedEnd: Int
         let originalStart: Int

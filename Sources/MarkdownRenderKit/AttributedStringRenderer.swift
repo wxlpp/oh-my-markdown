@@ -306,11 +306,10 @@ public struct AttributedStringRenderer: @unchecked Sendable {
             // 落地后 image.size 也无法预测——不在 parity 范围内）。
             let targetSize: CGSize
             if let native = SVGViewBoxParser.parseSize(from: svg) {
-                let targetWidth: CGFloat
-                if self.availableWidth.isFinite, self.availableWidth > 0 {
-                    targetWidth = min(native.width, self.availableWidth)
+                let targetWidth: CGFloat = if self.availableWidth.isFinite, self.availableWidth > 0 {
+                    min(native.width, self.availableWidth)
                 } else {
-                    targetWidth = native.width
+                    native.width
                 }
                 let targetHeight = targetWidth * native.height / native.width
                 targetSize = CGSize(width: targetWidth, height: targetHeight)
@@ -924,9 +923,9 @@ public struct AttributedStringRenderer: @unchecked Sendable {
                 )
                 return m
             }
-            // Cache hit → fall through to renderMath which emits the cached attachment.
+        // Cache hit → fall through to renderMath which emits the cached attachment.
         case .streaming:
-            break  // 既有行为：renderMath 内部的 miss 分支按 streaming 语义产出高亮 latex 源。
+            break // 既有行为：renderMath 内部的 miss 分支按 streaming 语义产出高亮 latex 源。
         }
         let body = self.renderMath(latex: latex, display: true, baseAttributes: base)
         let m = NSMutableAttributedString(attributedString: body)
@@ -943,7 +942,6 @@ public struct AttributedStringRenderer: @unchecked Sendable {
             .paragraphStyle: self.bodyParagraph,
         ]
     }
-
 }
 
 // MARK: - Transparent placeholder helper
@@ -955,7 +953,7 @@ extension AttributedStringRenderer {
     ///
     /// Returns a transparent placeholder attachment (image=nil) sized to the
     /// requested bounds; TextKit reserves the height as-is. Height clamps to >= 1.
-    fileprivate func transparentAttachment(width: CGFloat, height: CGFloat) -> NSTextAttachment {
+    private func transparentAttachment(width: CGFloat, height: CGFloat) -> NSTextAttachment {
         let att = NSTextAttachment()
         att.image = nil
         att.bounds = CGRect(x: 0, y: 0, width: width, height: max(1, height))

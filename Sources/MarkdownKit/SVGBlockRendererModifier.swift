@@ -1,15 +1,8 @@
-import SwiftUI
 import MarkdownRenderKit
-
-private struct MarkdownSVGBlockRendererKey: EnvironmentKey {
-    static let defaultValue: (any SVGBlockRendering)? = nil
-}
+import SwiftUI
 
 extension EnvironmentValues {
-    public var markdownSVGBlockRenderer: (any SVGBlockRendering)? {
-        get { self[MarkdownSVGBlockRendererKey.self] }
-        set { self[MarkdownSVGBlockRendererKey.self] = newValue }
-    }
+    @Entry public var markdownSVGBlockRenderer: (any SVGBlockRendering)?
 }
 
 extension View {

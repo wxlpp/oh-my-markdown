@@ -42,13 +42,13 @@ public enum SVGViewBoxParser {
               quoteStart < quoteEnd else {
             return nil
         }
-        let inner = vbAttr[vbAttr.index(after: quoteStart)..<quoteEnd]
+        let inner = vbAttr[vbAttr.index(after: quoteStart) ..< quoteEnd]
         let tokens = inner.split(whereSeparator: { $0 == " " || $0 == "," || $0 == "\t" || $0 == "\n" })
         guard tokens.count == 4 else { return nil }
         let nums = tokens.compactMap { Double($0) }
         guard nums.count == 4 else { return nil }
         let w = nums[2], h = nums[3]
-        guard w > 0, h > 0 else { return nil }   // 防 division by zero + 不可绘制
+        guard w > 0, h > 0 else { return nil } // 防 division by zero + 不可绘制
         return CGSize(width: w, height: h)
     }
 

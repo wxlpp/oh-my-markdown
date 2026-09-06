@@ -1,10 +1,10 @@
-import Testing
 import Foundation
-import MathJaxSwift
-@testable import MarkdownMath
-import MarkdownRenderKit
 import MarkdownCore
+@testable import MarkdownMath
 import MarkdownPlatformView
+import MarkdownRenderKit
+import MathJaxSwift
+import Testing
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -46,7 +46,8 @@ struct MathJaxRendererTests {
             latex,
             conversionOptions: ConversionOptions(display: display),
             inputOptions: TeXInputProcessorOptions(loadPackages: TeXInputProcessorOptions.Packages.all),
-            outputOptions: SVGOutputProcessorOptions())
+            outputOptions: SVGOutputProcessorOptions()
+        )
     }
 
     @Test("契约1：真实 tex2svg(与 render 同 options) 根 svg 是 inline（width=<数字>ex 且非 100%）")
@@ -54,11 +55,11 @@ struct MathJaxRendererTests {
         let svg = try realSVG(latex: "x^2+1", display: false)
         // 取第一个 <svg ...> 开标签
         guard let openStart = svg.range(of: "<svg"),
-              let openEnd = svg.range(of: ">", range: openStart.lowerBound..<svg.endIndex) else {
+              let openEnd = svg.range(of: ">", range: openStart.lowerBound ..< svg.endIndex) else {
             Issue.record("没有找到 <svg> 开标签：\(svg.prefix(200))")
             return
         }
-        let openTag = String(svg[openStart.lowerBound..<openEnd.upperBound])
+        let openTag = String(svg[openStart.lowerBound ..< openEnd.upperBound])
         // 必须含 width="<数字>ex"（inline 模式特征 — SVGRasterizer 输入契约）
         let exPattern = #"width\s*=\s*"\d*\.?\d+ex""#
         let hasEx = openTag.range(of: exPattern, options: .regularExpression) != nil
@@ -94,10 +95,14 @@ struct MathJaxRendererTests {
         #expect(g.baselineOffsetEx != 0, "inline 公式 baselineOffsetEx 不应为 0（应解析到 vertical-align）")
         #expect(abs(g.baselineOffsetEx) < 10, "baselineOffsetEx 量级应合理（<10 ex），实际 \(g.baselineOffsetEx)")
         // 点尺寸量级：与 pointSize=16 同数量级，远小于 pixel×scale
-        #expect((1...200).contains(g.image.size.height),
-                "image.size.height 应为点尺寸量级 1...200（pointSize=16），实际 \(g.image.size.height)")
-        #expect((1...400).contains(g.image.size.width),
-                "image.size.width 应为点尺寸量级，实际 \(g.image.size.width)")
+        #expect(
+            (1 ... 200).contains(g.image.size.height),
+            "image.size.height 应为点尺寸量级 1...200（pointSize=16），实际 \(g.image.size.height)"
+        )
+        #expect(
+            (1 ... 400).contains(g.image.size.width),
+            "image.size.width 应为点尺寸量级，实际 \(g.image.size.width)"
+        )
     }
 
     @Test("契约4：取消一次后，同一 renderer 新发 render 仍 .rendered（实例不被污染）")
@@ -130,10 +135,12 @@ struct MathJaxRendererTests {
         // 并发 N 个 render（同一实例），每个产物必须对应自己的输入、且都成功
         let results = await withTaskGroup(of: (String, MathRenderOutcome).self) { group in
             for s in inputs {
-                group.addTask { (s, await r.render(latex: s, display: false, pointSize: 16, scale: 2, color: .black)) }
+                group.addTask { await (s, r.render(latex: s, display: false, pointSize: 16, scale: 2, color: .black)) }
             }
             var acc: [(String, MathRenderOutcome)] = []
-            for await pair in group { acc.append(pair) }
+            for await pair in group {
+                acc.append(pair)
+            }
             return acc
         }
         #expect(results.count == inputs.count)
@@ -193,13 +200,24 @@ struct MathEndToEndTests {
         let mj = MathJaxRenderer()
         for (latex, display) in payloads {
             let pt = MathMetrics.effectivePointSize(
-                textPointSize: RenderStyle.default.bodyFont.pointSize, mathScale: 1)
-            let out = await mj.render(latex: latex, display: display, pointSize: pt,
-                                      scale: 2, color: RenderStyle.default.textColor)
+                textPointSize: RenderStyle.default.bodyFont.pointSize, mathScale: 1
+            )
+            let out = await mj.render(
+                latex: latex,
+                display: display,
+                pointSize: pt,
+                scale: 2,
+                color: RenderStyle.default.textColor
+            )
             guard case .rendered(let g) = out else { Issue.record("\(latex) not rendered"); continue }
-            let key = MathCacheKey(latex: latex, display: display, pointSize: pt,
-                                   colorHex: MathMetrics.colorHex(RenderStyle.default.textColor),
-                                   rasterScale: 2, rendererGeneration: 1)
+            let key = MathCacheKey(
+                latex: latex,
+                display: display,
+                pointSize: pt,
+                colorHex: MathMetrics.colorHex(RenderStyle.default.textColor),
+                rasterScale: 2,
+                rendererGeneration: 1
+            )
             renderer.mathRasterScale = 2
             renderer.mathRendererGeneration = 1
             renderer.mathCache[key] = g
@@ -226,16 +244,21 @@ struct MathEndToEndTests {
     @Test("G2 块级 display 公式端到端 .rendered，尺寸点量级、基线合理")
     func g2BlockDisplayRenders() async {
         let mj = MathJaxRenderer()
-        let out = await mj.render(latex: "\\sum_{i=1}^n i", display: true,
-                                  pointSize: 16, scale: 2, color: .black)
+        let out = await mj.render(
+            latex: "\\sum_{i=1}^n i",
+            display: true,
+            pointSize: 16,
+            scale: 2,
+            color: .black
+        )
         guard case .rendered(let g) = out else { Issue.record("block display 应 .rendered: \(out)"); return }
         #expect(g.image.size.width > 1 && g.image.size.height > 1)
-        #expect((1...400).contains(g.image.size.height))   // 点量级，非 pixel×scale
-        #expect(g.baselineOffsetEx <= 0.5)                 // 块级基线合理（通常 ~0 或负）
+        #expect((1 ... 400).contains(g.image.size.height)) // 点量级，非 pixel×scale
+        #expect(g.baselineOffsetEx <= 0.5) // 块级基线合理（通常 ~0 或负）
     }
 
-    // G3：setRenderer 切换 + 大量在途 render ——旧在途 Task 不会被 cancel，但其写入的 key 带旧
-    // generation，永不被新代际查到——本测试验证新代际渲染不被旧在途污染、不崩，而非验证 cancel
+    /// G3：setRenderer 切换 + 大量在途 render ——旧在途 Task 不会被 cancel，但其写入的 key 带旧
+    /// generation，永不被新代际查到——本测试验证新代际渲染不被旧在途污染、不崩，而非验证 cancel
     @Test("G3 coordinator 切 renderer 时新代际渲染不受旧在途影响")
     func g3SetRendererNewGenerationIsolatesInflight() async {
         let c = MathLoadCoordinator()
@@ -244,19 +267,38 @@ struct MathEndToEndTests {
         // 派发若干（可能在途）
         for i in 0 ..< 6 {
             _ = await c.loadIfNeeded(
-                key: MathCacheKey(latex: "x^{\(i)}", display: false, pointSize: 16,
-                                  colorHex: "#000", rasterScale: 2, rendererGeneration: g1),
-                latex: "x^{\(i)}", display: false, pointSize: 16, scale: 2, color: .black)
+                key: MathCacheKey(
+                    latex: "x^{\(i)}",
+                    display: false,
+                    pointSize: 16,
+                    colorHex: "#000",
+                    rasterScale: 2,
+                    rendererGeneration: g1
+                ),
+                latex: "x^{\(i)}", display: false, pointSize: 16, scale: 2, color: .black
+            )
         }
         // 立刻切 renderer（新代际 + 清缓存/在途）
         await c.setRenderer(MathJaxRenderer())
         let g2 = await c.generation
         #expect(g2 == g1 + 1)
         // 新代际下重新派发并 await——应能正常 .rendered，不被旧在途污染、不崩
-        let key2 = MathCacheKey(latex: "y^2", display: false, pointSize: 16,
-                                colorHex: "#000", rasterScale: 2, rendererGeneration: g2)
-        _ = await c.loadIfNeeded(key: key2, latex: "y^2", display: false,
-                                 pointSize: 16, scale: 2, color: .black)
+        let key2 = MathCacheKey(
+            latex: "y^2",
+            display: false,
+            pointSize: 16,
+            colorHex: "#000",
+            rasterScale: 2,
+            rendererGeneration: g2
+        )
+        _ = await c.loadIfNeeded(
+            key: key2,
+            latex: "y^2",
+            display: false,
+            pointSize: 16,
+            scale: 2,
+            color: .black
+        )
         let glyph = await c.awaitGlyph(for: key2)
         #expect(glyph != nil)
     }

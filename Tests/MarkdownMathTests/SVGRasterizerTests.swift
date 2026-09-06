@@ -1,8 +1,8 @@
-import Testing
-import Foundation
 import CoreGraphics
+import Foundation
 @testable import MarkdownMath
 import MarkdownRenderKit
+import Testing
 
 #if canImport(UIKit)
 import UIKit
@@ -20,27 +20,30 @@ struct SVGRasterizerUnitTests {
 
     @Test("注入颜色：currentColor 被替换为指定 hex")
     func colorInjection() {
-        let out = SVGRasterizer.injectColor(into: sample, hex: "#FF0000")
+        let out = SVGRasterizer.injectColor(into: self.sample, hex: "#FF0000")
         #expect(!out.contains("currentColor"))
         #expect(out.contains("#FF0000"))
     }
 
     @Test("解析 vertical-align(ex) 为基线偏移")
     func parseBaseline() {
-        #expect(SVGRasterizer.parseVerticalAlignEx(sample) == -0.25)
+        #expect(SVGRasterizer.parseVerticalAlignEx(self.sample) == -0.25)
     }
 
     @Test("光栅化产出非退化位图 + 基线 + 点尺寸契约")
     func rasterize() throws {
         let glyph = try SVGRasterizer.rasterize(
-            svg: sample, hex: "#000000", pointSize: 16, scale: 2)
+            svg: self.sample, hex: "#000000", pointSize: 16, scale: 2
+        )
         #expect(glyph.image.size.width > 1)
         #expect(glyph.baselineOffsetEx == -0.25)
         let glyph1x = try SVGRasterizer.rasterize(
-            svg: sample, hex: "#000000", pointSize: 16, scale: 1)
+            svg: self.sample, hex: "#000000", pointSize: 16, scale: 1
+        )
         #expect(abs(glyph.image.size.height - glyph1x.image.size.height) < 0.5)
         let glyphBig = try SVGRasterizer.rasterize(
-            svg: sample, hex: "#000000", pointSize: 32, scale: 2)
+            svg: self.sample, hex: "#000000", pointSize: 32, scale: 2
+        )
         #expect(glyphBig.image.size.height > glyph.image.size.height)
     }
 
@@ -58,9 +61,9 @@ struct SVGRasterizerUnitTests {
         #expect(glyph.image.size.width > 0)
     }
 
-    // Bug 2 pixel regression: 8-digit hex (#RRGGBBAA) is misread by SwiftDraw as a
-    // single integer → alpha byte lands in blue channel → center pixel ≈ pure blue.
-    // After fix (6-digit #RRGGBB), SwiftDraw parses correctly → center pixel ≈ black.
+    /// Bug 2 pixel regression: 8-digit hex (#RRGGBBAA) is misread by SwiftDraw as a
+    /// single integer → alpha byte lands in blue channel → center pixel ≈ pure blue.
+    /// After fix (6-digit #RRGGBB), SwiftDraw parses correctly → center pixel ≈ black.
     @Test("像素回归：colorHex 注入后中心像素 ≈ 黑（非蓝）")
     func pixelRegressionBlackNotBlue() throws {
         // Minimal solid-fill SVG: 20×20 px viewBox, 1ex square → pointSize 16 → 8 pt target.
@@ -112,7 +115,9 @@ struct SVGRasterizerUnitTests {
         // Bug 2 (before fix): 8-digit hex → SwiftDraw blue-shift → B≈255 while R≈0, G≈0.
         // After fix (6-digit): color is correctly parsed as black → R<30, G<30, B<30.
         #expect(Int(b) < 200, "Blue channel too high — SwiftDraw likely misread an 8-digit hex")
-        #expect(Int(r) < 30 && Int(g) < 30 && Int(b) < 30,
-            "Center pixel should be near-black")
+        #expect(
+            Int(r) < 30 && Int(g) < 30 && Int(b) < 30,
+            "Center pixel should be near-black"
+        )
     }
 }

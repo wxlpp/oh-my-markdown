@@ -12,14 +12,15 @@ extension NSAttributedString.Key {
     public static let markdownMathSource = NSAttributedString.Key("MarkdownKit.mathSource")
 }
 
-// UIImage/NSImage are safe for concurrent read; @unchecked Sendable is intentional
-// (same rationale as RenderStyle / AttributedStringRenderer in this module).
+/// UIImage/NSImage are safe for concurrent read; @unchecked Sendable is intentional
+/// (same rationale as RenderStyle / AttributedStringRenderer in this module).
 /// 渲染好的公式字形。
 public struct MathRenderedGlyph: @unchecked Sendable {
     public init(image: PlatformImage, baselineOffsetEx: CGFloat) {
         self.image = image
         self.baselineOffsetEx = baselineOffsetEx
     }
+
     /// 已渲染位图。**契约**：`size` 必须是「点」单位（= 目标文本空间渲染尺寸），
     /// 不是像素——栅格密度由平台图像 scale/backing 编码，绝不体现在 `size` 上。
     /// `AttributedStringRenderer` 直接把 `image.size` 用作 `NSTextAttachment.bounds`；
@@ -42,8 +43,14 @@ public enum MathRenderOutcome: Sendable {
 
 /// 数学缓存键。`pointSize` 已是「有效字号」（文本字号 × mathScale）。
 public struct MathCacheKey: Hashable, Sendable {
-    public init(latex: String, display: Bool, pointSize: CGFloat,
-                colorHex: String, rasterScale: CGFloat, rendererGeneration: Int) {
+    public init(
+        latex: String,
+        display: Bool,
+        pointSize: CGFloat,
+        colorHex: String,
+        rasterScale: CGFloat,
+        rendererGeneration: Int
+    ) {
         self.latex = latex
         self.display = display
         self.pointSize = pointSize
@@ -51,6 +58,7 @@ public struct MathCacheKey: Hashable, Sendable {
         self.rasterScale = rasterScale
         self.rendererGeneration = rendererGeneration
     }
+
     public let latex: String
     public let display: Bool
     public let pointSize: CGFloat
@@ -68,8 +76,13 @@ public struct MathCacheKey: Hashable, Sendable {
 /// 唯一实现 `MathJaxRenderer` 本就是 `final class`，此约束与现实一致、零破坏。
 public protocol MathRendering: AnyObject, Sendable {
     /// pointSize 已是有效字号（文本字号 × mathScale）；scale 为屏幕光栅化 scale。
-    func render(latex: String, display: Bool, pointSize: CGFloat,
-                scale: CGFloat, color: PlatformColor) async -> MathRenderOutcome
+    func render(
+        latex: String,
+        display: Bool,
+        pointSize: CGFloat,
+        scale: CGFloat,
+        color: PlatformColor
+    ) async -> MathRenderOutcome
 }
 
 /// 有效字号契约（spec §5.1）：键计算与 render 调用都必须用这一个公式、同一处算出。
@@ -91,7 +104,9 @@ public enum MathMetrics {
         #elseif canImport(AppKit)
         (color.usingColorSpace(.sRGB) ?? color).getRed(&r, green: &g, blue: &b, alpha: &a)
         #endif
-        func h(_ v: CGFloat) -> String { String(format: "%02X", min(255, max(0, Int((v * 255).rounded())))) }
+        func h(_ v: CGFloat) -> String {
+            String(format: "%02X", min(255, max(0, Int((v * 255).rounded()))))
+        }
         return "#\(h(r))\(h(g))\(h(b))"
     }
 }

@@ -1,6 +1,6 @@
+import Foundation
 import MarkdownRenderKit
 import Testing
-import Foundation
 
 @Suite("Math editor highlight")
 struct MathEditorHighlightTests {
@@ -15,8 +15,8 @@ struct MathEditorHighlightTests {
         let src = "ab $x^2$ cd"
         let out = h.highlight(src)
         let dollarIdx = (src as NSString).range(of: "$x^2$").location
-        #expect(color(out, at: dollarIdx) == style.mathTokenColor)
-        #expect(color(out, at: 0) != style.mathTokenColor)
+        #expect(self.color(out, at: dollarIdx) == style.mathTokenColor)
+        #expect(self.color(out, at: 0) != style.mathTokenColor)
     }
 
     @Test("代码块内 $x$ 不被当公式高亮")
@@ -26,7 +26,7 @@ struct MathEditorHighlightTests {
         let src = "```\n$x$\n```"
         let out = h.highlight(src)
         let idx = (src as NSString).range(of: "$x$").location
-        #expect(color(out, at: idx) != style.mathTokenColor)
+        #expect(self.color(out, at: idx) != style.mathTokenColor)
     }
 
     @Test("emoji 前缀后的 $x^2$ 仍正确着 mathTokenColor（补充平面字符不破坏 offset）")
@@ -35,18 +35,18 @@ struct MathEditorHighlightTests {
         let h = MarkdownSourceHighlighter(style: style)
         let src = "🎉 $x^2$ done"
         let out = h.highlight(src)
-        let dollarIdx = (src as NSString).range(of: "$x^2$").location   // 🎉=2 UTF-16 + space=1 → 3
+        let dollarIdx = (src as NSString).range(of: "$x^2$").location // 🎉=2 UTF-16 + space=1 → 3
         // 契约订正（非弱化，仿 round-1 fixture 订正先例）：mathTokenColor 文档/
         // README/命名均为「只 token-highlight 数学**定界符**」；旧 `dollarIdx+1`
         // （内容字符 `x`）== mathTokenColor 这一断言编码的是「整 span 着色」的
         // 旧错误期望。按既有契约：开界 `$`(dollarIdx) 与闭界 `$`(dollarIdx+4)
         // 着色，中间 LaTeX 内容（`x^2`，dollarIdx+1..+3）不着色。
-        #expect(color(out, at: dollarIdx) == style.mathTokenColor)      // 开界 `$`
-        #expect(color(out, at: dollarIdx + 1) != style.mathTokenColor)  // 内容 `x` 不着（定界符-only）
-        #expect(color(out, at: dollarIdx + 4) == style.mathTokenColor)  // 闭界 `$`（$x^2$ 共 5 个 UTF-16）
-        #expect(color(out, at: 0) != style.mathTokenColor)              // emoji 不着
-        let spaceIdx = (src as NSString).range(of: " $x^2$").location  // emoji 后那个空格（NSString index=2）
-        #expect(color(out, at: spaceIdx) != style.mathTokenColor)       // 空格不在公式区间——buggy 会误染，fixed 不染
+        #expect(self.color(out, at: dollarIdx) == style.mathTokenColor) // 开界 `$`
+        #expect(self.color(out, at: dollarIdx + 1) != style.mathTokenColor) // 内容 `x` 不着（定界符-only）
+        #expect(self.color(out, at: dollarIdx + 4) == style.mathTokenColor) // 闭界 `$`（$x^2$ 共 5 个 UTF-16）
+        #expect(self.color(out, at: 0) != style.mathTokenColor) // emoji 不着
+        let spaceIdx = (src as NSString).range(of: " $x^2$").location // emoji 后那个空格（NSString index=2）
+        #expect(self.color(out, at: spaceIdx) != style.mathTokenColor) // 空格不在公式区间——buggy 会误染，fixed 不染
     }
 
     @Test("CJK 前缀后的 $y$ 仍正确着色")
@@ -56,8 +56,8 @@ struct MathEditorHighlightTests {
         let src = "汉字 $y$ 尾"
         let out = h.highlight(src)
         let idx = (src as NSString).range(of: "$y$").location
-        #expect(color(out, at: idx) == style.mathTokenColor)
-        #expect(color(out, at: 0) != style.mathTokenColor)
+        #expect(self.color(out, at: idx) == style.mathTokenColor)
+        #expect(self.color(out, at: 0) != style.mathTokenColor)
     }
 }
 
@@ -94,7 +94,7 @@ struct MathEditorHighlightDelimiterScopeTests {
         // 开界符每个 UTF-16 位置着色。
         for k in 0 ..< (open as NSString).length {
             #expect(
-                color(out, at: base + k) == style.mathTokenColor,
+                self.color(out, at: base + k) == style.mathTokenColor,
                 "open delimiter byte \(k) of \(open)…\(close) must be mathTokenColor"
             )
         }
@@ -102,7 +102,7 @@ struct MathEditorHighlightDelimiterScopeTests {
         let contentStart = base + (open as NSString).length
         for k in 0 ..< (content as NSString).length {
             #expect(
-                color(out, at: contentStart + k) != style.mathTokenColor,
+                self.color(out, at: contentStart + k) != style.mathTokenColor,
                 "content char \(k) of \(open)\(content)\(close) must NOT be mathTokenColor (delimiter-only)"
             )
         }
@@ -110,14 +110,14 @@ struct MathEditorHighlightDelimiterScopeTests {
         let closeStart = contentStart + (content as NSString).length
         for k in 0 ..< (close as NSString).length {
             #expect(
-                color(out, at: closeStart + k) == style.mathTokenColor,
+                self.color(out, at: closeStart + k) == style.mathTokenColor,
                 "close delimiter byte \(k) of \(open)…\(close) must be mathTokenColor"
             )
         }
         // 前后散文不着色。
-        #expect(color(out, at: 0) != style.mathTokenColor, "prefix prose must not be colored")
+        #expect(self.color(out, at: 0) != style.mathTokenColor, "prefix prose must not be colored")
         #expect(
-            color(out, at: closeStart + (close as NSString).length) != style.mathTokenColor,
+            self.color(out, at: closeStart + (close as NSString).length) != style.mathTokenColor,
             "suffix prose must not be colored"
         )
     }

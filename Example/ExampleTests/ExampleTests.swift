@@ -5,8 +5,8 @@
 //  Created by Evan Wang on 2025年1月15日.
 //
 
-import Testing
 @testable import Example
+import Testing
 
 struct ExampleTests {
     @Test

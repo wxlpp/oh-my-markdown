@@ -1,9 +1,9 @@
-import Testing
 import Foundation
-@testable import MarkdownPlatformView
 import MarkdownCore
-import MarkdownRenderKit
 @testable import MarkdownMath
+@testable import MarkdownPlatformView
+import MarkdownRenderKit
+import Testing
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -47,7 +47,7 @@ struct AsyncMathWritebackRelayoutTests {
         let spans = (0 ..< 8).map { "$x_{\($0)}$" }.joined(separator: " 填充文字 ")
         let markdown = "前置一段普通文字。\n\n\(spans)\n\n后置一段普通文字。"
 
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 10_000))
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 10000))
         #if canImport(UIKit)
         view.layoutIfNeeded()
         #elseif canImport(AppKit)

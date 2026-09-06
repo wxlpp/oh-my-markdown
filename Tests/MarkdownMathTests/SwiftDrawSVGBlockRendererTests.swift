@@ -1,6 +1,6 @@
+import Foundation
 @testable import MarkdownMath
 @testable import MarkdownRenderKit
-import Foundation
 import Testing
 #if canImport(UIKit)
 import UIKit

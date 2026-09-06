@@ -1,7 +1,7 @@
-import Testing
 import CoreGraphics
 import Foundation
 @testable import MarkdownRenderKit
+import Testing
 
 @Suite("SVG block rendering types")
 struct SVGBlockRenderingTypesTests {
@@ -14,6 +14,7 @@ struct SVGBlockRenderingTypesTests {
         #expect(base != SVGBlockCacheKey(svg: "<svg/>", availableWidth: 100, rasterScale: 3, rendererGeneration: 0))
         #expect(base != SVGBlockCacheKey(svg: "<svg/>", availableWidth: 100, rasterScale: 2, rendererGeneration: 1))
     }
+
     @Test("markdownSVGBlockSource attribute key is stable")
     func attrKey() {
         #expect(NSAttributedString.Key.markdownSVGBlockSource.rawValue == "MarkdownKit.svgBlockSource")

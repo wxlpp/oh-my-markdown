@@ -1,6 +1,6 @@
+import Foundation
 import MarkdownRenderKit
 import Testing
-import Foundation
 
 @Suite("Math rendering types")
 struct MathRenderingTypeTests {
@@ -21,22 +21,70 @@ struct MathRenderingTypeTests {
 
     @Test("MathCacheKey 任一维度不同则不相等")
     func cacheKeyIdentity() {
-        let base = MathCacheKey(latex: "x", display: false, pointSize: 16,
-                                colorHex: "#000", rasterScale: 2, rendererGeneration: 1)
-        #expect(base == MathCacheKey(latex: "x", display: false, pointSize: 16,
-                                     colorHex: "#000", rasterScale: 2, rendererGeneration: 1))
-        #expect(base != MathCacheKey(latex: "x", display: false, pointSize: 24,
-                                     colorHex: "#000", rasterScale: 2, rendererGeneration: 1))
-        #expect(base != MathCacheKey(latex: "x", display: false, pointSize: 16,
-                                     colorHex: "#000", rasterScale: 2, rendererGeneration: 2))
-        #expect(base != MathCacheKey(latex: "y", display: false, pointSize: 16,
-                                     colorHex: "#000", rasterScale: 2, rendererGeneration: 1))
-        #expect(base != MathCacheKey(latex: "x", display: true, pointSize: 16,
-                                     colorHex: "#000", rasterScale: 2, rendererGeneration: 1))
-        #expect(base != MathCacheKey(latex: "x", display: false, pointSize: 16,
-                                     colorHex: "#111", rasterScale: 2, rendererGeneration: 1))
-        #expect(base != MathCacheKey(latex: "x", display: false, pointSize: 16,
-                                     colorHex: "#000", rasterScale: 3, rendererGeneration: 1))
+        let base = MathCacheKey(
+            latex: "x",
+            display: false,
+            pointSize: 16,
+            colorHex: "#000",
+            rasterScale: 2,
+            rendererGeneration: 1
+        )
+        #expect(base == MathCacheKey(
+            latex: "x",
+            display: false,
+            pointSize: 16,
+            colorHex: "#000",
+            rasterScale: 2,
+            rendererGeneration: 1
+        ))
+        #expect(base != MathCacheKey(
+            latex: "x",
+            display: false,
+            pointSize: 24,
+            colorHex: "#000",
+            rasterScale: 2,
+            rendererGeneration: 1
+        ))
+        #expect(base != MathCacheKey(
+            latex: "x",
+            display: false,
+            pointSize: 16,
+            colorHex: "#000",
+            rasterScale: 2,
+            rendererGeneration: 2
+        ))
+        #expect(base != MathCacheKey(
+            latex: "y",
+            display: false,
+            pointSize: 16,
+            colorHex: "#000",
+            rasterScale: 2,
+            rendererGeneration: 1
+        ))
+        #expect(base != MathCacheKey(
+            latex: "x",
+            display: true,
+            pointSize: 16,
+            colorHex: "#000",
+            rasterScale: 2,
+            rendererGeneration: 1
+        ))
+        #expect(base != MathCacheKey(
+            latex: "x",
+            display: false,
+            pointSize: 16,
+            colorHex: "#111",
+            rasterScale: 2,
+            rendererGeneration: 1
+        ))
+        #expect(base != MathCacheKey(
+            latex: "x",
+            display: false,
+            pointSize: 16,
+            colorHex: "#000",
+            rasterScale: 3,
+            rendererGeneration: 1
+        ))
     }
 }
 
@@ -55,10 +103,10 @@ struct MathAttributedRenderingTests {
         #expect(found)
     }
 
-    // Bug 3: baselineOffsetEx is always negative in practice (MathJax convention).
-    // A negative baselineOffsetEx means the glyph sits below the text baseline,
-    // so bounds.origin.y must also be negative (NSTextAttachment: negative y = sink down).
-    // The fix is to pass-through the sign directly: y = baselineOffsetEx * exToPoints.
+    /// Bug 3: baselineOffsetEx is always negative in practice (MathJax convention).
+    /// A negative baselineOffsetEx means the glyph sits below the text baseline,
+    /// so bounds.origin.y must also be negative (NSTextAttachment: negative y = sink down).
+    /// The fix is to pass-through the sign directly: y = baselineOffsetEx * exToPoints.
     @Test("负 baselineOffsetEx → bounds.origin.y 为负（公式下沉，符号不反置）")
     func baselineSignPassthrough() {
         var r = AttributedStringRenderer(style: .default)
@@ -90,9 +138,11 @@ struct MathAttributedRenderingTests {
         // Buggy code negates again: y = -(-0.5) * exToPoints = +positive → fails < 0
         #expect(att.bounds.origin.y < 0, "bounds.origin.y must be negative (glyph sinks below baseline)")
         let exToPoints = effectivePt * 0.5
-        let expectedY = -0.5 * exToPoints   // baselineOffsetEx * exToPoints
-        #expect(abs(att.bounds.origin.y - expectedY) < 0.001,
-                "y should equal baselineOffsetEx * exToPoints = \(expectedY), got \(att.bounds.origin.y)")
+        let expectedY = -0.5 * exToPoints // baselineOffsetEx * exToPoints
+        #expect(
+            abs(att.bounds.origin.y - expectedY) < 0.001,
+            "y should equal baselineOffsetEx * exToPoints = \(expectedY), got \(att.bounds.origin.y)"
+        )
     }
 
     @Test("命中缓存 → NSTextAttachment，基线按 baselineOffsetEx 下移")
@@ -114,7 +164,8 @@ struct MathAttributedRenderingTests {
             colorHex: MathMetrics.colorHex(
                 RenderStyle.default.mathColorOverride ?? RenderStyle.default.textColor
             ),
-            rasterScale: 1, rendererGeneration: 0)
+            rasterScale: 1, rendererGeneration: 0
+        )
         r.mathCache[key] = MathRenderedGlyph(image: img, baselineOffsetEx: 0.5)
         let s = r.render([.paragraph([.math(latex: "x^2")])])
         var hasAttachment = false
@@ -125,7 +176,8 @@ struct MathAttributedRenderingTests {
         #expect(hasAttachment)
         // 基线公式 pin（Bug 3 修复后）：bounds.y == baselineOffsetEx * effectivePointSize * 0.5（同号透传）
         let expectedPt = MathMetrics.effectivePointSize(
-            textPointSize: RenderStyle.default.bodyFont.pointSize, mathScale: 1.0)
+            textPointSize: RenderStyle.default.bodyFont.pointSize, mathScale: 1.0
+        )
         if let att = capturedAttachment {
             // After Bug 3 fix: y = baselineOffsetEx * exToPoints (sign pass-through, no negation).
             // baselineOffsetEx=0.5 (positive = glyph sits above baseline) → y = +0.5 * exToPoints > 0.
@@ -136,11 +188,14 @@ struct MathAttributedRenderingTests {
 
 #if canImport(UIKit)
 import UIKit
+
 private func makePixel() -> PlatformImage {
     UIGraphicsImageRenderer(size: .init(width: 4, height: 4)).image { _ in }
 }
+
 #elseif canImport(AppKit)
 import AppKit
+
 private func makePixel() -> PlatformImage {
     let i = NSImage(size: .init(width: 4, height: 4)); i.lockFocus(); i.unlockFocus(); return i
 }
@@ -168,8 +223,15 @@ struct MathRendererEnvTests {
         #expect(env.markdownMathRenderer == nil)
         // MathRendering 现已约束 AnyObject，测试替身改为 final class。
         final class Dummy: MathRendering, @unchecked Sendable {
-            func render(latex: String, display: Bool, pointSize: CGFloat,
-                        scale: CGFloat, color: PlatformColor) async -> MathRenderOutcome { .failed }
+            func render(
+                latex: String,
+                display: Bool,
+                pointSize: CGFloat,
+                scale: CGFloat,
+                color: PlatformColor
+            ) async -> MathRenderOutcome {
+                .failed
+            }
         }
         env.markdownMathRenderer = Dummy()
         #expect(env.markdownMathRenderer != nil)

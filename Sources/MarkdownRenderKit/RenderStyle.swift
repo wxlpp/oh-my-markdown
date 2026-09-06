@@ -177,9 +177,9 @@ public struct RenderStyle: @unchecked Sendable {
             && self.mathScale == other.mathScale
             && {
                 switch (self.mathColorOverride, other.mathColorOverride) {
-                case (nil, nil): return true
-                case let (l?, r?): return l.isEqual(r)
-                default: return false
+                case (nil, nil): true
+                case (let l?, let r?): l.isEqual(r)
+                default: false
                 }
             }()
             && self.mathTokenColor.isEqual(other.mathTokenColor)

@@ -10,26 +10,26 @@ import AppKit
 
 @Suite("Shared coordinator singletons")
 struct SharedCoordinatorTests {
-    @Test func svgSharedSingletonReturnsSameInstance() async {
+    @Test func svgSharedSingletonReturnsSameInstance() {
         let a = SVGBlockLoadCoordinator.shared
         let b = SVGBlockLoadCoordinator.shared
         #expect(a === b)
     }
 
-    @Test func mathSharedSingletonReturnsSameInstance() async {
+    @Test func mathSharedSingletonReturnsSameInstance() {
         let a = MathLoadCoordinator.shared
         let b = MathLoadCoordinator.shared
         #expect(a === b)
     }
 
-    @Test func independentInitInstancesAreNotShared() async {
+    @Test func independentInitInstancesAreNotShared() {
         let a = SVGBlockLoadCoordinator()
         let b = SVGBlockLoadCoordinator()
         #expect(a !== b)
         #expect(a !== SVGBlockLoadCoordinator.shared)
     }
 
-    @Test func mathIndependentInitInstancesAreNotShared() async {
+    @Test func mathIndependentInitInstancesAreNotShared() {
         let a = MathLoadCoordinator()
         let b = MathLoadCoordinator()
         #expect(a !== b)
@@ -72,7 +72,9 @@ struct SharedCoordinatorTests {
 
 private actor RenderCallCounter {
     var count = 0
-    func inc() { self.count += 1 }
+    func inc() {
+        self.count += 1
+    }
 }
 
 private final class CountingSVGRenderer: SVGBlockRendering, @unchecked Sendable {
@@ -83,7 +85,9 @@ private final class CountingSVGRenderer: SVGBlockRendering, @unchecked Sendable 
     private let stub: PlatformImage = NSImage(size: CGSize(width: 1, height: 1))
     #endif
 
-    init(counter: RenderCallCounter) { self.counter = counter }
+    init(counter: RenderCallCounter) {
+        self.counter = counter
+    }
 
     func render(svg _: String, availableWidth _: CGFloat, scale _: CGFloat) async -> SVGBlockOutcome {
         await self.counter.inc()

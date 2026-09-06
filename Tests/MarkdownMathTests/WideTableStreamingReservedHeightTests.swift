@@ -1,8 +1,8 @@
-import Testing
 import Foundation
-@testable import MarkdownPlatformView
 import MarkdownCore
+@testable import MarkdownPlatformView
 import MarkdownRenderKit
+import Testing
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -129,7 +129,7 @@ struct WideTableStreamingReservedHeightTests {
     @Test("流式逐 token、仅首帧最小布局，宽表预留高恒等于 overlay 实测高（每个检查点无重叠）")
     func streamingPerTokenReservedHeightStaysEqualToOverlayHeight() async {
         let viewWidth: CGFloat = 360
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: viewWidth, height: 40_000))
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: viewWidth, height: 40000))
         // 初始一帧让 textContainer 宽度落定；此后不再驱动任何收敛布局趟数。
         #if canImport(UIKit)
         view.layoutIfNeeded()

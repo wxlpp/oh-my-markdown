@@ -1,6 +1,6 @@
 import Foundation
-import MathJaxSwift
 import MarkdownRenderKit
+import MathJaxSwift
 
 /// `MathRendering` 实现：MathJax(JavaScriptCore) 把 LaTeX → SVG，再交 `SVGRasterizer` 光栅化。
 ///
@@ -30,7 +30,8 @@ public final class MathJaxRenderer: MathRendering, @unchecked Sendable {
     /// 同一 `JSContext`，彻底序列化。不得改为 `.concurrent`。
     private let renderQueue = DispatchQueue(
         label: "com.markdownkit.mathjax.render",
-        qos: .userInitiated)
+        qos: .userInitiated
+    )
 
     public init() {}
 
@@ -66,21 +67,22 @@ public final class MathJaxRenderer: MathRendering, @unchecked Sendable {
                 TeXInputProcessorOptions.Packages.ams,
                 TeXInputProcessorOptions.Packages.noundefined,
             ],
-            digits: #"^(?:[0-9]+(?:\{,\}[0-9]{3})*(?:\.[0-9]*)?|\.[0-9]+)"#)
+            digits: #"^(?:[0-9]+(?:\{,\}[0-9]{3})*(?:\.[0-9]*)?|\.[0-9]+)"#
+        )
     }
 
     /// 懒加载并缓存 `MathJax` 实例。实例化失败 → 永久 `_failed`，返回 nil。
     private func instance() -> MathJax? {
-        lock.lock()
+        self.lock.lock()
         defer { lock.unlock() }
-        if _failed { return nil }
+        if self._failed { return nil }
         if let m = _mathjax { return m }
         do {
             let m = try MathJax(preferredOutputFormat: .svg)
-            _mathjax = m
+            self._mathjax = m
             return m
         } catch {
-            _failed = true
+            self._failed = true
             return nil
         }
     }
@@ -106,9 +108,10 @@ public final class MathJaxRenderer: MathRendering, @unchecked Sendable {
             svg = try await mathjax.tex2svg(
                 latex,
                 conversionOptions: ConversionOptions(display: display),
-                inputOptions: texInputOptions,
+                inputOptions: self.texInputOptions,
                 outputOptions: SVGOutputProcessorOptions(),
-                queue: renderQueue)
+                queue: self.renderQueue
+            )
         } catch is CancellationError {
             // 死分支（当前）：MathJaxSwift 的 async 路径走 `withCheckedThrowingContinuation`
             // + `queue.async`，`tex2svg` 转换不可中断，不会抛 `CancellationError`；
@@ -126,7 +129,8 @@ public final class MathJaxRenderer: MathRendering, @unchecked Sendable {
                 svg: svg,
                 hex: MathMetrics.colorHex(color),
                 pointSize: pointSize,
-                scale: scale)
+                scale: scale
+            )
             return .rendered(glyph)
         } catch {
             return .failed

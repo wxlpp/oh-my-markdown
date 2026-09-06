@@ -1,6 +1,6 @@
 import Foundation
-import SwiftDraw
 import MarkdownRenderKit
+import SwiftDraw
 
 #if canImport(UIKit)
 import UIKit
@@ -37,12 +37,11 @@ public final class SwiftDrawSVGBlockRenderer: SVGBlockRendering, @unchecked Send
             return .failed
         }
 
-        let targetWidth: CGFloat
-        if availableWidth.isFinite, availableWidth > 0 {
+        let targetWidth: CGFloat = if availableWidth.isFinite, availableWidth > 0 {
             // fit-width，不放大：视图宽 ≥ 原生宽时保留原生宽。
-            targetWidth = min(native.width, availableWidth)
+            min(native.width, availableWidth)
         } else {
-            targetWidth = native.width
+            native.width
         }
         let targetHeight = targetWidth * native.height / native.width
         let target = CGSize(width: targetWidth, height: targetHeight)
@@ -53,8 +52,7 @@ public final class SwiftDrawSVGBlockRenderer: SVGBlockRendering, @unchecked Send
         // OOM 防御：极端纵横比 SVG 会让 fit-width 后 target 高度任意膨胀；
         // 同时 Retina scale 再放大像素量。按**像素维度**（point × scale）
         // 设上限：scale ≤0 / non-finite 时按 1 兜底，避免被恶意 scale 绕过。
-        let effectiveScale: CGFloat
-        if scale.isFinite, scale > 0 { effectiveScale = scale } else { effectiveScale = 1 }
+        let effectiveScale: CGFloat = if scale.isFinite, scale > 0 { scale } else { 1 }
         guard target.width * effectiveScale <= Self.maxRasterPixelDimension,
               target.height * effectiveScale <= Self.maxRasterPixelDimension else {
             return .failed

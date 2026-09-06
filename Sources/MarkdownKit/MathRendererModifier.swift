@@ -1,15 +1,8 @@
-import SwiftUI
 import MarkdownRenderKit
-
-private struct MarkdownMathRendererKey: EnvironmentKey {
-    static let defaultValue: (any MathRendering)? = nil
-}
+import SwiftUI
 
 extension EnvironmentValues {
-    public var markdownMathRenderer: (any MathRendering)? {
-        get { self[MarkdownMathRendererKey.self] }
-        set { self[MarkdownMathRendererKey.self] = newValue }
-    }
+    @Entry public var markdownMathRenderer: (any MathRendering)?
 }
 
 extension View {

@@ -1,9 +1,9 @@
-import Testing
 import Foundation
-@testable import MarkdownPlatformView
 import MarkdownCore
-import MarkdownRenderKit
 @testable import MarkdownMath
+@testable import MarkdownPlatformView
+import MarkdownRenderKit
+import Testing
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -59,7 +59,7 @@ struct ReadOnlyCopyOriginalSourceTests {
 
     @Test("选中全部后复制，剪贴板应为覆盖块的原始 markdown 源（公式/图片/表格/标题不丢）")
     func copyYieldsOriginalMarkdownSource() async {
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 360, height: 10_000))
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 360, height: 10000))
         #if canImport(UIKit)
         view.layoutIfNeeded()
         #elseif canImport(AppKit)
@@ -97,7 +97,7 @@ struct ReadOnlyCopyOriginalSourceTests {
         }
 
         let copied = self.selectAllAndCopy(view)
-        let objectReplacementCount = copied.filter { $0 == "\u{FFFC}" }.count
+        let objectReplacementCount = copied.count(where: { $0 == "\u{FFFC}" })
 
         // 诊断输出（改前红时人工核对实测内容）。
         print("=== Bug4 copied string ===\n\(copied)\n=== object-replacement count: \(objectReplacementCount) ===")

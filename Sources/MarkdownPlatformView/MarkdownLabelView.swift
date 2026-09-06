@@ -601,6 +601,7 @@ public final class MarkdownLabelView: UIView {
             }
         }
     }
+
     /// Canonical mutable store — avoids O(n) mutableCopy() per streaming token.
     private var _liveString = NSMutableAttributedString()
     /// Last measured intrinsic height — gates invalidateIntrinsicContentSize() calls.
@@ -646,6 +647,7 @@ public final class MarkdownLabelView: UIView {
         // updateContent/relayout 时解析（有意为之的最终一致性）。
         didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
     }
+
     /// Platform-agnostic async ```svg block render coordinator (dedup/三态/代际).
     /// View-private by default to keep test isolation (each MarkdownLabelView
     /// 自带独立 coordinator，避免不同 test 的 setRenderer 互相清 cache)。需要
@@ -697,6 +699,7 @@ public final class MarkdownLabelView: UIView {
             }
         }
     }
+
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
     private var _tableOverlays: [Int: (
         scroll: UIScrollView,
@@ -716,7 +719,8 @@ public final class MarkdownLabelView: UIView {
         let w = max(bounds.width, 1)
         if self._cachedRenderer == nil || abs(w - self._cachedRendererWidth) > 0.5 {
             var renderer = AttributedStringRenderer(
-                style: renderStyle, availableWidth: w, placeholderMode: self.renderMode)
+                style: renderStyle, availableWidth: w, placeholderMode: self.renderMode
+            )
             renderer.imageCache = self._imageCache
             // Re-seed view-held math state so resolved glyphs survive the
             // renderer recreation `resetLayout()` performs on width churn
@@ -1112,15 +1116,25 @@ public final class MarkdownLabelView: UIView {
             }
             // 一次读取代际，用同一 gen 构造所有 key（保持与原实现一致的键公式）。
             let gen = await self._mathCoordinator.generation
-            let requests: [(key: MathCacheKey, latex: String, display: Bool,
-                            color: PlatformColor, pt: CGFloat)] = raw.map {
+            let requests: [(
+                key: MathCacheKey,
+                latex: String,
+                display: Bool,
+                color: PlatformColor,
+                pt: CGFloat
+            )] = raw.map {
                 let key = MathCacheKey(
                     latex: $0.latex, display: $0.display, pointSize: $0.pt,
                     colorHex: MathMetrics.colorHex($0.color),
                     rasterScale: scale, rendererGeneration: gen
                 )
-                return (key: key, latex: $0.latex, display: $0.display,
-                        color: $0.color, pt: $0.pt)
+                return (
+                    key: key,
+                    latex: $0.latex,
+                    display: $0.display,
+                    color: $0.color,
+                    pt: $0.pt
+                )
             }
             // 先派发全部渲染（去重由 coordinator 负责）。
             for r in requests {
@@ -1312,7 +1326,8 @@ public final class MarkdownLabelView: UIView {
             // horizontal scroll position is not reset on every streaming token.
             if let existing = _tableOverlays[i], abs(existing.naturalWidth - naturalWidth) < 0.5 {
                 let renderer = AttributedStringRenderer(
-                    style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode)
+                    style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode
+                )
                 let tableStr = renderer.renderBlock(block)
                 existing.content.update(tableString: tableStr)
                 let newH = existing.content.frame.height
@@ -1338,7 +1353,8 @@ public final class MarkdownLabelView: UIView {
             // Column structure changed — (re)create the scroll view.
             self._tableOverlays[i]?.scroll.removeFromSuperview()
             let renderer = AttributedStringRenderer(
-                style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode)
+                style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode
+            )
             let tableStr = renderer.renderBlock(block)
             let contentView = TableContentView(
                 tableString: tableStr,
@@ -1988,6 +2004,7 @@ public final class MarkdownLabelView: NSView {
             }
         }
     }
+
     /// Canonical mutable store — avoids O(n) mutableCopy() per streaming token.
     private var _liveString = NSMutableAttributedString()
     /// Last measured intrinsic height — gates invalidateIntrinsicContentSize() calls.
@@ -2033,6 +2050,7 @@ public final class MarkdownLabelView: NSView {
         // updateContent/relayout 时解析（有意为之的最终一致性）。
         didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
     }
+
     /// Platform-agnostic async ```svg block render coordinator (dedup/三态/代际).
     /// View-private by default to keep test isolation (each MarkdownLabelView
     /// 自带独立 coordinator，避免不同 test 的 setRenderer 互相清 cache)。需要
@@ -2084,6 +2102,7 @@ public final class MarkdownLabelView: NSView {
             }
         }
     }
+
     /// Horizontal-scroll overlays for table blocks wider than the view, keyed by block index.
     private var _tableOverlays: [Int: (
         scroll: NSScrollView,
@@ -2099,7 +2118,8 @@ public final class MarkdownLabelView: NSView {
         let w = max(bounds.width, 1)
         if self._cachedRenderer == nil || abs(w - self._cachedRendererWidth) > 0.5 {
             var renderer = AttributedStringRenderer(
-                style: renderStyle, availableWidth: w, placeholderMode: self.renderMode)
+                style: renderStyle, availableWidth: w, placeholderMode: self.renderMode
+            )
             renderer.imageCache = self._imageCache
             // Re-seed view-held math state so resolved glyphs survive the
             // renderer recreation `resetLayout()` performs on width churn
@@ -2437,7 +2457,8 @@ public final class MarkdownLabelView: NSView {
             // Same column structure — update content in place to preserve scroll offset.
             if let existing = _tableOverlays[i], abs(existing.naturalWidth - naturalWidth) < 0.5 {
                 let renderer = AttributedStringRenderer(
-                    style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode)
+                    style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode
+                )
                 let tableStr = renderer.renderBlock(block)
                 existing.content.update(tableString: tableStr)
                 let newH = existing.content.frame.height
@@ -2463,7 +2484,8 @@ public final class MarkdownLabelView: NSView {
             // Column structure changed — (re)create the scroll view.
             self._tableOverlays[i]?.scroll.removeFromSuperview()
             let renderer = AttributedStringRenderer(
-                style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode)
+                style: renderStyle, availableWidth: naturalWidth, placeholderMode: self.renderMode
+            )
             let tableStr = renderer.renderBlock(block)
             let contentView = TableContentView(
                 tableString: tableStr,
@@ -2591,15 +2613,25 @@ public final class MarkdownLabelView: NSView {
             }
             // 一次读取代际，用同一 gen 构造所有 key（保持与原实现一致的键公式）。
             let gen = await self._mathCoordinator.generation
-            let requests: [(key: MathCacheKey, latex: String, display: Bool,
-                            color: PlatformColor, pt: CGFloat)] = raw.map {
+            let requests: [(
+                key: MathCacheKey,
+                latex: String,
+                display: Bool,
+                color: PlatformColor,
+                pt: CGFloat
+            )] = raw.map {
                 let key = MathCacheKey(
                     latex: $0.latex, display: $0.display, pointSize: $0.pt,
                     colorHex: MathMetrics.colorHex($0.color),
                     rasterScale: scale, rendererGeneration: gen
                 )
-                return (key: key, latex: $0.latex, display: $0.display,
-                        color: $0.color, pt: $0.pt)
+                return (
+                    key: key,
+                    latex: $0.latex,
+                    display: $0.display,
+                    color: $0.color,
+                    pt: $0.pt
+                )
             }
             // 先派发全部渲染（去重由 coordinator 负责）。
             for r in requests {

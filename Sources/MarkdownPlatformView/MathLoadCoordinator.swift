@@ -22,33 +22,36 @@ public actor MathLoadCoordinator {
 
     /// 记录某 key 为最近使用：从 lruOrder 移除旧位置后追加到末尾。
     private func touchLRU(_ key: MathCacheKey) {
-        if let idx = lruOrder.firstIndex(of: key) { lruOrder.remove(at: idx) }
-        lruOrder.append(key)
+        if let idx = lruOrder.firstIndex(of: key) { self.lruOrder.remove(at: idx) }
+        self.lruOrder.append(key)
     }
 
     /// 设置/替换渲染器：代际自增并清正/负/loading（spec §6）。
     public func setRenderer(_ r: (any MathRendering)?) {
-        renderer = r
-        generation += 1
-        positive.removeAll()
-        negative.removeAll()
-        inFlight.removeAll()
-        tasks.removeAll()
-        lruOrder.removeAll()
+        self.renderer = r
+        self.generation += 1
+        self.positive.removeAll()
+        self.negative.removeAll()
+        self.inFlight.removeAll()
+        self.tasks.removeAll()
+        self.lruOrder.removeAll()
     }
 
     /// scale 变化时清缓存并由调用方用新 rasterScale 重建键。
     public func invalidateForScaleChange() {
-        positive.removeAll(); negative.removeAll(); inFlight.removeAll()
-        tasks.removeAll(); lruOrder.removeAll()
+        self.positive.removeAll(); self.negative.removeAll(); self.inFlight.removeAll()
+        self.tasks.removeAll(); self.lruOrder.removeAll()
     }
 
     public func glyph(for key: MathCacheKey) -> MathRenderedGlyph? {
         guard let glyph = positive[key] else { return nil }
-        touchLRU(key)
+        self.touchLRU(key)
         return glyph
     }
-    public func isNegativeCached(_ key: MathCacheKey) -> Bool { negative.contains(key) }
+
+    public func isNegativeCached(_ key: MathCacheKey) -> Bool {
+        self.negative.contains(key)
+    }
 
     /// 需要时派发渲染。返回是否真的派发了任务（用于测试与去抖）。
     @discardableResult
@@ -57,34 +60,35 @@ public actor MathLoadCoordinator {
         pointSize: CGFloat, scale: CGFloat, color: PlatformColor
     ) -> Bool {
         guard let renderer else { return false }
-        if positive[key] != nil || negative.contains(key) || inFlight.contains(key) { return false }
-        inFlight.insert(key)
+        if self.positive[key] != nil || self.negative.contains(key) || self.inFlight.contains(key) { return false }
+        self.inFlight.insert(key)
         let task = Task { [weak self] in
             let outcome = await renderer.render(
-                latex: latex, display: display, pointSize: pointSize, scale: scale, color: color)
+                latex: latex, display: display, pointSize: pointSize, scale: scale, color: color
+            )
             await self?.finish(key: key, outcome: outcome)
         }
-        tasks[key] = task
+        self.tasks[key] = task
         return true
     }
 
     private func finish(key: MathCacheKey, outcome: MathRenderOutcome) {
-        inFlight.remove(key)
-        tasks[key] = nil
+        self.inFlight.remove(key)
+        self.tasks[key] = nil
         switch outcome {
         case .rendered(let glyph):
             // 注：被取代的 renderer/代际的迟到完成可能写入一个 key 携带旧
             // rendererGeneration 的条目；它永不会被读取（查找始终用当前代际），
             // 并由下面的 LRU 上限自然回收 —— 这是有意为之，勿"修复"。
-            positive[key] = glyph
-            touchLRU(key)
-            if positive.count > positiveCap, let lru = lruOrder.first {
-                positive[lru] = nil
-                lruOrder.removeFirst()
+            self.positive[key] = glyph
+            self.touchLRU(key)
+            if self.positive.count > self.positiveCap, let lru = lruOrder.first {
+                self.positive[lru] = nil
+                self.lruOrder.removeFirst()
             }
         case .failed:
-            if negative.count >= negativeCap { negative.removeAll() }
-            negative.insert(key)
+            if self.negative.count >= self.negativeCap { self.negative.removeAll() }
+            self.negative.insert(key)
         case .cancelled: break
         }
     }
@@ -93,7 +97,7 @@ public actor MathLoadCoordinator {
     /// Production-safe alternative to `drain()` (which is test-only, awaits ALL tasks).
     public func awaitGlyph(for key: MathCacheKey) async -> MathRenderedGlyph? {
         if let t = tasks[key] { _ = await t.value }
-        return glyph(for: key)
+        return self.glyph(for: key)
     }
 
     /// 测试辅助：等所有在途任务结束。

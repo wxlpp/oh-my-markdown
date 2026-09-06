@@ -1,19 +1,22 @@
+import CoreGraphics
 @testable import MarkdownPlatformView
 import MarkdownRenderKit
 import Testing
-import CoreGraphics
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
 import AppKit
 #endif
 
-// SVGBlockRendering 约束 AnyObject（与 math 协议一致：唯一生产实现为 final class
-// SwiftDrawSVGBlockRenderer）。测试替身用 final class，与 MathLoadCoordinatorTests
-// 的 StubRenderer 同形。
+/// SVGBlockRendering 约束 AnyObject（与 math 协议一致：唯一生产实现为 final class
+/// SwiftDrawSVGBlockRenderer）。测试替身用 final class，与 MathLoadCoordinatorTests
+/// 的 StubRenderer 同形。
 private final class StubSVGRenderer: SVGBlockRendering, @unchecked Sendable {
     let outcome: SVGBlockOutcome
-    init(_ o: SVGBlockOutcome) { self.outcome = o }
+    init(_ o: SVGBlockOutcome) {
+        self.outcome = o
+    }
+
     func render(svg _: String, availableWidth _: CGFloat, scale _: CGFloat) async -> SVGBlockOutcome {
         self.outcome
     }
@@ -41,7 +44,8 @@ struct SVGBlockLoadCoordinatorTests {
     func nilRendererNoDispatch() async {
         let c = SVGBlockLoadCoordinator()
         let dispatched = await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1)
+            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
+        )
         #expect(dispatched == false)
     }
 
@@ -50,10 +54,12 @@ struct SVGBlockLoadCoordinatorTests {
         let c = SVGBlockLoadCoordinator()
         await c.setRenderer(StubSVGRenderer(.rendered(sampleGlyph())))
         #expect(await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1) == true)
+            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
+        ) == true)
         #expect(await c.awaitGlyph(for: svgKey()) != nil)
         #expect(await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1) == false)
+            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
+        ) == false)
     }
 
     @Test(".failed → 负缓存，后续不再派发")
@@ -61,11 +67,13 @@ struct SVGBlockLoadCoordinatorTests {
         let c = SVGBlockLoadCoordinator()
         await c.setRenderer(StubSVGRenderer(.failed))
         _ = await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1)
+            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
+        )
         _ = await c.awaitGlyph(for: svgKey())
         #expect(await c.isNegativeCached(svgKey()))
         #expect(await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1) == false)
+            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
+        ) == false)
         #expect(await c.glyph(for: svgKey()) == nil)
     }
 
@@ -74,7 +82,8 @@ struct SVGBlockLoadCoordinatorTests {
         let c = SVGBlockLoadCoordinator()
         await c.setRenderer(StubSVGRenderer(.cancelled))
         _ = await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1)
+            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
+        )
         _ = await c.awaitGlyph(for: svgKey())
         #expect(await c.isNegativeCached(svgKey()) == false)
         #expect(await c.glyph(for: svgKey()) == nil)
@@ -86,7 +95,8 @@ struct SVGBlockLoadCoordinatorTests {
         await c.setRenderer(StubSVGRenderer(.rendered(sampleGlyph())))
         let g0 = await c.generation
         _ = await c.loadIfNeeded(
-            key: svgKey(gen: g0), svg: "<svg/>", availableWidth: 100, scale: 1)
+            key: svgKey(gen: g0), svg: "<svg/>", availableWidth: 100, scale: 1
+        )
         _ = await c.awaitGlyph(for: svgKey(gen: g0))
         #expect(await c.glyph(for: svgKey(gen: g0)) != nil)
         await c.setRenderer(StubSVGRenderer(.rendered(sampleGlyph())))
@@ -99,7 +109,8 @@ struct SVGBlockLoadCoordinatorTests {
         let c = SVGBlockLoadCoordinator()
         await c.setRenderer(StubSVGRenderer(.rendered(sampleGlyph())))
         _ = await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1)
+            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
+        )
         _ = await c.awaitGlyph(for: svgKey())
         let g = await c.generation
         await c.invalidateForScaleChange()

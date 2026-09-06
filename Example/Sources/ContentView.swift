@@ -17,13 +17,13 @@ struct ContentView: View {
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder
-    func inlineNavigationTitleDisplayMode() -> some View {
+    fileprivate func inlineNavigationTitleDisplayMode() -> some View {
         #if os(iOS)
-            navigationBarTitleDisplayMode(.inline)
+        navigationBarTitleDisplayMode(.inline)
         #else
-            self
+        self
         #endif
     }
 }
@@ -51,11 +51,11 @@ private enum StylePreset: String, CaseIterable, Identifiable {
         case .large:
             var s = RenderStyle.default
             #if canImport(UIKit)
-                s.bodyFont = .preferredFont(forTextStyle: .title3)
-                s.codeFont = .monospacedSystemFont(ofSize: 17, weight: .regular)
+            s.bodyFont = .preferredFont(forTextStyle: .title3)
+            s.codeFont = .monospacedSystemFont(ofSize: 17, weight: .regular)
             #elseif canImport(AppKit)
-                s.bodyFont = .systemFont(ofSize: 17)
-                s.codeFont = .monospacedSystemFont(ofSize: 16, weight: .regular)
+            s.bodyFont = .systemFont(ofSize: 17)
+            s.codeFont = .monospacedSystemFont(ofSize: 16, weight: .regular)
             #endif
             s.paragraphSpacing = 12
             return s
@@ -254,7 +254,7 @@ private struct StreamTab: View {
                 }
                 do {
                     // Use try (not try?) so CancellationError propagates and stops the loop
-                    try await Task.sleep(for: .milliseconds(Int.random(in: 18...55)))
+                    try await Task.sleep(for: .milliseconds(Int.random(in: 18 ... 55)))
                 } catch {
                     break
                 }
@@ -589,7 +589,7 @@ private let streamTokens: [String] = {
     var idx = text.startIndex
     while idx < text.endIndex {
         let next = text.index(idx, offsetBy: 2, limitedBy: text.endIndex) ?? text.endIndex
-        tokens.append(String(text[idx..<next]))
+        tokens.append(String(text[idx ..< next]))
         idx = next
     }
     return tokens

@@ -15,7 +15,8 @@ struct PlaceholderModeRendererTests {
     @Test func svgStaticMissEmitsTransparentAttachmentWithMarker() {
         let svg = #"<svg viewBox="0 0 480 320"></svg>"#
         let renderer = AttributedStringRenderer(
-            style: .default, availableWidth: 600, placeholderMode: .static)
+            style: .default, availableWidth: 600, placeholderMode: .static
+        )
         let block = BlockNode.codeBlock(language: "svg", body: svg)
         let result = renderer.renderBlock(block)
 
@@ -47,7 +48,8 @@ struct PlaceholderModeRendererTests {
         // viewBox 比 availableWidth 大 → fit-width 收紧到 availableWidth
         let svg = #"<svg viewBox="0 0 1200 600"></svg>"#
         let renderer = AttributedStringRenderer(
-            style: .default, availableWidth: 400, placeholderMode: .static)
+            style: .default, availableWidth: 400, placeholderMode: .static
+        )
         let block = BlockNode.codeBlock(language: "svg", body: svg)
         let result = renderer.renderBlock(block)
         let full = NSRange(location: 0, length: result.length)
@@ -67,7 +69,8 @@ struct PlaceholderModeRendererTests {
     @Test func svgStreamingMissEmitsHighlightedSourceWithMarker() {
         let svg = #"<svg viewBox="0 0 480 320"></svg>"#
         let renderer = AttributedStringRenderer(
-            style: .default, availableWidth: 600, placeholderMode: .streaming)
+            style: .default, availableWidth: 600, placeholderMode: .streaming
+        )
         let block = BlockNode.codeBlock(language: "svg", body: svg)
         let result = renderer.renderBlock(block)
 
@@ -93,7 +96,8 @@ struct PlaceholderModeRendererTests {
     @Test func svgStaticMissFallsBackTo60PercentAspectWhenNoViewBox() {
         let svg = "<svg></svg>"
         let renderer = AttributedStringRenderer(
-            style: .default, availableWidth: 600, placeholderMode: .static)
+            style: .default, availableWidth: 600, placeholderMode: .static
+        )
         let block = BlockNode.codeBlock(language: "svg", body: svg)
         let result = renderer.renderBlock(block)
 
@@ -118,7 +122,8 @@ struct PlaceholderModeRendererTests {
         style.bodyFont = .systemFont(ofSize: 17)
         #endif
         let renderer = AttributedStringRenderer(
-            style: style, availableWidth: 600, placeholderMode: .static)
+            style: style, availableWidth: 600, placeholderMode: .static
+        )
         let block = BlockNode.mathBlock(latex: "x = \\frac{a}{b}")
         let result = renderer.renderBlock(block)
 
@@ -152,7 +157,8 @@ struct PlaceholderModeRendererTests {
 
         for mode in [PlaceholderMode.static, .streaming] {
             var renderer = AttributedStringRenderer(
-                style: .default, availableWidth: 600, placeholderMode: mode)
+                style: .default, availableWidth: 600, placeholderMode: mode
+            )
             renderer.svgRasterScale = 2
             renderer.svgRendererGeneration = 0
             renderer.svgBlockCache[key] = glyph
@@ -183,7 +189,8 @@ struct PlaceholderModeRendererTests {
 
         // 1) Static-miss 路径
         let missRenderer = AttributedStringRenderer(
-            style: .default, availableWidth: availableWidth, placeholderMode: .static)
+            style: .default, availableWidth: availableWidth, placeholderMode: .static
+        )
         let missResult = missRenderer.renderBlock(BlockNode.codeBlock(language: "svg", body: svg))
         var missBounds = CGRect.zero
         missResult.enumerateAttribute(
@@ -202,9 +209,11 @@ struct PlaceholderModeRendererTests {
         let stub = NSImage(size: nativeTargetSize)
         #endif
         let key = SVGBlockCacheKey(
-            svg: svg, availableWidth: availableWidth, rasterScale: 1, rendererGeneration: 0)
+            svg: svg, availableWidth: availableWidth, rasterScale: 1, rendererGeneration: 0
+        )
         var hitRenderer = AttributedStringRenderer(
-            style: .default, availableWidth: availableWidth, placeholderMode: .static)
+            style: .default, availableWidth: availableWidth, placeholderMode: .static
+        )
         hitRenderer.svgRasterScale = 1
         hitRenderer.svgRendererGeneration = 0
         hitRenderer.svgBlockCache[key] = SVGBlockGlyph(image: stub)
@@ -218,10 +227,14 @@ struct PlaceholderModeRendererTests {
         }
 
         // 关键不变量：miss.bounds == hit.bounds，保证 swap 瞬间 layout 不动
-        #expect(abs(missBounds.size.width - hitBounds.size.width) < 0.001,
-                "miss width \(missBounds.size.width) ≠ hit width \(hitBounds.size.width)")
-        #expect(abs(missBounds.size.height - hitBounds.size.height) < 0.001,
-                "miss height \(missBounds.size.height) ≠ hit height \(hitBounds.size.height)")
+        #expect(
+            abs(missBounds.size.width - hitBounds.size.width) < 0.001,
+            "miss width \(missBounds.size.width) ≠ hit width \(hitBounds.size.width)"
+        )
+        #expect(
+            abs(missBounds.size.height - hitBounds.size.height) < 0.001,
+            "miss height \(missBounds.size.height) ≠ hit height \(hitBounds.size.height)"
+        )
     }
 
     // MARK: math cache hit 两 mode 一致（钉住 static-mode "命中走 renderMath fall-through" 的安全论证）
@@ -251,7 +264,8 @@ struct PlaceholderModeRendererTests {
 
         for mode in [PlaceholderMode.static, .streaming] {
             var renderer = AttributedStringRenderer(
-                style: style, availableWidth: 600, placeholderMode: mode)
+                style: style, availableWidth: 600, placeholderMode: mode
+            )
             renderer.mathRasterScale = 1
             renderer.mathRendererGeneration = 0
             renderer.mathCache[key] = glyph
@@ -265,7 +279,8 @@ struct PlaceholderModeRendererTests {
             }
             #expect(
                 hitAttachmentWithImage,
-                "math cache hit 应在两 mode 下都通过 renderMath fall-through 走 hit 分支，产出携带 image 的 attachment（mode=\(mode)）")
+                "math cache hit 应在两 mode 下都通过 renderMath fall-through 走 hit 分支，产出携带 image 的 attachment（mode=\(mode)）"
+            )
         }
     }
 

@@ -1,6 +1,6 @@
 import Foundation
-import SwiftDraw
 import MarkdownRenderKit
+import SwiftDraw
 
 #if canImport(UIKit)
 import UIKit
@@ -10,21 +10,21 @@ import AppKit
 
 enum SVGRasterizerError: Error { case parseFailed, rasterizeFailed }
 
-/// SVG 字符串 → 颜色注入 → ex 归一化 → SwiftDraw 光栅化 → MathRenderedGlyph。
-///
-/// **输入契约**：仅支持 MathJax 默认 inline SVG 格式——根 `<svg>` 带数值
-/// `width="<num>ex"` 属性和 `viewBox`。Container/SVG-tag 模式（根 `width="100%"`、
-/// 无 `viewBox`）不受支持，会抛 `.parseFailed`（由 Task 14 配置侧保证不产生此类输出）。
-///
-/// 两条硬约束：
-/// 1. 根 svg 元素 width/height 的 `<num>ex` 必须改写为 `<num>px` 再喂给 SwiftDraw。
-///    **注意这条的理由已经变了**：原文写的是「SwiftDraw 不支持 `ex`，`SVG(data:)`
-///    直接返回 nil」——那在 pin 着 `4d09d03` 的时候成立，自 SwiftDraw `0.29.0` 起
-///    **不再成立**（它新增了 `.em` / `.ex`，见其 `DOM.swift`）。
-///    归一化仍然必须做，但现在是为了**尺寸正确**而不是为了「能解析」：SwiftDraw 按
-///    **1ex = 1pt** 解析，而 MathJax 的 `ex` 是相对于当前字体的 x-height，两者不等。
-///    不归一化的话不再是「解析失败」，而是**静默渲出一个尺寸错误的公式**——从显式
-///    失败退化成静默错误，比原来更难发现。
+// SVG 字符串 → 颜色注入 → ex 归一化 → SwiftDraw 光栅化 → MathRenderedGlyph。
+//
+// **输入契约**：仅支持 MathJax 默认 inline SVG 格式——根 `<svg>` 带数值
+// `width="<num>ex"` 属性和 `viewBox`。Container/SVG-tag 模式（根 `width="100%"`、
+// 无 `viewBox`）不受支持，会抛 `.parseFailed`（由 Task 14 配置侧保证不产生此类输出）。
+//
+// 两条硬约束：
+// 1. 根 svg 元素 width/height 的 `<num>ex` 必须改写为 `<num>px` 再喂给 SwiftDraw。
+//    **注意这条的理由已经变了**：原文写的是「SwiftDraw 不支持 `ex`，`SVG(data:)`
+//    直接返回 nil」——那在 pin 着 `4d09d03` 的时候成立，自 SwiftDraw `0.29.0` 起
+//    **不再成立**（它新增了 `.em` / `.ex`，见其 `DOM.swift`）。
+//    归一化仍然必须做，但现在是为了**尺寸正确**而不是为了「能解析」：SwiftDraw 按
+//    **1ex = 1pt** 解析，而 MathJax 的 `ex` 是相对于当前字体的 x-height，两者不等。
+//    不归一化的话不再是「解析失败」，而是**静默渲出一个尺寸错误的公式**——从显式
+//    失败退化成静默错误，比原来更难发现。
 
 /// 2. 返回的 `image.size` 必须是「点」单位（目标文本空间渲染尺寸），不是像素。
 ///    SwiftDraw 的 rasterize API 分平台（标签/返回类型不同），点尺寸契约在两平台
@@ -64,10 +64,10 @@ enum SVGRasterizer {
     /// width/height 属性里，也不具备 `width="<num>ex"` 形态，故不会被误伤。
     static func normalizeUnits(_ svg: String) -> String {
         guard let openStart = svg.range(of: "<svg"),
-              let openEnd = svg.range(of: ">", range: openStart.lowerBound..<svg.endIndex)
+              let openEnd = svg.range(of: ">", range: openStart.lowerBound ..< svg.endIndex)
         else { return svg }
 
-        let tagRange = openStart.lowerBound..<openEnd.upperBound
+        let tagRange = openStart.lowerBound ..< openEnd.upperBound
         let tag = String(svg[tagRange])
 
         let pattern = #"((?:width|height)\s*=\s*")(\d*\.?\d+)ex(")"#
@@ -88,7 +88,7 @@ enum SVGRasterizer {
         scale: CGFloat
     ) throws -> MathRenderedGlyph {
         // ex→px 归一化只为喂 SwiftDraw 解析；高度/基线仍读原始 svg 的 ex 值。
-        let colored = normalizeUnits(injectColor(into: svg, hex: hex))
+        let colored = self.normalizeUnits(self.injectColor(into: svg, hex: hex))
         guard let data = colored.data(using: .utf8),
               let drawing = SwiftDraw.SVG(data: data) else {
             throw SVGRasterizerError.parseFailed
@@ -123,6 +123,6 @@ enum SVGRasterizer {
         guard image.size.width > 1, image.size.height > 1 else {
             throw SVGRasterizerError.rasterizeFailed
         }
-        return MathRenderedGlyph(image: image, baselineOffsetEx: parseVerticalAlignEx(svg))
+        return MathRenderedGlyph(image: image, baselineOffsetEx: self.parseVerticalAlignEx(svg))
     }
 }

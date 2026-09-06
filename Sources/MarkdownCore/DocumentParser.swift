@@ -111,8 +111,8 @@ public struct MarkdownDocument: Sendable, Equatable {
         return MarkdownDocument(parsedBlocks: Array(self.parsedBlocks.prefix(reparseIndex)) + reparsedTail)
     }
 
-    // internal（非 private）：测试守卫复用同一套 reparse 边界计算，
-    // 与 `parsingAppend` 内部口径完全一致，避免守卫自算边界产生口径漂移。
+    /// internal（非 private）：测试守卫复用同一套 reparse 边界计算，
+    /// 与 `parsingAppend` 内部口径完全一致，避免守卫自算边界产生口径漂移。
     func tailReparseStartIndex() -> Int {
         guard self.parsedBlocks.count >= 2 else {
             return max(self.parsedBlocks.count - 1, 0)

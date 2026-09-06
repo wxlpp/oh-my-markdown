@@ -1,7 +1,7 @@
-import Testing
 import Foundation
-@testable import MarkdownRenderKit
 @testable import MarkdownPlatformView
+@testable import MarkdownRenderKit
+import Testing
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -44,7 +44,7 @@ struct StreamingSVGBlockCacheSurvivesRendererRecreationTests {
     }
 
     private func run(churnWidth: Bool) async -> (heldResolved: Bool, attachTrace: [Int]) {
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 10_000))
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 10000))
         #if canImport(UIKit)
         view.layoutIfNeeded()
         #elseif canImport(AppKit)
@@ -59,7 +59,7 @@ struct StreamingSVGBlockCacheSurvivesRendererRecreationTests {
             if ti == 0 { view.setMarkdown(tok) } else { view.appendMarkdown(tok) }
             if churnWidth, ti % 4 == 0 {
                 let w: CGFloat = (ti % 8 == 0) ? 322 : 318
-                view.frame = CGRect(x: 0, y: 0, width: w, height: 10_000)
+                view.frame = CGRect(x: 0, y: 0, width: w, height: 10000)
             }
             try? await Task.sleep(nanoseconds: 30_000_000)
         }
@@ -74,7 +74,7 @@ struct StreamingSVGBlockCacheSurvivesRendererRecreationTests {
             if churnWidth, step % 3 == 0 {
                 churnToggle.toggle()
                 let w: CGFloat = churnToggle ? 322 : 318
-                view.frame = CGRect(x: 0, y: 0, width: w, height: 10_000)
+                view.frame = CGRect(x: 0, y: 0, width: w, height: 10000)
                 #if canImport(AppKit)
                 view.layoutSubtreeIfNeeded()
                 #endif

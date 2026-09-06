@@ -18,10 +18,17 @@ import Testing
 ///      nil 替换成默认非 nil 时，env 不再为 nil → RED。
 @Suite("mathRenderer(_:) optional widening")
 struct MathRendererModifierOptionalTests {
-    // MathRendering 现已约束 AnyObject，测试替身为 final class。
+    /// MathRendering 现已约束 AnyObject，测试替身为 final class。
     private final class Dummy: MathRendering, @unchecked Sendable {
-        func render(latex: String, display: Bool, pointSize: CGFloat,
-                    scale: CGFloat, color: PlatformColor) async -> MathRenderOutcome { .failed }
+        func render(
+            latex: String,
+            display: Bool,
+            pointSize: CGFloat,
+            scale: CGFloat,
+            color: PlatformColor
+        ) async -> MathRenderOutcome {
+            .failed
+        }
     }
 
     @MainActor
@@ -49,7 +56,7 @@ struct MathRendererModifierOptionalTests {
         // 语义守卫：modifier 把 nil 原样写入可选 env → math 禁用。
         // git-反证（备选）：modifier 内部把 nil 换成默认非 nil → 此断言 RED。
         var env = EnvironmentValues()
-        env.markdownMathRenderer = Dummy()      // 先放一个，确认 nil 真能清除
+        env.markdownMathRenderer = Dummy() // 先放一个，确认 nil 真能清除
         env.markdownMathRenderer = nil
         #expect(env.markdownMathRenderer == nil)
     }

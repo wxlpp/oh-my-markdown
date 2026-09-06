@@ -67,10 +67,12 @@ struct TableMeasurementLaidOutEquivalenceTests {
         | 排版 | ~0.8 ms | TextKit 2 行片段 |
         """)
         let built = TableMeasurement.height(of: table, naturalWidth: naturalWidth)
-        let laidOut = heightViaSelfLaidOutStack(table, naturalWidth: naturalWidth)
+        let laidOut = self.heightViaSelfLaidOutStack(table, naturalWidth: naturalWidth)
         #expect(built > 0)
-        #expect(built == laidOut,
-                "built-stack \(built) must byte-for-byte equal laid-out \(laidOut) (constructive equality)")
+        #expect(
+            built == laidOut,
+            "built-stack \(built) must byte-for-byte equal laid-out \(laidOut) (constructive equality)"
+        )
     }
 
     @MainActor
@@ -84,9 +86,11 @@ struct TableMeasurementLaidOutEquivalenceTests {
         | Gemini 2.5 Pro | Google | 1 M | 中 | ✅ | ✅ | ✅ | 中 | $3.50 |
         """)
         let built = TableMeasurement.height(of: table, naturalWidth: naturalWidth)
-        let laidOut = heightViaSelfLaidOutStack(table, naturalWidth: naturalWidth)
+        let laidOut = self.heightViaSelfLaidOutStack(table, naturalWidth: naturalWidth)
         #expect(built > 0)
-        #expect(built == laidOut,
-                "wide-table built-stack \(built) must byte-for-byte equal laid-out \(laidOut)")
+        #expect(
+            built == laidOut,
+            "wide-table built-stack \(built) must byte-for-byte equal laid-out \(laidOut)"
+        )
     }
 }
