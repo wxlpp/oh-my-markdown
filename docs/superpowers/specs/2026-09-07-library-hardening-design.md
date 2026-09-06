@@ -1,7 +1,7 @@
 # MarkdownKit Library Hardening Design
 
-**Date:** 2026-09-07  
-**Target release:** 0.2.0  
+**Date:** 2026-09-07
+**Target release:** 0.2.0
 **Status:** In review
 
 ## 1. Context
