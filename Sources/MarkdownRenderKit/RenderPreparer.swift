@@ -21,7 +21,7 @@ public struct RenderPreparer: Sendable {
             if index > 0 { pieces.append(.run(builder.separator())) }
             pieces.append(.blockStart)
             let start = builder.runs.count
-            pieces += try builder.block(block.block)
+            pieces += try builder.block(block.block, overlayBlockIndex: index)
             blocks.append(DisplayBlock(lineage: UInt64(index), runs: Array(builder.runs[start...]), sourceRange: block.sourceRange))
         }
         return RenderDisplayModel(runs: builder.runs, blocks: blocks, resources: builder.resources, input: input, preparedContent: pieces)
@@ -99,7 +99,7 @@ private struct PreparationBuilder {
         return result
     }
 
-    mutating func block(_ node: BlockNode) throws -> [PreparedPiece] {
+    mutating func block(_ node: BlockNode, overlayBlockIndex: Int? = nil) throws -> [PreparedPiece] {
         try Task.checkCancellation()
         var attrs = self.body()
         switch node {
@@ -175,7 +175,7 @@ private struct PreparationBuilder {
                 }
                 preparedRows.append(prepared)
             }
-            return [.table(PreparedTable(columns: columns, head: preparedHead, rows: preparedRows, width: self.width))]
+            return [.table(PreparedTable(blockIndex: overlayBlockIndex, columns: columns, head: preparedHead, rows: preparedRows, width: self.width))]
         }
     }
 

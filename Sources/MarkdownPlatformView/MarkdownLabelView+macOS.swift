@@ -20,7 +20,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     private let sessionRegistry = RenderSessionSinkRegistry()
     private let sessionID = RenderSessionID(rawValue: UUID())
     private let configurationID = MarkdownConfigurationID.uniqueInstance()
-    private var sessionDriver: (any RenderSessionDriving)?
+    package private(set) var sessionDriver: (any RenderSessionDriving)?
     private var isDismantled = false
     private var requestedWidth: CGFloat = 1
     private var mathRendererUpdateTask: Task<Void, Never>?
@@ -53,13 +53,13 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self._svgRasterScale = scale
         self._mathCache.removeAll()
         self._svgBlockCache.removeAll()
-        self._cachedRenderer = nil
         self.updateContent()
     }
 
     package func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken) {
         precondition(self.currentCommitToken.map { token.sequence >= $0.sequence } ?? true)
         self.currentCommitToken = token
+        self.imageRequests = self.imageRequests.filter { $0.key.token == token }
         self.lastRenderError = nil
         let previousSnapshot = self.currentSnapshot
         self.contentStorage.performEditingTransaction {
@@ -73,13 +73,17 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self.parsedBlocks = snapshot.displayModel.preparedBlocks ?? []
         self.renderedBlocks = self.parsedBlocks.map(\.block)
         self.lastParsedSource = snapshot.displayModel.source ?? ""
-        self._cachedRenderer = nil
-        self._cachedRendererWidth = snapshot.displayModel.availableWidth
         self.resetLayout()
         let range = NSRange(location: 0, length: snapshot.attributedString.length)
         self.triggerImageLoads(in: range)
         self.triggerMathLoads(in: range)
         self.triggerSVGBlockLoads(in: range)
+        for table in snapshot.tableOverlays.values {
+            let range = NSRange(location: 0, length: table.attributedString.length)
+            self.triggerImageLoads(in: range, string: table.attributedString)
+            self.triggerMathLoads(in: range, string: table.attributedString)
+            self.triggerSVGBlockLoads(in: range, string: table.attributedString)
+        }
         withExtendedLifetime(previousSnapshot) {}
     }
 
@@ -135,8 +139,8 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self.sessionDriver?.send(.dismantle)
         self.sessionRegistry.revokeAndUnregister(self.sessionID)
         self.sessionDriver = nil
-        self._cachedRenderer = nil
         self._imageCache.removeAll()
+        self.imageRequests.removeAll()
         self._mathCache.removeAll()
         self._svgBlockCache.removeAll()
         withExtendedLifetime(previousSnapshot) {}
@@ -175,7 +179,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             guard !self.renderStyle.isSemanticallyEqual(to: oldValue) else {
                 return
             }
-            self._cachedRenderer = nil
             self._tableOverlays.values.forEach { $0.scroll.removeFromSuperview() }
             self._tableOverlays.removeAll()
             self.updateContent()
@@ -441,24 +444,8 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     )
     private var lastParsedSource = ""
     private var parsedBlocks: [ParsedBlockNode] = []
-    // Cached renderer — invalidated when renderStyle or available width changes.
-    private var _cachedRenderer: AttributedStringRenderer?
-    private var _cachedRendererWidth: CGFloat = 0
-    /// 占位 mode 跟踪：`setMarkdown` 翻 `.static`、`appendMarkdown` 翻 `.streaming`。
-    /// 传给 `AttributedStringRenderer.init(...)` 决定 cache-miss 占位形态（透明 vs 源码）。
-    /// 默认 `.static`（构造时空内容场景）。
-    /// `_cachedRenderer.placeholderMode` 是 `let`，因此 mode 真正翻转时必须把
-    /// `_cachedRenderer` 清掉，下次 `cachedRenderer` 取值会用新 mode 重建。
-    /// Tracks placeholder mode; flipped by setMarkdown/appendMarkdown.
-    /// `public internal(set)`: tests read, only the module writes.
-    public internal(set) var renderMode: PlaceholderMode = .static {
-        didSet {
-            if oldValue != self.renderMode {
-                // mode 翻转 → cached renderer 的 placeholderMode 是 let，必须重建。
-                self._cachedRenderer = nil
-            }
-        }
-    }
+    /// Tracks the public set/append placeholder mode.
+    public internal(set) var renderMode: PlaceholderMode = .static
 
     /// Platform drawing mirror. The immutable current snapshot owns attachments.
     private var _liveString = NSMutableAttributedString()
@@ -480,19 +467,18 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     /// In-memory image cache keyed by source URL string.
     private var _imageCache: [String: NSImage] = [:]
     /// Source URLs currently being fetched (prevents duplicate requests).
-    private var _imageLoading: Set<String> = []
+    package private(set) var imageRequests: [RenderImageRequest: RenderImageLoadState] = [:]
+    package var imageLoader: RenderImageLoader = { url in
+        let (data, _) = try await URLSession.shared.data(from: url)
+        return data
+    }
+
     /// Platform-agnostic async math render coordinator (dedup/三态/代际).
     /// View-private by default to keep test isolation (each MarkdownLabelView
     /// 自带独立 coordinator，避免不同 test 的 setRenderer 互相清 cache)。需要
     /// 跨 view 共享 cache 的调用方可显式注入 `MathLoadCoordinator.shared`。
     private let _mathCoordinator = MathLoadCoordinator()
-    /// View-held math glyph cache / raster scale / renderer generation —
-    /// the **canonical store** for async math write-back, mirroring
-    /// `_imageCache`. The transient `_cachedRenderer` is discarded by
-    /// `resetLayout()` whenever `bounds.width` changes (streaming churn);
-    /// keeping math state on the view (and re-seeding it into every freshly
-    /// built renderer in `cachedRenderer`) is what makes resolved glyphs
-    /// survive renderer recreation — exactly as `_imageCache` already does.
+    /// MainActor compatibility cache; published attachments retain their own owners.
     private var _mathCache: [MathCacheKey: MathRenderedGlyph] = [:]
     private var _mathRasterScale: CGFloat = 1
     private var _mathRendererGeneration: Int = 0
@@ -501,7 +487,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         didSet {
             guard !self.isDismantled, oldValue !== self.mathRenderer else { return }
             self._mathCache.removeAll()
-            self._cachedRenderer = nil
             let coordinator = self._mathCoordinator
             let renderer = self.mathRenderer
             let previousUpdate = self.mathRendererUpdateTask
@@ -519,12 +504,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     /// 自带独立 coordinator，避免不同 test 的 setRenderer 互相清 cache)。需要
     /// 跨 view 共享 cache 的调用方可显式注入 `SVGBlockLoadCoordinator.shared`。
     private let _svgBlockCoordinator = SVGBlockLoadCoordinator()
-    /// View-held svg-block glyph cache / raster scale / renderer generation —
-    /// the **canonical store** for async svg write-back, mirroring `_mathCache`
-    /// discipline. The transient `_cachedRenderer` is discarded by `resetLayout()`
-    /// on width churn; keeping svg state on the view (and re-seeding it into
-    /// every freshly built renderer in `cachedRenderer`) is what makes resolved
-    /// svg images survive renderer recreation — identical to `_mathCache`.
+    /// MainActor compatibility cache for SVG glyphs.
     private var _svgBlockCache: [SVGBlockCacheKey: SVGBlockGlyph] = [:]
     private var _svgRasterScale: CGFloat = 1
     private var _svgBlockRendererGeneration: Int = 0
@@ -533,7 +513,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         didSet {
             guard !self.isDismantled, oldValue !== self.svgBlockRenderer else { return }
             self._svgBlockCache.removeAll()
-            self._cachedRenderer = nil
             let coordinator = self._svgBlockCoordinator
             let renderer = self.svgBlockRenderer
             let previousUpdate = self.svgRendererUpdateTask
@@ -550,35 +529,12 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     var _tableOverlays: [Int: (
         scroll: NSScrollView,
         content: TableContentView,
-        block: BlockNode,
+        data: RenderTableOverlay,
         naturalWidth: CGFloat
     )] = [:]
     private var _pendingTableOverlaySyncStart: Int?
 
     private var blockStarts: [Int] = []
-
-    private var cachedRenderer: AttributedStringRenderer {
-        let w = self.requestedWidth
-        if self._cachedRenderer == nil || abs(w - self._cachedRendererWidth) > 0.5 {
-            var renderer = AttributedStringRenderer(
-                style: renderStyle, availableWidth: w, placeholderMode: self.renderMode
-            )
-            renderer.imageCache = self._imageCache
-            // Re-seed view-held math state so resolved glyphs survive the
-            // renderer recreation `resetLayout()` performs on width churn
-            // (identical discipline to `imageCache` above).
-            renderer.mathCache = self._mathCache
-            renderer.mathRasterScale = self._mathRasterScale
-            renderer.mathRendererGeneration = self._mathRendererGeneration
-            // 同款 svg 重播种：让解析后的 svg 字形熬过 width churn 引发的 renderer 重建。
-            renderer.svgBlockCache = self._svgBlockCache
-            renderer.svgRasterScale = self._svgRasterScale
-            renderer.svgRendererGeneration = self._svgBlockRendererGeneration
-            self._cachedRenderer = renderer
-            self._cachedRendererWidth = w
-        }
-        return self._cachedRenderer!
-    }
 
     var decorations: MarkdownLabelDecorations {
         MarkdownLabelDecorations(
@@ -608,7 +564,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self.textContainer.size = CGSize(width: w, height: .greatestFiniteMagnitude)
         if abs(w - self.requestedWidth) > 0.5 {
             self.requestedWidth = w
-            self._cachedRenderer = nil
             self.sessionDriver?.send(.replaceWidth(w))
         }
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
@@ -658,64 +613,62 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
 
     // MARK: Image loading
 
-    private func triggerImageLoads(in range: NSRange) {
-        guard let str = contentStorage.attributedString else {
-            return
-        }
+    private func triggerImageLoads(in range: NSRange, string: NSAttributedString? = nil) {
+        guard let str = string ?? contentStorage.attributedString, let token = self.currentCommitToken else { return }
         let safeRange = range.clamped(to: str.length)
-        guard safeRange.length > 0 else {
-            return
-        }
-        str.enumerateAttribute(
-            .markdownImageSource,
-            in: safeRange
-        ) { value, _, _ in
-            guard
-                let source = value as? String,
-                !_imageLoading.contains(source),
-                _imageCache[source] == nil else {
-                return
-            }
-            self._imageLoading.insert(source)
-            self.loadImage(source: source)
+        guard safeRange.length > 0 else { return }
+        str.enumerateAttribute(.markdownImageSource, in: safeRange) { value, _, _ in
+            guard let source = value as? String, self._imageCache[source] == nil else { return }
+            let request = RenderImageRequest(token: token, source: source)
+            guard self.imageRequests[request] == nil else { return }
+            self.imageRequests[request] = .loading
+            self.loadImage(request)
         }
     }
 
-    private func loadImage(source: String) {
-        guard let url = URL(string: source), let token = currentCommitToken else {
-            self._imageLoading.remove(source)
-            return
-        }
+    private func loadImage(_ request: RenderImageRequest) {
         let registry = self.sessionRegistry
-        self.driver().resourceTaskOwner.start { [weak self] in
+        guard let url = URL(string: request.source) else {
+            registry.withAuthorizedSink(for: request.token) { sink in
+                (sink as? MarkdownLabelView)?.finishImageLoadFailure(request)
+            }
+            return
+        }
+        let loader = self.imageLoader
+        self.driver().resourceTaskOwner.start {
             do {
-                let (data, _) = try await URLSession.shared.data(from: url)
+                let data = try await loader(url)
                 try Task.checkCancellation()
-                if let image = NSImage(data: data) {
-                    let applied = registry.withAuthorizedSink(for: token) { sink in
-                        (sink as? MarkdownLabelView)?.finishImageLoad(source: source, image: image)
-                    }
-                    if !applied { self?._imageLoading.remove(source) }
-                } else { self?.finishImageLoadFailure(source: source) }
-            } catch { self?.finishImageLoadFailure(source: source) }
+                let image = NSImage(data: data)
+                registry.withAuthorizedSink(for: request.token) { sink in
+                    guard let view = sink as? MarkdownLabelView else { return }
+                    if let image { view.finishImageLoad(request, image: image) }
+                    else { view.finishImageLoadFailure(request) }
+                }
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError),
+                      (error as? URLError)?.code != .cancelled else { return }
+                registry.withAuthorizedSink(for: request.token) { sink in
+                    (sink as? MarkdownLabelView)?.finishImageLoadFailure(request)
+                }
+            }
         }
     }
 
-    private func finishImageLoad(source: String, image: NSImage) {
-        self._imageCache[source] = image
-        _ = self._imageLoading.remove(source)
-        self._cachedRenderer?.imageCache[source] = image
+    private func finishImageLoad(_ request: RenderImageRequest, image: NSImage) {
+        self._imageCache[request.source] = image
+        self.imageRequests.removeValue(forKey: request)
         self.updateContent()
     }
 
-    private func finishImageLoadFailure(source: String) {
-        _ = self._imageLoading.remove(source)
+    private func finishImageLoadFailure(_ request: RenderImageRequest) {
+        self.imageRequests[request] = .failed
     }
 
     // MARK: Math loading
 
-    private func triggerMathLoads(in range: NSRange) {
-        guard self.mathRenderer != nil, let str = contentStorage.attributedString else {
+    private func triggerMathLoads(in range: NSRange, string: NSAttributedString? = nil) {
+        guard self.mathRenderer != nil, let str = string ?? contentStorage.attributedString else {
             return
         }
         let safe = range.clamped(to: str.length)
@@ -795,18 +748,10 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             // 一次性合并回写并仅触发一次 updateContent（镜像图片加载纪律）。
             registry.withAuthorizedSink(for: token) { sink in
                 guard let view = sink as? MarkdownLabelView else { return }
-                // 真值源是 view-held store —— resetLayout() 在宽度抖动时会
-                // 丢弃 _cachedRenderer，下次 cachedRenderer 重建会从这里
-                // 重播种；同时也写当前 transient renderer（与
-                // finishImageLoad 同时写 _imageCache 与 _cachedRenderer?
-                // 完全同构）。
                 view._mathRasterScale = scale
                 view._mathRendererGeneration = gen
-                view._cachedRenderer?.mathRasterScale = scale
-                view._cachedRenderer?.mathRendererGeneration = gen
                 for entry in resolved {
                     view._mathCache[entry.key] = entry.glyph
-                    view._cachedRenderer?.mathCache[entry.key] = entry.glyph
                 }
                 view.updateContent()
             }
@@ -815,8 +760,8 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
 
     // MARK: SVG block loading
 
-    private func triggerSVGBlockLoads(in range: NSRange) {
-        guard self.svgBlockRenderer != nil, let str = contentStorage.attributedString else {
+    private func triggerSVGBlockLoads(in range: NSRange, string: NSAttributedString? = nil) {
+        guard self.svgBlockRenderer != nil, let str = string ?? contentStorage.attributedString else {
             return
         }
         let safe = range.clamped(to: str.length)
@@ -824,12 +769,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             return
         }
         let scale = self.displayScale
-        // 与 renderSVGBlock 共用同一宽度：renderSVGBlock 的 lookup key 走
-        // self.cachedRenderer.availableWidth（renderer 持有），而 cachedRenderer
-        // 只在 |Δw|>0.5pt 时才重建。若 trigger 直接用 max(bounds.width,1)，
-        // 在 <0.5pt 抖动下 trigger 写入的 key 与 lookup 用的 key 不一致 →
-        // 已解析 svg 永远 cache miss → marker 永留（Copilot PR #5 R5 #1）。
-        // math 不受影响：MathCacheKey 不含 availableWidth。
+        // Resource keys use the exact width captured by the installed snapshot.
         let availableWidth = self.currentSnapshot?.displayModel.availableWidth ?? self.requestedWidth
         // 同步枚举收集 svg 源串。代际相关的 key 构造推迟到下面唯一的 Task 内一次性
         // 完成（generation 受 actor 隔离），与 triggerMathLoads 同形。
@@ -878,16 +818,10 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             }
             registry.withAuthorizedSink(for: token) { sink in
                 guard let view = sink as? MarkdownLabelView else { return }
-                // 真值源是 view-held store（与 _mathCache 同款）—— resetLayout()
-                // 在宽度抖动时丢弃 _cachedRenderer，下次 cachedRenderer 重建会从
-                // 这里重播种；同时也写当前 transient renderer。
                 view._svgRasterScale = scale
                 view._svgBlockRendererGeneration = gen
-                view._cachedRenderer?.svgRasterScale = scale
-                view._cachedRenderer?.svgRendererGeneration = gen
                 for entry in resolved {
                     view._svgBlockCache[entry.key] = entry.glyph
-                    view._cachedRenderer?.svgBlockCache[entry.key] = entry.glyph
                 }
                 view.updateContent()
             }

@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import MarkdownCore
 @testable import MarkdownPlatformView
 @testable import MarkdownRenderKit
@@ -27,6 +28,154 @@ import AppKit
 
 @MainActor
 struct PlatformSessionWiringTests {
+    private actor PausedImageLoader {
+        enum Failure: Error { case failed }
+        private var continuations: [Int: CheckedContinuation<Data, any Error>] = [:]
+        private(set) var sources: [URL] = []
+        private(set) var completed = 0
+        private(set) var cancelledCompletions = 0
+        func load(_ url: URL) async throws -> Data {
+            let index = self.sources.count
+            self.sources.append(url)
+            defer {
+                self.completed += 1
+                if Task.isCancelled { self.cancelledCompletions += 1 }
+            }
+            return try await withCheckedThrowingContinuation { self.continuations[index] = $0 }
+        }
+
+        func finish(_ index: Int, result: Result<Data, any Error>) {
+            self.continuations.removeValue(forKey: index)?.resume(with: result)
+        }
+    }
+
+    private func imageData(width: Int) throws -> Data {
+        let context = try #require(CGContext(data: nil, width: width, height: 10, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let image = try #require(context.makeImage())
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
+    @Test(arguments: ["success", "failure", "cancellation"])
+    func currentTokenCanLoadSameImageWhileOldTokenIsPending(oldOutcome: String) async throws {
+        let loader = PausedImageLoader()
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
+        view.imageLoader = { try await loader.load($0) }
+        view.setMarkdown("A ![alt](https://example.com/image.png)")
+        #expect(await eventually { await loader.sources.count == 1 })
+        let oldToken = try #require(view.currentCommitToken)
+        view.setMarkdown("B ![alt](https://example.com/image.png)")
+        #expect(await eventually { await loader.sources.count == 2 })
+        let current = try #require(view.currentCommitToken)
+        let owner = try #require(view.sessionDriver?.resourceTaskOwner)
+        #expect(current != oldToken)
+        #expect(view.imageRequests.count == 1)
+        #expect(view.imageRequests.keys.first?.token == current)
+        let oldResult: Result<Data, any Error> = switch oldOutcome {
+        case "success": try .success(self.imageData(width: 10))
+        case "failure": .failure(PausedImageLoader.Failure.failed)
+        default: .failure(CancellationError())
+        }
+        await loader.finish(0, result: oldResult)
+        #expect(await eventually { await loader.completed == 1 })
+        #expect(await eventually { owner.count == 1 })
+        #expect(view.currentCommitToken == current)
+        #expect(view.currentSnapshot?.attributedString.string == "B 🖼 alt")
+        #expect(view.imageRequests.count == 1)
+        #expect(view.imageRequests[RenderImageRequest(token: current, source: "https://example.com/image.png")] == .loading)
+        try await loader.finish(1, result: .success(self.imageData(width: 20)))
+        #expect(await eventually { view.currentSnapshot?.attributedString.string == "B \u{FFFC}" })
+        let text = try #require(view.currentSnapshot?.attributedString)
+        let attachment = try #require(text.attribute(.attachment, at: 2, effectiveRange: nil) as? NSTextAttachment)
+        #expect(attachment.bounds == CGRect(x: 0, y: -4, width: 20, height: 10))
+        #expect(view.imageRequests.isEmpty)
+        #expect(view.lastRenderError == nil)
+        view.dismantleRenderSession()
+    }
+
+    @Test(arguments: ["success", "failure", "cancellation"])
+    func teardownClearsImageBookkeepingAndLateCompletionCannotMutate(oldOutcome: String) async throws {
+        let loader = PausedImageLoader()
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
+        view.imageLoader = { try await loader.load($0) }
+        view.setMarkdown("![alt](https://example.com/image.png)")
+        #expect(await eventually { await loader.sources.count == 1 })
+        #expect(view.imageRequests.count == 1)
+        let token = view.currentCommitToken
+        let owner = try #require(view.sessionDriver?.resourceTaskOwner)
+        view.dismantleRenderSession()
+        #expect(view.imageRequests.isEmpty)
+        #expect(owner.count == 0)
+        let result: Result<Data, any Error> = switch oldOutcome {
+        case "success": try .success(self.imageData(width: 10))
+        case "failure": .failure(PausedImageLoader.Failure.failed)
+        default: .failure(CancellationError())
+        }
+        await loader.finish(0, result: result)
+        #expect(await eventually { await loader.completed == 1 })
+        #expect(await loader.cancelledCompletions == 1)
+        #expect(view.imageRequests.isEmpty)
+        #expect(view.currentSnapshot == nil)
+        #expect(view.currentCommitToken == token)
+        #expect(view.lastRenderError == nil)
+    }
+
+    @Test func overflowPlatformOverlayConsumesCurrentSnapshotAndPreservesScrollView() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
+        view.setMarkdown("| A | B |\n|---|---|\n| old | value |")
+        #expect(await eventually { view._tableOverlays[0] != nil })
+        let first = try #require(view._tableOverlays[0])
+        let firstData = try #require(view.currentSnapshot?.tableOverlays[0])
+        #expect(first.data === firstData)
+        #expect(first.content.frame.height == firstData.height)
+        #expect(first.content.frame.width == firstData.naturalWidth)
+        view.setMarkdown("| A | B |\n|---|---|\n| new | value |")
+        #expect(await eventually { view.currentSnapshot?.tableOverlays[0]?.attributedString.string.contains("new") == true })
+        let second = try #require(view._tableOverlays[0])
+        #expect(first.scroll === second.scroll)
+        #expect(second.data === view.currentSnapshot?.tableOverlays[0])
+        #expect(second.data.attributedString.string == "\tA\tB\n\tnew\tvalue")
+        view.dismantleRenderSession()
+        #expect(view._tableOverlays.isEmpty)
+    }
+
+    @Test func overflowImageResolutionPublishesOwnedCellAttachment() async throws {
+        let loader = PausedImageLoader()
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
+        view.imageLoader = { try await loader.load($0) }
+        view.setMarkdown("| Photo | Text |\n|---|---|\n| ![alt](https://example.com/image.png) | value |")
+        #expect(await eventually { await loader.sources.count == 1 })
+        #expect(view.currentSnapshot?.attributedString.string == "\u{00A0}")
+        try await loader.finish(0, result: .success(self.imageData(width: 20)))
+        #expect(await eventually { view.currentSnapshot?.tableOverlays[0]?.attributedString.string == "\tPhoto\tText\n\t\u{FFFC}\tvalue" })
+        weak var overlay = view.currentSnapshot?.tableOverlays[0]
+        #expect(view._tableOverlays[0]?.data === overlay)
+        #expect(view._tableOverlays[0]?.content.frame.height == overlay?.height)
+        #expect(view.imageRequests.isEmpty)
+        view.dismantleRenderSession()
+        #expect(overlay == nil)
+    }
+
+    @Test func currentImageFailureIsRecordedWithoutPublishingOrRetryLoop() async throws {
+        let loader = PausedImageLoader()
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
+        view.imageLoader = { try await loader.load($0) }
+        view.setMarkdown("![alt](https://example.com/image.png)")
+        #expect(await eventually { await loader.sources.count == 1 })
+        let token = try #require(view.currentCommitToken)
+        let request = RenderImageRequest(token: token, source: "https://example.com/image.png")
+        await loader.finish(0, result: .failure(PausedImageLoader.Failure.failed))
+        #expect(await eventually { view.imageRequests[request] == .failed })
+        #expect(view.currentCommitToken == token)
+        #expect(view.currentSnapshot?.attributedString.string == "🖼 alt")
+        #expect(await loader.sources.count == 1)
+        view.dismantleRenderSession()
+        #expect(view.imageRequests.isEmpty)
+    }
+
     @Test func resourceTaskOwnerCancelsPendingOperationsAtTeardown() async {
         let registry = RenderSessionSinkRegistry()
         let session = MarkdownRenderSession(registry: registry)

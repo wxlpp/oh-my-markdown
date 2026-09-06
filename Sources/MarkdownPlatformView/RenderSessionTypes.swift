@@ -43,6 +43,17 @@ package struct RenderCommitToken: Hashable {
     package let configurationGeneration: UInt64
 }
 
+package struct RenderImageRequest: Hashable {
+    package let token: RenderCommitToken
+    package let source: String
+}
+
+package enum RenderImageLoadState {
+    case loading, failed
+}
+
+package typealias RenderImageLoader = @Sendable (URL) async throws -> Data
+
 package struct ParseSubmission: Hashable {
     package let id: UUID
     package let sessionToken: ParseSessionToken

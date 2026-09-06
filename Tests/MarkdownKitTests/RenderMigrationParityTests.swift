@@ -14,6 +14,75 @@ import AppKit
 /// Literal output assertions also catch omissions shared by both implementations.
 @MainActor
 struct RenderMigrationParityTests {
+    @Test func overflowOverlayRetainsFullAttributedTableAndMeasuredGeometry() throws {
+        let source = "before\n\n| **Bold** | [Link](https://example.com/table) |\n| :--- | ---: |\n| *italic* | `code` |\n\nafter"
+        let pair = try self.render(source, width: 120)
+        let overlay = try #require(pair.snapshot.tableOverlays[1])
+        #expect(pair.snapshot.attributedString.string == "before\n\u{00A0}\nafter")
+        #expect(pair.snapshot.blockStarts == [0, 7, 9])
+        #expect(overlay.attributedString.string == "\tBold\tLink\n\titalic\tcode")
+        var style = RenderStyle.default
+        style.bodyFont = .systemFont(ofSize: 16)
+        let block = try #require(MarkdownDocument(parsing: source).blocks.dropFirst().first)
+        let oracle = AttributedStringRenderer(style: style, availableWidth: overlay.naturalWidth).renderBlock(block)
+        #expect(self.normalized(overlay.attributedString).isEqual(to: self.normalized(oracle)))
+        #expect(overlay.naturalWidth >= 172)
+        #expect(overlay.height == TableMeasurement.height(of: oracle, naturalWidth: overlay.naturalWidth))
+        let paragraph = try #require(pair.snapshot.attributedString.attribute(.paragraphStyle, at: 7, effectiveRange: nil) as? NSParagraphStyle)
+        #expect(paragraph.minimumLineHeight == overlay.height)
+        let link = (overlay.attributedString.string as NSString).range(of: "Link")
+        #expect(overlay.attributedString.attribute(.link, at: link.location, effectiveRange: nil) as? URL == URL(string: "https://example.com/table"))
+    }
+
+    @Test func overflowOverlayOwnsCellResourcesBeyondMainPlaceholder() throws {
+        let source = "| Photo | Math |\n|---|---|\n| ![alt](image.png) | $x$ |"
+        var style = RenderStyle.default
+        style.bodyFont = .systemFont(ofSize: 16)
+        let configuration = style.snapshot(generation: 1)
+        let document = MarkdownDocument(parsing: source)
+        let input = RenderInput(document: document, source: source, availableWidth: 120, configuration: configuration, placeholderMode: .static)
+        let model = try RenderPreparer(configuration: configuration).prepare(input)
+        let context = try #require(CGContext(data: nil, width: 40, height: 20, bitsPerComponent: 8, bytesPerRow: 160, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let materializer = RenderMaterializer(configuration: configuration)
+        let cgImage = try #require(context.makeImage())
+        let backing = try ImmutableCGImageBacking(frames: [cgImage])
+        let image = try #require(materializer.platformImage(from: backing))
+        weak var observed: LegacyResourceOwner?
+        var snapshot: RenderSnapshot?
+        do {
+            let owner = LegacyResourceOwner(retaining: image)
+            observed = owner
+            var values: [ResourceID: ResolvedPlatformResource] = [:]
+            for resource in model.resources {
+                switch resource {
+                case .image(let id, _, _): values[id] = .image(image, owner: owner)
+                case .math(let id, _, _): values[id] = .math(image: image, baselineOffset: -3, owner: owner)
+                case .svg: break
+                }
+            }
+            snapshot = materializer.materialize(model, resources: .init(values: values))
+        }
+        #expect(observed != nil)
+        do {
+            let overlay = try #require(snapshot?.tableOverlays[0])
+            #expect(snapshot?.attributedString.string == "\u{00A0}")
+            #expect(overlay.attributedString.string == "\tPhoto\tMath\n\t\u{FFFC}\t\u{FFFC}")
+            var legacy = AttributedStringRenderer(style: style, availableWidth: overlay.naturalWidth, placeholderMode: .static)
+            legacy.imageCache["image.png"] = image
+            legacy.mathCache[MathCacheKey(latex: "x", display: false, pointSize: 16, colorHex: MathMetrics.colorHex(style.textColor), rasterScale: 1, rendererGeneration: 0)] = MathRenderedGlyph(image: image, baselineOffsetEx: -0.375)
+            let table = try #require(document.blocks.first)
+            #expect(self.normalized(overlay.attributedString).isEqual(to: self.normalized(legacy.renderBlock(table))))
+            var bounds: [CGRect] = []
+            overlay.attributedString.enumerateAttribute(.attachment, in: NSRange(location: 0, length: overlay.attributedString.length)) { value, _, _ in
+                if let attachment = value as? NSTextAttachment { bounds.append(attachment.bounds) }
+            }
+            #expect(bounds == [CGRect(x: 0, y: -4, width: 40, height: 20), CGRect(x: 0, y: -3, width: 40, height: 20)])
+            #expect(overlay.height == TableMeasurement.height(of: overlay.attributedString, naturalWidth: overlay.naturalWidth))
+        }
+        snapshot = nil
+        #expect(observed == nil)
+    }
+
     @Test(arguments: ["hello", "newest"])
     func singleParagraphHasNoSyntheticTerminalNewline(source: String) throws {
         let pair = try self.render(source, width: 320)

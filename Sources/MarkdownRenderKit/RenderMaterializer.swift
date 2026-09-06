@@ -113,14 +113,15 @@ package struct RenderMaterializer {
         let result = NSMutableAttributedString(string: "")
         var starts: [Int] = []
         var owners: [any ResourceResidencyOwner] = []
+        var overlays: [Int: RenderTableOverlay] = [:]
         for piece in content {
             switch piece {
             case .blockStart: starts.append(result.length)
             case .run(let run): result.append(self.materializeRun(run, resources: resources, owners: &owners))
-            case .table(let table): result.append(self.materializeTable(table, resources: resources, owners: &owners))
+            case .table(let table): result.append(self.materializeTable(table, resources: resources, owners: &owners, overlays: &overlays))
             }
         }
-        return RenderSnapshot(attributedString: result, displayModel: model, resourceOwners: owners, blockStarts: starts)
+        return RenderSnapshot(attributedString: result, displayModel: model, resourceOwners: owners, blockStarts: starts, tableOverlays: overlays)
     }
 
     private func paragraph(_ value: PreparedParagraph) -> NSParagraphStyle {
@@ -230,8 +231,9 @@ package struct RenderMaterializer {
 
     /// Cell contents and alignment arrive prepared; only font-dependent measurements
     /// and platform paragraph/tab objects are resolved here.
-    private func materializeTable(_ table: PreparedTable, resources: ResolvedResourceSnapshot, owners: inout [any ResourceResidencyOwner]) -> NSAttributedString {
+    private func materializeTable(_ table: PreparedTable, resources: ResolvedResourceSnapshot, owners: inout [any ResourceResidencyOwner], overlays: inout [Int: RenderTableOverlay]) -> NSAttributedString {
         guard !table.head.isEmpty else { return NSAttributedString(string: "") }
+        let ownerStart = owners.count
         func cell(_ runs: [PreparedRun]) -> NSAttributedString {
             let result = NSMutableAttributedString(string: "")
             for run in runs {
@@ -282,7 +284,9 @@ package struct RenderMaterializer {
             for (cellIndex, value) in row.enumerated() {
                 if cellIndex > 0 { line.append(NSAttributedString(string: "\t", attributes: attrs)) }
                 let content = NSMutableAttributedString(attributedString: value)
-                content.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: content.length))
+                value.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: value.length)) { existing, range, _ in
+                    if existing != nil { content.addAttribute(.paragraphStyle, value: para, range: range) }
+                }
                 line.append(content)
             }
             line.addAttributes([.markdownTableSection: index, .markdownTableColumns: count, .markdownTableColumnWidths: widths], range: NSRange(location: 0, length: line.length))
@@ -290,6 +294,9 @@ package struct RenderMaterializer {
         }
         if natural > table.width + 0.5 {
             let height = TableMeasurement.height(of: result, naturalWidth: natural)
+            if let index = table.blockIndex {
+                overlays[index] = RenderTableOverlay(attributedString: result, naturalWidth: natural, height: height, style: self.resolvedStyle(), resourceOwners: Array(owners[ownerStart...]))
+            }
             let para = self.paragraph(PreparedParagraph(lineSpacing: 0, head: table.quoteIndent, first: table.quoteIndent, height: height))
             return NSAttributedString(string: "\u{00A0}", attributes: [.font: PlatformFont.systemFont(ofSize: 1), .foregroundColor: PlatformColor.clear, .paragraphStyle: para, .markdownTableSection: 0, .markdownTableColumns: count, .markdownTableColumnWidths: widths, .markdownTableNaturalWidth: natural, .markdownOverflowTablePlaceholder: true])
         }

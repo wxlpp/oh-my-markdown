@@ -85,6 +85,7 @@ package struct PreparedRun: Equatable {
 }
 
 package struct PreparedTable: Equatable {
+    package let blockIndex: Int?
     package let columns: [ColumnAlignment]
     package let head: [[PreparedRun]]
     package let rows: [[[PreparedRun]]]
