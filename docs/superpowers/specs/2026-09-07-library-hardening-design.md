@@ -63,7 +63,7 @@ Platform types that cannot be proven `Sendable` stay on the main actor. `@unchec
 - `MarkdownRenderSession` coordinates source revisions, parsing, resource requests, and snapshot publication.
 - A shared platform-neutral session core contains logic currently duplicated across UIKit and AppKit views.
 - UIKit and AppKit views retain only TextKit setup, layout/drawing, native selection/input plumbing, platform link opening, and accessibility bridges.
-- Shared caches are separate dependencies and contain completed results only. In-flight request ownership and deduplication stay inside a session. A cache may outlive a view, but no task started by a view may implicitly do so.
+- Shared caches are separate dependencies and contain completed results only. In-flight resource-request ownership and deduplication stay inside a session. A cache may outlive a view. Cooperative work started for a view must not outlive it; the process parse executor described below is the sole explicit exception for an already-entered synchronous cmark call.
 
 #### MarkdownKit
 
@@ -73,24 +73,28 @@ The umbrella module will use supported public import/re-export mechanisms availa
 
 ### 4.2 Session ownership
 
-Each platform view owns one session by default. The session owns all tasks associated with the current source and cancels cancellable work when the source is replaced or the view is dismantled. Shared completed-result caches may be injected independently of the session; they never own in-flight tasks.
+Each platform view owns one session by default. The session owns all cancellable tasks associated with the current source and cancels them when the source is replaced or the view is dismantled. Shared completed-result caches may be injected independently of the session; they never own in-flight tasks.
 
 Two sessions requesting the same uncached resource may perform separate work. This is an intentional trade-off: it gives unambiguous ownership, makes view teardown cancellation correct, and avoids a reference-counted process-wide request broker. Within one session, identical in-flight requests are deduplicated. A future shared broker is outside 0.2.0 scope.
 
 The session publishes immutable snapshots on `MainActor`. It never exposes its internal mutable dictionaries or tasks through public API.
 
+Synchronous cmark calls execute in an internal process-wide `ParseExecutor`, not in a task that retains the session or view. The executor admits at most two active cmark calls process-wide, at most one active job and one replaceable pending input per session token, and at most 64 waiting session tokens. A job owns only a copied immutable `Sendable` input plus revision/configuration tokens; it owns no session, view, platform object, callback closure, or cache. When the admission queue is full, it returns a typed transient busy result; a still-live session may retry with bounded backoff, while a dismantled session may not.
+
+View/session teardown tombstones its token in the executor-facing result registry and removes its pending admission. An already-active cmark call is allowed to finish, but its result is dropped without callback, cache write, publication, retry, or pending follow-up. This bounded orphaned-call exception is explicit and cannot retain the view or session.
+
 ## 5. Data flow and concurrency
 
 1. A static or streaming source update enters `MarkdownRenderSession` and receives a monotonically increasing revision.
 2. Replacing a source cancels MarkdownKit-owned cooperative phases and replaces the pending input with the newest revision. Appending coalesces pending chunks.
-3. Parsing executes away from `MainActor` through an explicitly concurrent async function or structured child task. It does not use an unowned `Task.detached`.
+3. Cancellable parsing preparation executes away from `MainActor` through an explicitly concurrent async function or structured child task. It does not use an unowned `Task.detached`. Entry into synchronous cmark is admitted by the bounded process-wide `ParseExecutor`.
 4. Long scanner, substitution, mapping, and rendering-preparation loops check cancellation at bounded intervals.
-5. `Markdown.Document(parsing:)` is a synchronous cmark call with no cancellation hook. It is treated as a non-cancellable region. The scheduler permits at most one cmark parse to be active per session; updates arriving during it are coalesced into one latest pending input rather than starting concurrent cmark parses.
+5. `Markdown.Document(parsing:)` is a synchronous cmark call with no cancellation hook. It is treated as a non-cancellable region. The executor permits at most two active cmark calls process-wide and at most one per session token; updates arriving during one are coalesced into that session token's single latest pending input.
 6. A completed parse may commit only when its revision is still current. When a stale cmark parse returns, its output is discarded and the single coalesced pending input starts.
 7. The background renderer creates a pure display model and enumerates unresolved image, math, and SVG requests; `MainActor` materializes the platform snapshot.
 8. Session resource coordinators deduplicate requests by content, dimensions, scale, policy/renderer identity, and other output-affecting inputs.
 9. Resource results may merge only when their source revision and loader/renderer identity remain current.
-10. Source replacement, renderer replacement, policy replacement, view dismantling, and deinitialization cancel affected cancellable tasks.
+10. Source replacement, renderer replacement, loader/policy replacement, view dismantling, and deinitialization cancel affected cancellable tasks. Teardown additionally tombstones the parse token so an active non-cancellable result has no observer and cannot start follow-up work.
 11. Cancellation produces no cache entry. Only deterministic failures may enter a bounded negative cache.
 
 Actor isolation is explicit:
@@ -99,6 +103,8 @@ Actor isolation is explicit:
 - Parser inputs and outputs are immutable `Sendable` values.
 - Session-owned resource coordination uses an actor and stores only transport bytes or other proven-`Sendable` values off the main actor. Platform-image materialization and platform-image cache access are main-actor isolated.
 - CPU-heavy pure work is explicitly concurrent and returns a `Sendable` display model. The only audited unchecked adapter allowed in 0.2.0 is an immutable decoded-image handoff if the selected ImageIO representation lacks compiler-proven `Sendable`; its ownership/read-only invariant must be documented and tested.
+
+Configuration isolation is also explicit. Loader, renderer, and policy values cross actors only through `Sendable` protocols or immutable `Sendable` request/configuration snapshots. Every output-affecting configuration has a stable public ID and a monotonically increasing session generation. Replacement cancels its cancellable work and invalidates pending publication/cache-write tokens; an old generation may neither publish nor populate a cache owned by the new generation.
 
 ## 6. Incremental parsing performance
 
@@ -118,41 +124,54 @@ If state is absent, invalid, or inconsistent with the source prefix, the parser 
 
 Regular expressions and other immutable scanners are compiled once. Performance tests will cover 10 KB, 100 KB, and 1 MB documents, with plain Markdown and delimiter-heavy fixtures.
 
-The primary acceptance metric is deterministic work, not wall-clock time. An internal test counter records bytes examined by incremental scanner/mapping passes. For a fixed 1 KB chunk sequence, cumulative examined bytes must not exceed `8 × (initialBytes + appendedBytes)` for fixtures that remain incrementally safe. Fixtures that intentionally trigger a non-local full fallback are measured and reported separately. Wall-clock benchmarks use one warm-up plus five measured runs and compare the median; they are diagnostic and do not replace the byte-work assertion.
+The primary acceptance metric is deterministic work, not wall-clock time. Internal test instrumentation records all MarkdownKit-owned source-proportional work separately: scanner bytes, source-map bytes, UTF-8 materialization/copy and substitution bytes, bytes submitted to cmark, and rendering-preparation bytes. Moving a full-source pass into an uncounted phase is not permitted.
+
+For a fixed 1 KB chunk sequence whose constructs remain incrementally safe, cumulative work must stay within these budgets relative to `N = initialBytes + appendedBytes`: scanner `≤ 3N`, mapping `≤ 3N`, materialization/copy/substitution `≤ 4N`, cmark input `≤ 4N`, rendering preparation `≤ 4N`, and all counted phases combined `≤ 16N`. Fixtures that intentionally trigger a documented non-local full fallback are measured and reported separately by phase. Wall-clock benchmarks use one warm-up plus five measured runs and compare the median; they are diagnostic and do not replace the work assertions.
 
 ## 7. Image loading and caching
 
 ### 7.1 Public abstraction
 
-Applications may inject a `MarkdownImageLoading` implementation. The default loader:
+Remote images are host opt-in in 0.2.0 because fetching untrusted Markdown reveals network metadata such as the reader's IP address. Without opt-in, remote images remain accessible placeholders with alt text/source fallback. Applications may opt in to the default loader or inject a `MarkdownImageLoading` implementation.
+
+`MarkdownImageLoading` is a `Sendable` async protocol; conformers may be actors. Its request and result values are immutable and `Sendable`, and the protocol returns encoded bytes plus validated metadata rather than a platform image. Each loader configuration has an explicit stable `MarkdownResourceConfigurationID: Hashable & Sendable`; replacement increments a session configuration generation, cancels queued/active cancellable requests, prevents old results from publishing or entering any cache, and gives the replacement a distinct cache namespace.
+
+The default loader:
 
 - accepts only HTTPS URLs;
 - requires a successful 2xx HTTP response;
 - streams the response and cancels immediately when byte `20 MiB + 1` arrives, where the limit is exactly `20 × 1024 × 1024` bytes; it never obtains a fully buffered oversized body;
 - validates ImageIO metadata before full-size decode using overflow-safe width × height arithmetic, an 8,192-pixel per-side limit, at most 32 frames, and a 40-megapixel cumulative frame budget;
-- uses request and resource timeouts;
+- uses a 15-second request timeout and 30-second resource timeout; hosts may configure each within 1...120 seconds;
 - respects task cancellation;
 - re-applies the HTTPS policy to every redirect and the final response URL, rejecting HTTPS-to-HTTP downgrade;
+- uses an ephemeral isolated URL session with no shared cookie storage, credential storage, or URL cache and performs no implicit authentication; cross-host redirects carry no host-supplied or authorization headers;
 - accepts `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/heic`, and `image/heif`; the declared MIME type, detected ImageIO type, and selected decoder must agree;
-- reports a typed, non-sensitive error.
+- reports a typed, non-sensitive error that strips URL query and fragment data.
 
 Applications that need HTTP, file URLs, authenticated requests, or custom schemes must provide their own loader.
 
 ### 7.2 Cache
 
-The default image cache uses `NSCache` or an equivalent cost-bounded implementation. Cost is based on estimated decoded bytes, not only entry count. It responds to memory-pressure notifications and is injectable for deterministic tests.
+The default resource coordinator enforces both per-session and process-wide limits. It is a shared permit/budget actor, not the owner of request tasks or results. Per session, at most two transfers and one decode are active. Process-wide, at most four transfers and two decodes are active, encoded in-flight buffers have a 32 MiB aggregate budget, and decoded-but-not-yet-cached images have a 128 MiB aggregate cost budget. Streaming transfers acquire encoded-byte budget incrementally before retaining each chunk. Requests beyond a concurrency or byte budget wait in a cancellable queue; source replacement and teardown remove their queued entries.
+
+ImageIO creates a thumbnail/downsampled image directly for the validated display pixel size and scale; it must not first allocate the full-resolution platform image. The requested output is capped at 4,096 pixels per side and 64 MiB estimated decoded cost per image even when source metadata is within the 40-megapixel admission limit.
+
+The default completed-image cache uses `NSCache` or an equivalent cost-bounded implementation with a 128 MiB `totalCostLimit`. Cost is based on estimated decoded bytes, not only entry count. It responds to memory-pressure notifications and is injectable for deterministic tests.
 
 The cache stores successful decoded results only and is `@MainActor`-isolated because it holds platform images. Transfer actors cache only bounded `Data` while a request is active. Failures are either not cached or kept in a short, bounded negative cache when proven deterministic.
 
-Security tests must prove that an oversized transfer is cancelled at the limit, the decoder is never invoked for rejected metadata/content, redirect downgrade is rejected, and a declared/detected type mismatch does not reach full decode.
+Security tests must prove that an oversized transfer is cancelled at the limit, the decoder is never invoked for rejected metadata/content, redirect downgrade is rejected, and a declared/detected type mismatch does not reach full decode. A 100-unique-image adversarial fixture must also prove the transfer/decode concurrency ceilings, 32 MiB encoded aggregate budget, 128 MiB decoded in-flight budget, 64 MiB per-image output ceiling, and teardown queue cleanup.
 
 ### 7.3 Presentation
 
-Before resolution, an image exposes its alt text or source fallback. After resolution, the same description remains attached to accessibility semantics. Internal network errors do not replace content with debug text. Hosts may observe failures through an optional callback.
+Before resolution, an image exposes its alt text or source fallback. After resolution, the same description remains attached to accessibility semantics. Internal network errors do not replace content with debug text. Hosts may observe failures through an optional `@MainActor` callback; stale configuration generations never invoke it.
 
 ## 8. Link policy
 
-The default link opener accepts HTTP and HTTPS only. Other schemes are rejected unless an injected `MarkdownLinkPolicy` explicitly permits and handles them.
+`MarkdownLinkPolicy` is a `Sendable` protocol whose pure decision method consumes an immutable URL/request snapshot and returns an immutable disposition. It does not open applications or touch platform state. An injected `@MainActor` link handler performs an allowed activation. Policy and handler configurations have stable IDs/generations under the replacement rules in §5.
+
+The default link policy accepts HTTP and HTTPS only, and the default `@MainActor` handler delegates an allowed URL to the platform opener. Other schemes are rejected unless injected policy and handler configurations explicitly permit and handle them.
 
 Links expose accessible labels, link traits/roles, activation actions, and keyboard operation. Invalid destinations remain readable text rather than interactive elements.
 
@@ -170,9 +189,13 @@ The renderer produces platform-neutral accessibility nodes for:
 - tables with row/column position and header relationships;
 - code blocks with language metadata when present.
 
-Each accessibility node has a stable identity derived from source identity, semantic role, and source range rather than rendered array index. UIKit exposes these nodes through virtual accessibility elements or an accessibility container. AppKit exposes equivalent `NSAccessibilityElement` objects. Traversal follows document order. Nodes carry layout frames and hit-test/activation metadata. Horizontal table overlays must not duplicate or hide their semantic table nodes.
+Each accessibility node has a stable identity derived from the session's source-generation, semantic role, an immutable start anchor, and parser-assigned lineage. A growing end offset is metadata and never participates in identity. Source replacement starts a new generation; streaming append preserves lineage for surviving nodes, including the growing final paragraph, list item, or table.
 
-Snapshot updates diff nodes by stable identity and reuse platform accessibility objects. If the focused node survives an append, focus and activation remain on that node. If it disappears, focus moves to the nearest surviving semantic neighbor. Streaming announcements are coalesced and off by default; hosts may enable a polite “new content” announcement policy so token-level updates never produce announcement spam.
+The semantic model is a tree. Paragraphs, list items, headings, and tables may act as containers; exposed leaves are the units traversed and spoken by the platform. A block with no interactive descendants may expose one leaf. A block containing links, images, or math does not also expose a duplicate full-block label: its non-interactive text ranges become text leaves with child ranges excluded, while each interactive/attachment descendant is its own leaf. Heading/list context is propagated to appropriate leaves. Tables expose row/cell leaves with header relationships and row/column coordinates; aggregate table/container labels and horizontal visual overlays are not separately exposed.
+
+UIKit maps exposed leaves to virtual accessibility elements or an accessibility container. AppKit maps them to equivalent `NSAccessibilityElement` objects. Traversal follows document order. Leaves carry layout frames and hit-test/activation metadata.
+
+Snapshot updates diff nodes by stable identity and reuse platform accessibility objects. If the focused node survives an append, focus and activation remain on that node even when its end range grows. If it disappears, focus moves to the nearest surviving semantic neighbor. Streaming announcements are coalesced and off by default; hosts may enable a polite “new content” announcement policy so token-level updates never produce announcement spam.
 
 ### 9.2 Dynamic Type and adaptive presentation
 
@@ -249,12 +272,12 @@ Extraction must preserve observable behavior and be performed in test-backed che
 
 - Full-parse versus incremental-parse equivalence across delimiters, code regions, Unicode, tables, malformed input, reference definitions, setext/thematic ambiguity, HTML blocks, lazy list/blockquote continuation, CRLF splits, and missing final newlines. Small fixtures exercise every possible chunk boundary; larger fixtures use deterministic seeded chunk sequences.
 - Cooperative cancellation of owned phases, stale revision rejection, rapid set/append/replace sequences, renderer/policy switching, and view destruction.
-- Non-cancellable cmark scheduling: at most one active parse per session, latest-input coalescing, stale-output rejection, and exactly one follow-up parse after a burst of updates.
-- Image scheme, status, MIME, body-size, pixel-size, timeout, cancellation, cache cost, eviction, and memory-pressure behavior.
+- Non-cancellable cmark scheduling with a blocking fake parser: no more than two active calls process-wide or one per session token, bounded admission, latest-input coalescing, stale-output rejection, and exactly one follow-up parse after a burst of updates. While a call is blocked, weak view/session references must deallocate; teardown must cause no commit, callback, retry, cache write, or follow-up.
+- Image opt-in, scheme, status, MIME, body-size, pixel-size, timeout, isolated credential/cookie/cache behavior, sanitized errors, cancellation, configuration replacement, concurrency/aggregate budgets, cache cost, eviction, and memory-pressure behavior. When a loader is replaced mid-request, its old result must neither publish, report through the new callback, nor write any completed/negative cache.
 - Math/SVG deduplication, cancellation, renderer identity, positive/negative cache limits, and deterministic failure classification.
 - Exact rendered copy and explicit Markdown-source-copy granularity.
-- Link-policy allow/reject behavior.
-- Accessibility node labels, stable identities, frames, hit testing, roles, order, heading levels, link actions, alt text, math fallback, table coordinates, object reuse, and focus preservation/fallback across streaming updates.
+- Link-policy allow/reject behavior, main-actor activation, configuration replacement, and stale-result rejection.
+- Accessibility node labels, stable identities, frames, hit testing, roles, order, heading levels, link actions, alt text, math fallback, table coordinates, object reuse, and focus preservation/fallback across streaming updates. Golden traversal/speech fixtures include a paragraph with two links, an image, and inline math, plus repeated appends while focus remains in a growing paragraph and table.
 - Dynamic Type style scaling and non-overlapping layout at accessibility sizes.
 
 Tests must use Swift Testing synchronization primitives, controllable clocks, actors, or explicit awaitable seams. Timing-based `Task.sleep` polling will be removed from the existing suite.
@@ -279,10 +302,10 @@ Tests must use Swift Testing synchronization primitives, controllable clocks, ac
 GitHub Actions will run:
 
 1. SwiftFormat lint with zero violations.
-2. macOS debug tests.
-3. macOS release build with warnings as errors.
-4. iOS Simulator build and test for `MarkdownKit` and `MarkdownMath`.
-5. Example application build and UI smoke tests where runner support is reliable.
+2. macOS 15 debug tests.
+3. macOS 15 release build with warnings as errors.
+4. iOS 18 Simulator build and test for `MarkdownKit` and `MarkdownMath`.
+5. Example application build and UI smoke tests as a release gate. When GitHub-hosted runtime support is unavailable, the documented self-hosted/local/VM run from §12 is archived instead of skipping the gate.
 
 The existing 875 SwiftFormat findings will be fixed in a dedicated mechanical change before enabling the zero-violation gate. Empty template tests will be replaced or removed.
 
@@ -320,7 +343,7 @@ Each checkpoint requires tests, build verification, and a `superpowers-reviewer`
 | E1 | No GitHub Actions delivery gates | 1 | Release-blocking |
 | E2 | SwiftFormat baseline has 875 findings | 1 | Release-blocking |
 | T1 | Example tests contain empty templates | 1, 8 | Release-blocking for affected paths |
-| T2 | Tests rely on 40 timing sleeps | 1–7 | Sleeps in touched/concurrency coverage are release-blocking; unrelated deterministic migration may continue through checkpoint 8 |
+| T2 | Timing sleeps appear at 26 test call sites and 5 product/example call sites (`rg -n "Task\\.sleep" Sources Tests Example`, 2026-09-07) | 1–7 | Sleeps in touched/concurrency coverage are release-blocking; unrelated deterministic migration may continue through checkpoint 8 |
 | S1 | Package platform floors are unnecessarily high | 1, 8 | Release-blocking unless an evidence-backed exception is approved |
 | R1 | `AGENTS.md` references a missing `RTK.md` | 8 | Must be repaired or the include removed before release |
 
@@ -330,14 +353,15 @@ Deferral to 0.2.x is permitted only for explicitly listed documentation or mecha
 
 - Existing behavior tests continue to pass except where explicitly changed by this design.
 - New tests demonstrate cooperative cancellation of owned work and stale-result rejection without sleeps.
-- Burst-update tests prove at most one active cmark parse per session, latest-input coalescing, stale-output rejection, and one follow-up parse.
-- For incrementally safe 1 KB chunk fixtures, the measured scanner/mapping work stays within `8 × (initialBytes + appendedBytes)`; exhaustive and seeded differential tests prove fallback correctness for non-local constructs.
+- Burst-update and teardown tests prove the process-wide cmark executor limits, per-session single flight, bounded admission, latest-input coalescing, stale-output rejection, one follow-up parse for a live session, no follow-up for a tombstoned session, and view/session deallocation while a fake cmark call remains blocked.
+- For incrementally safe 1 KB chunk fixtures, scanner, mapping, materialization/copy/substitution, cmark input, rendering preparation, and combined work stay within their §6 budgets; exhaustive and seeded differential tests prove fallback correctness for non-local constructs.
 - Default image and link behavior enforces the approved security policy.
-- Image caches and all negative caches are bounded.
+- Remote images remain placeholders until the host explicitly opts in; the default loader uses no ambient cookies, credentials, cache, or authentication and reports only sanitized errors.
+- Image transfer/decode concurrency, encoded and decoded in-flight memory, completed caches, and all negative caches enforce the §7 budgets under 100 distinct valid requests.
 - Normal copy is selection-exact; source copy reports mapping granularity.
-- UIKit and AppKit expose structured, ordered Markdown accessibility semantics with stable identity, correct frames/hit testing, and focus continuity across streaming updates.
+- UIKit and AppKit expose non-duplicating tree-structured Markdown accessibility semantics with stable lineage identity, correct frames/hit testing, and focus continuity across growing-tail streaming updates.
 - Default iOS style responds to Dynamic Type through accessibility sizes.
-- The package builds and executes its relevant test suites on actual iOS 18 and macOS 15 runtimes, or a documented, evidence-backed exception is approved.
+- The package builds and executes its relevant test and Example smoke suites on actual iOS 18 and macOS 15 runtimes. The only permitted exception is an approved minimum-version increase under §12, followed by execution on that new actual minimum runtime.
 - Public API documentation and 0.2.0 migration notes are complete.
 - SwiftFormat reports zero violations.
 - Required macOS and iOS CI jobs pass.
