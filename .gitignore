@@ -44,6 +44,7 @@ xcshareddata/WorkspaceSettings.xcsettings
 Packages/
 Package.resolved
 .swiftpm
+.worktrees/
 
 # CocoaPods
 Pods/
