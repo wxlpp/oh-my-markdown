@@ -5,7 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "MarkdownKit",
-    platforms: [.iOS(.v26), .macOS(.v26)],
+    platforms: [.iOS(.v18), .macOS(.v15)],
     products: [
         // Consumer-facing umbrella product — import MarkdownKit to get SwiftUI views.
         .library(name: "MarkdownKit", targets: ["MarkdownKit"]),

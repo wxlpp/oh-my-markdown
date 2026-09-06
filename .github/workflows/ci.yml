@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ios18-runtime:
+    name: iOS 18 actual runtime
+    runs-on: [self-hosted, macOS, ARM64, xcode-26]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare fresh artifact directory
+        run: |
+          mkdir -p .artifacts
+          echo "HARDENING_RESULT_DIR=$(mktemp -d "$PWD/.artifacts/ios18.XXXXXX")" >> "$GITHUB_ENV"
+
+      - name: Require toolchain and iOS 18.0 runtime
+        run: |
+          set -euo pipefail
+          swift --version | grep -E 'Apple Swift version 6\.2([ .]|$)'
+          xcodebuild -version | head -1 | grep -E '^Xcode 26([.]|$)'
+          xcrun simctl list runtimes available | grep -E '^iOS 18\.0 '
+          xcrun simctl list devices available | grep -E '^    iPhone 16 Pro .*\(Shutdown\)|^    iPhone 16 Pro .*\(Booted\)'
+
+      - name: Check declared platform floors
+        run: Scripts/check-platform-floors.sh
+
+      - name: Test package on iOS 18.0
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme MarkdownKit-Package \
+            -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' \
+            -resultBundlePath "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.xcresult" \
+            | tee "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.log"
+
+      - name: Test Example on iOS 18.0
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Example/Example.xcodeproj \
+            -scheme Example \
+            -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' \
+            -resultBundlePath "$HARDENING_RESULT_DIR/Example-iOS18.xcresult" \
+            | tee "$HARDENING_RESULT_DIR/Example-iOS18.log"
+
+      - name: Assert iOS runtime test evidence
+        env:
+          HARDENING_ARTIFACTS_DIR: ${{ env.HARDENING_RESULT_DIR }}
+        run: |
+          Scripts/assert-xcresult-tests.sh ios18 \
+            "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.xcresult" \
+            "$HARDENING_RESULT_DIR/Example-iOS18.xcresult"
+
+      - name: Write iOS runtime metadata
+        if: always()
+        env:
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          {
+            echo "host_os=$(sw_vers -productVersion 2>&1 || true)"
+            echo "xcode_version=$(xcodebuild -version 2>&1 | head -1 || true)"
+            echo "swift_version=$(swift --version 2>&1 | head -1 || true)"
+            echo "simulator_runtime=iOS 18.0"
+            echo "scheme=MarkdownKit-Package,Example"
+            echo "git_sha=$GITHUB_SHA"
+            echo "result=$JOB_RESULT"
+          } > "$HARDENING_RESULT_DIR/runtime-metadata.txt"
+
+      - name: Upload iOS runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios18-runtime-${{ github.sha }}
+          path: ${{ env.HARDENING_RESULT_DIR }}
+          if-no-files-found: error
+
+  macos15-runtime:
+    name: macOS 15 actual runtime
+    runs-on: [self-hosted, macOS, ARM64, macos-15, xcode-26]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare fresh artifact directory
+        run: |
+          mkdir -p .artifacts
+          echo "HARDENING_RESULT_DIR=$(mktemp -d "$PWD/.artifacts/macos15.XXXXXX")" >> "$GITHUB_ENV"
+
+      - name: Require macOS 15 and expected toolchain
+        run: |
+          set -euo pipefail
+          sw_vers -productVersion | grep -E '^15\.'
+          swift --version | grep -E 'Apple Swift version 6\.2([ .]|$)'
+          xcodebuild -version | head -1 | grep -E '^Xcode 26([.]|$)'
+
+      - name: Check declared platform floors
+        run: Scripts/check-platform-floors.sh
+
+      - name: Test package on macOS 15
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme MarkdownKit-Package \
+            -destination 'platform=macOS' \
+            -resultBundlePath "$HARDENING_RESULT_DIR/MarkdownKit-macOS15.xcresult" \
+            | tee "$HARDENING_RESULT_DIR/MarkdownKit-macOS15.log"
+
+      - name: Assert macOS runtime test evidence
+        env:
+          HARDENING_ARTIFACTS_DIR: ${{ env.HARDENING_RESULT_DIR }}
+        run: |
+          Scripts/assert-xcresult-tests.sh macos15 \
+            "$HARDENING_RESULT_DIR/MarkdownKit-macOS15.xcresult"
+
+      - name: Write macOS runtime metadata
+        if: always()
+        env:
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          {
+            echo "host_os=$(sw_vers -productVersion 2>&1 || true)"
+            echo "xcode_version=$(xcodebuild -version 2>&1 | head -1 || true)"
+            echo "swift_version=$(swift --version 2>&1 | head -1 || true)"
+            echo "simulator_runtime=not_applicable"
+            echo "scheme=MarkdownKit-Package"
+            echo "git_sha=$GITHUB_SHA"
+            echo "result=$JOB_RESULT"
+          } > "$HARDENING_RESULT_DIR/runtime-metadata.txt"
+
+      - name: Upload macOS runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos15-runtime-${{ github.sha }}
+          path: ${{ env.HARDENING_RESULT_DIR }}
+          if-no-files-found: error

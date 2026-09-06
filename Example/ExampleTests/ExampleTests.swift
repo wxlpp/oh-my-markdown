@@ -5,12 +5,14 @@
 //  Created by Evan Wang on 2025年1月15日.
 //
 
-@testable import Example
+import MarkdownCore
 import Testing
 
 struct ExampleTests {
-    @Test
-    func example() {
-        // Write your test here and use APIs like `#expect(...)` to check expected conditions.
+    @Test("Smoke markdown parses one heading")
+    func smokeMarkdownParsesOneHeading() {
+        let document = MarkdownDocument(parsing: "# Smoke")
+
+        #expect(document.blocks == [.heading(level: 1, content: [.text("Smoke")])])
     }
 }

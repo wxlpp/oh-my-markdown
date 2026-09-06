@@ -14,6 +14,7 @@ struct ContentView: View {
             StreamTab()
                 .tabItem { Label("流式", systemImage: "dot.radiowaves.right") }
         }
+        .accessibilityIdentifier("markdownkit.example.root")
     }
 }
 
