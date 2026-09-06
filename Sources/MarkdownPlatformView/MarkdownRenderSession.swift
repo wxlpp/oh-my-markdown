@@ -1,4 +1,5 @@
 import Foundation
+import MarkdownCore
 import MarkdownRenderKit
 
 package actor MarkdownRenderSession: ParseResultSink {
@@ -7,11 +8,12 @@ package actor MarkdownRenderSession: ParseResultSink {
     private nonisolated let token = ParseSessionToken()
     private let executor: ParseExecutor
     private let clock: any RenderSessionClock
-    private let availableWidth: Double
-    private let placeholderMode: PlaceholderMode
+    private var availableWidth: Double
+    private var placeholderMode: PlaceholderMode
     private let prepareInput: RenderSessionPreparation
     private var source = ""
     private var configuration: RenderConfigurationSnapshot?
+    private var suppliedDocument: MarkdownDocument?
     package private(set) var currentToken: RenderCommitToken?
     package private(set) var submission: ParseSubmission?
     private var retryTask: Task<Void, Never>?
@@ -23,6 +25,7 @@ package actor MarkdownRenderSession: ParseResultSink {
         id: RenderSessionID = .init(rawValue: UUID()), executor: ParseExecutor = .shared,
         registry: RenderSessionSinkRegistry, clock: any RenderSessionClock = ContinuousRenderSessionClock(),
         availableWidth: Double = 320, placeholderMode: PlaceholderMode = .static,
+        configuration: RenderConfigurationSnapshot? = nil,
         prepare: @escaping RenderSessionPreparation = MarkdownRenderSession.prepare
     ) {
         self.id = id
@@ -31,6 +34,7 @@ package actor MarkdownRenderSession: ParseResultSink {
         self.clock = clock
         self.availableWidth = availableWidth
         self.placeholderMode = placeholderMode
+        self.configuration = configuration
         self.prepareInput = prepare
     }
 
@@ -63,8 +67,18 @@ package actor MarkdownRenderSession: ParseResultSink {
         case .setSource(let value, let configuration):
             self.source = value
             self.configuration = configuration
-        case .append(let delta): self.source.append(delta)
+            self.suppliedDocument = nil
+            self.placeholderMode = .static
+        case .setDocument(let document, let configuration):
+            self.source = ""
+            self.suppliedDocument = document
+            self.configuration = configuration
+        case .append(let delta):
+            self.source.append(delta)
+            self.suppliedDocument = nil
+            self.placeholderMode = .streaming
         case .replaceConfiguration(let configuration): self.configuration = configuration
+        case .replaceWidth(let width): self.availableWidth = max(1, width)
         case .dismantle:
             await self.dismantle()
             return
@@ -78,6 +92,12 @@ package actor MarkdownRenderSession: ParseResultSink {
             mathScale: configuration.mathScale
         )
         self.deadline = self.clock.now() + .seconds(2)
+        if let document = self.suppliedDocument {
+            let submission = ParseSubmission(id: UUID(), sessionToken: token, commitToken: event.commitToken, attempt: 1)
+            self.submission = submission
+            self.receive(.parsed(submission: submission, document: document))
+            return
+        }
         await self.submit(commitToken: event.commitToken, attempt: 1)
     }
 
@@ -92,6 +112,7 @@ package actor MarkdownRenderSession: ParseResultSink {
         self.submission = nil
         self.source = ""
         self.configuration = nil
+        self.suppliedDocument = nil
         await self.executor.tombstone(self.token)
     }
 
@@ -134,8 +155,8 @@ package actor MarkdownRenderSession: ParseResultSink {
         case .parsed(_, let document):
             guard let configuration else { return }
             let input = RenderInput(
-                document: document, source: source, availableWidth: availableWidth,
-                configuration: configuration, placeholderMode: placeholderMode
+                document: document, source: suppliedDocument == nil ? self.source : nil, availableWidth: self.availableWidth,
+                configuration: configuration, placeholderMode: self.placeholderMode
             )
             self.preparationTask?.cancel()
             let prepare = self.prepareInput
@@ -195,7 +216,49 @@ package actor MarkdownRenderSession: ParseResultSink {
 }
 
 @MainActor
-package final class MarkdownRenderSessionDriver {
+package protocol RenderSessionDriving: AnyObject {
+    func send(_ mutation: RenderSessionMutation)
+    var resourceTaskOwner: RenderSessionResourceTaskOwner { get }
+}
+
+/// Owns compatibility wrapper work until the resource coordinators are replaced.
+/// Cancelling a wrapper does not claim cancellation of legacy glyph producers.
+@MainActor
+package final class RenderSessionResourceTaskOwner {
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+    package var count: Int {
+        self.tasks.count
+    }
+
+    @discardableResult
+    package func start(_ operation: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+        let id = UUID()
+        let task = Task { [weak self] in
+            defer { self?.tasks[id] = nil }
+            guard !Task.isCancelled else { return }
+            await operation()
+        }
+        self.tasks[id] = task
+        return task
+    }
+
+    package func cancelAll() {
+        for task in self.tasks.values {
+            task.cancel()
+        }
+        self.tasks.removeAll()
+    }
+
+    isolated deinit {
+        for task in tasks.values {
+            task.cancel()
+        }
+    }
+}
+
+@MainActor
+package final class MarkdownRenderSessionDriver: RenderSessionDriving {
+    package let resourceTaskOwner = RenderSessionResourceTaskOwner()
     private let session: MarkdownRenderSession
     private let continuation: AsyncStream<RenderSessionEvent>.Continuation
     private let pump: Task<Void, Never>
@@ -221,13 +284,14 @@ package final class MarkdownRenderSessionDriver {
         guard !self.dismantled else { return }
         self.sequence += 1
         switch mutation {
-        case .setSource:
+        case .setSource, .setDocument:
             self.sourceRevision += 1
             self.configurationGeneration += 1
         case .append: self.sourceRevision += 1
-        case .replaceConfiguration: self.configurationGeneration += 1
+        case .replaceConfiguration, .replaceWidth: self.configurationGeneration += 1
         case .dismantle:
             self.dismantled = true
+            self.resourceTaskOwner.cancelAll()
             self.session.invalidateAdmission()
             self.session.registry.revokeAndUnregister(self.session.id)
         }
@@ -241,6 +305,7 @@ package final class MarkdownRenderSessionDriver {
     }
 
     isolated deinit {
+        resourceTaskOwner.cancelAll()
         session.invalidateAdmission()
         session.registry.revokeAndUnregister(session.id)
         continuation.finish()

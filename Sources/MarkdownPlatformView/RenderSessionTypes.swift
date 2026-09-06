@@ -101,8 +101,10 @@ package protocol ParseResultSink: Actor {
 
 package enum RenderSessionMutation {
     case setSource(String, RenderConfigurationSnapshot)
+    case setDocument(MarkdownDocument, RenderConfigurationSnapshot)
     case append(String)
     case replaceConfiguration(RenderConfigurationSnapshot)
+    case replaceWidth(Double)
     case dismantle
 }
 
@@ -126,6 +128,12 @@ package enum RenderSessionDelivery {
 package protocol RenderSessionSink: AnyObject {
     func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken)
     func receive(error: RenderSessionError)
+}
+
+/// Production platform sinks supply their MainActor-owned compatibility caches.
+@MainActor
+package protocol RenderSessionResourceProviding: AnyObject {
+    func resolvedResources(for model: RenderDisplayModel, configuration: RenderConfigurationSnapshot) -> ResolvedResourceSnapshot
 }
 
 @MainActor
@@ -166,8 +174,9 @@ package final class RenderSessionSinkRegistry {
             registry.withAuthorizedSink(for: token) { sink in
                 switch delivery {
                 case .snapshot(let model, let configuration):
+                    let resources = (sink as? any RenderSessionResourceProviding)?.resolvedResources(for: model, configuration: configuration) ?? .init(values: [:])
                     let snapshot = RenderMaterializer(configuration: configuration).materialize(
-                        model, resources: .init(values: [:])
+                        model, resources: resources
                     )
                     sink.replaceSnapshot(snapshot, token: token)
                 case .error(let error):

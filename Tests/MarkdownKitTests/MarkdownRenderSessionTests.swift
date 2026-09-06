@@ -302,7 +302,7 @@ final class ManualRenderClock: RenderSessionClock {
         #expect(await eventually { sink.tokens.count == 1 })
         #expect(sink.tokens.first?.sourceRevision == 1)
         #expect(sink.tokens.first?.configurationGeneration == 2)
-        #expect(sink.strings == ["hello\n"])
+        #expect(sink.strings == ["hello"])
         driver.send(.dismantle)
     }
 
@@ -401,7 +401,7 @@ final class ManualRenderClock: RenderSessionClock {
         driver.send(.replaceConfiguration(config))
         #expect(await eventually { await session.currentToken?.sequence == 24 })
         gate.release("first", "newest")
-        #expect(await eventually { sink.strings == ["newest\n"] })
+        #expect(await eventually { sink.strings == ["newest"] })
         #expect(gate.entered == ["first", "newest"])
         #expect(sink.tokens[0].sourceRevision == 23)
         #expect(sink.tokens[0].configurationGeneration == 3)

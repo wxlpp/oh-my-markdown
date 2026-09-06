@@ -8,11 +8,146 @@ import UIKit
 // MARK: - MarkdownLabelView (iOS)
 
 @MainActor
-public final class MarkdownLabelView: UIView {
+public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionResourceProviding {
+    override public func didMoveToWindow() {
+        super.didMoveToWindow()
+        self.rasterScaleDidChange(to: window?.screen.scale ?? UIScreen.main.scale)
+    }
+
+    package private(set) var currentSnapshot: RenderSnapshot?
+    package private(set) var currentCommitToken: RenderCommitToken?
+    package private(set) var lastRenderError: RenderSessionError?
+    private let sessionRegistry = RenderSessionSinkRegistry()
+    private let sessionID = RenderSessionID(rawValue: UUID())
+    private let configurationID = MarkdownConfigurationID.uniqueInstance()
+    private var sessionDriver: (any RenderSessionDriving)?
+    private var isDismantled = false
+    private var requestedWidth: CGFloat = 1
+    private var mathRendererUpdateTask: Task<Void, Never>?
+    private var svgRendererUpdateTask: Task<Void, Never>?
+    private var displayScale: CGFloat = 1
+    private var renderedBlocks: [BlockNode] = []
+
+    package convenience init(frame: CGRect, driver: any RenderSessionDriving) {
+        self.init(frame: frame)
+        self.sessionDriver = driver
+    }
+
+    private func configurationSnapshot() -> RenderConfigurationSnapshot {
+        MarkdownRenderConfiguration(style: self.renderStyle, configurationID: self.configurationID).snapshot(generation: 0)
+    }
+
+    private func driver() -> any RenderSessionDriving {
+        if let sessionDriver { return sessionDriver }
+        let session = MarkdownRenderSession(id: sessionID, registry: sessionRegistry, availableWidth: requestedWidth, configuration: configurationSnapshot())
+        self.sessionRegistry.register(self, for: self.sessionID)
+        let driver = MarkdownRenderSessionDriver(session: session)
+        sessionDriver = driver
+        return driver
+    }
+
+    package func rasterScaleDidChange(to scale: CGFloat) {
+        guard !self.isDismantled, scale.isFinite, scale > 0, scale != self.displayScale else { return }
+        self.displayScale = scale
+        self._mathRasterScale = scale
+        self._svgRasterScale = scale
+        self._mathCache.removeAll()
+        self._svgBlockCache.removeAll()
+        self._cachedRenderer = nil
+        self.updateContent()
+    }
+
+    package func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken) {
+        precondition(self.currentCommitToken.map { token.sequence >= $0.sequence } ?? true)
+        self.currentCommitToken = token
+        self.lastRenderError = nil
+        let previousSnapshot = self.currentSnapshot
+        self.contentStorage.performEditingTransaction {
+            self.contentStorage.attributedString = NSAttributedString(string: "")
+            self.currentSnapshot = nil
+            self.currentSnapshot = snapshot
+            self.contentStorage.attributedString = snapshot.attributedString
+        }
+        self._liveString = NSMutableAttributedString(attributedString: snapshot.attributedString)
+        self.blockStarts = snapshot.blockStarts
+        self.parsedBlocks = snapshot.displayModel.preparedBlocks ?? []
+        self.renderedBlocks = self.parsedBlocks.map(\.block)
+        self.lastParsedSource = snapshot.displayModel.source ?? ""
+        self._cachedRenderer = nil
+        self._cachedRendererWidth = snapshot.displayModel.availableWidth
+        self.resetLayout()
+        let range = NSRange(location: 0, length: snapshot.attributedString.length)
+        self.triggerImageLoads(in: range)
+        self.triggerMathLoads(in: range)
+        self.triggerSVGBlockLoads(in: range)
+        withExtendedLifetime(previousSnapshot) {}
+    }
+
+    package func receive(error: RenderSessionError) {
+        self.lastRenderError = error
+    }
+
+    package func resolvedResources(for model: RenderDisplayModel, configuration: RenderConfigurationSnapshot) -> ResolvedResourceSnapshot {
+        var values: [ResourceID: ResolvedPlatformResource] = [:]
+        for resource in model.resources {
+            switch resource {
+            case .image(let id, let source, _):
+                if let image = _imageCache[source] {
+                    values[id] = .image(image, owner: LegacyResourceOwner(retaining: image))
+                }
+            case .math(let id, let latex, let display):
+                let pt = MathMetrics.effectivePointSize(textPointSize: configuration.typography.pointSizes[.body] ?? 16, mathScale: configuration.mathScale)
+                let key = MathCacheKey(latex: latex, display: display, pointSize: pt, colorHex: MathMetrics.colorHex(self.renderStyle.mathColorOverride ?? self.renderStyle.textColor), rasterScale: self._mathRasterScale, rendererGeneration: self._mathRendererGeneration)
+                if let glyph = _mathCache[key] {
+                    values[id] = .math(image: glyph.image, baselineOffset: glyph.baselineOffsetEx * pt * 0.5, owner: LegacyResourceOwner(retaining: glyph as AnyObject))
+                }
+            case .svg(let id, let source):
+                let key = SVGBlockCacheKey(svg: source, availableWidth: model.availableWidth, rasterScale: self._svgRasterScale, rendererGeneration: self._svgBlockRendererGeneration)
+                if let glyph = _svgBlockCache[key] {
+                    values[id] = .svg(glyph.image, owner: LegacyResourceOwner(retaining: glyph as AnyObject))
+                }
+            }
+        }
+        return ResolvedResourceSnapshot(values: values)
+    }
+
+    package func dismantleRenderSession() {
+        guard !self.isDismantled else { return }
+        self.isDismantled = true
+        let previousSnapshot = self.currentSnapshot
+        self.contentStorage.performEditingTransaction {
+            self.contentStorage.attributedString = NSAttributedString(string: "")
+            self.currentSnapshot = nil
+        }
+        self._liveString = NSMutableAttributedString(string: "")
+        self.blockStarts = []
+        self.parsedBlocks = []
+        self.renderedBlocks = []
+        self.lastParsedSource = ""
+        self.mathRendererUpdateTask?.cancel()
+        self.svgRendererUpdateTask?.cancel()
+        self.mathRendererUpdateTask = nil
+        self.svgRendererUpdateTask = nil
+        self._heightUpdateTask?.cancel()
+        self._heightUpdateTask = nil
+        self._tableOverlays.values.forEach { $0.scroll.removeFromSuperview() }
+        self._tableOverlays.removeAll()
+        self.sessionDriver?.send(.dismantle)
+        self.sessionRegistry.revokeAndUnregister(self.sessionID)
+        self.sessionDriver = nil
+        self._cachedRenderer = nil
+        self._imageCache.removeAll()
+        self._mathCache.removeAll()
+        self._svgBlockCache.removeAll()
+        withExtendedLifetime(previousSnapshot) {}
+    }
+
     // MARK: Init
 
     override public init(frame: CGRect) {
         super.init(frame: frame)
+        self.requestedWidth = max(frame.width, 1)
+        self.displayScale = UIScreen.main.scale
         self.buildStack()
         self.buildInteraction()
     }
@@ -54,13 +189,11 @@ public final class MarkdownLabelView: UIView {
         }
     }
 
-    public var blocks: [BlockNode] = [] {
-        didSet {
-            guard !self._isIncrementalUpdate else {
-                return
-            }
-            self.parsedBlocks = self.blocks.map { ParsedBlockNode(block: $0) }
-            self.updateContent()
+    public var blocks: [BlockNode] {
+        get { self.renderedBlocks }
+        set {
+            guard !self.isDismantled else { return }
+            self.driver().send(.setDocument(MarkdownDocument(parsedBlocks: newValue.map { ParsedBlockNode(block: $0) }), self.configurationSnapshot()))
         }
     }
 
@@ -280,21 +413,15 @@ public final class MarkdownLabelView: UIView {
     // MARK: Streaming
 
     public func setMarkdown(_ source: String) {
-        // 完整重置 → 静态首屏。cache-miss 形态由 renderer 看 `.static` 出透明 attachment。
+        guard !self.isDismantled else { return }
         self.renderMode = .static
-        self._parseSerial += 1
-        self._parseTask?.cancel()
-        self._parseTask = nil
-        self._pendingParseAfterCurrent = false
-        self.streamingSource = source
-        self.scheduleParse(delayNanoseconds: 0)
+        self.driver().send(.setSource(source, self.configurationSnapshot()))
     }
 
     public func appendMarkdown(_ chunk: String) {
-        // 增量流式 → 保持既有 streaming 行为，cache-miss 显示源码占位。
+        guard !self.isDismantled else { return }
         self.renderMode = .streaming
-        self.streamingSource += chunk
-        self.scheduleParse(delayNanoseconds: 50_000_000)
+        self.driver().send(.append(chunk))
     }
 
     // MARK: TextKit 2 stack (internal – UITextInput extension reads them)
@@ -317,26 +444,9 @@ public final class MarkdownLabelView: UIView {
         )
     }
 
-    func updateContent() {
-        let renderer = self.cachedRenderer
-        let result = NSMutableAttributedString()
-        var starts: [Int] = []
-        for (index, block) in self.blocks.enumerated() {
-            if index > 0 {
-                result.append(renderer.separator)
-            }
-            starts.append(result.length)
-            result.append(renderer.renderBlock(block))
-        }
-        self.blockStarts = starts
-        self._liveString = result
-        self.contentStorage.performEditingTransaction {
-            self.contentStorage.attributedString = self._liveString
-        }
-        self.resetLayout()
-        self.triggerImageLoads(in: NSRange(location: 0, length: self._liveString.length))
-        self.triggerMathLoads(in: NSRange(location: 0, length: self._liveString.length))
-        self.triggerSVGBlockLoads(in: NSRange(location: 0, length: self._liveString.length))
+    private func updateContent() {
+        guard !self.isDismantled else { return }
+        self.driver().send(.replaceConfiguration(self.configurationSnapshot()))
     }
 
     func offsetOf(_ location: any NSTextLocation) -> Int {
@@ -354,8 +464,6 @@ public final class MarkdownLabelView: UIView {
         return NSTextRange(location: s, end: e)
     }
 
-    private var _isIncrementalUpdate = false
-
     /// Receives the system `highlightView` as a subview. Inserted at index 0
     /// so it sits below the main view's `draw(_:)` content in z-order.
     private let highlightContainerView = UIView()
@@ -363,7 +471,6 @@ public final class MarkdownLabelView: UIView {
     /// Bundles long-press selection, handle dragging, and Copy/Share menu (no keyboard).
     private var textInteraction: UITextInteraction!
 
-    private var streamingSource = ""
     private var lastParsedSource = ""
     private var parsedBlocks: [ParsedBlockNode] = []
     // Cached renderer — invalidated when renderStyle or available width changes.
@@ -385,7 +492,7 @@ public final class MarkdownLabelView: UIView {
         }
     }
 
-    /// Canonical mutable store — avoids O(n) mutableCopy() per streaming token.
+    /// Platform drawing mirror. The immutable current snapshot owns attachments.
     private var _liveString = NSMutableAttributedString()
     /// Last measured intrinsic height — gates invalidateIntrinsicContentSize() calls.
     private var _lastHeight: CGFloat = 0
@@ -400,11 +507,6 @@ public final class MarkdownLabelView: UIView {
     /// after ~33ms so a transient flag would race, hence a durable counter. Zero
     /// production behavior beyond an Int increment at the primitive's entry.
     var _deferredHeightScheduleCount = 0
-    /// In-flight parse task. Streaming keeps this single-flight so large documents do not
-    /// accumulate cancelled full-document parses as tokens arrive.
-    private var _parseTask: Task<Void, Never>?
-    private var _parseSerial = 0
-    private var _pendingParseAfterCurrent = false
     /// In-memory image cache keyed by source URL string.
     private var _imageCache: [String: UIImage] = [:]
     /// Source URLs currently being fetched (prevents duplicate requests).
@@ -426,9 +528,20 @@ public final class MarkdownLabelView: UIView {
     private var _mathRendererGeneration: Int = 0
     /// Injected math renderer; swapping it bumps the coordinator's generation.
     public var mathRenderer: (any MathRendering)? {
-        // setRenderer 异步派发；落地前发生的渲染会显示 latex 占位，并在下次
-        // updateContent/relayout 时解析（有意为之的最终一致性）。
-        didSet { Task { await self._mathCoordinator.setRenderer(self.mathRenderer) } }
+        didSet {
+            guard !self.isDismantled, oldValue !== self.mathRenderer else { return }
+            self._mathCache.removeAll()
+            self._cachedRenderer = nil
+            let coordinator = self._mathCoordinator
+            let renderer = self.mathRenderer
+            let previousUpdate = self.mathRendererUpdateTask
+            self.mathRendererUpdateTask = self.driver().resourceTaskOwner.start {
+                await previousUpdate?.value
+                guard !Task.isCancelled else { return }
+                await coordinator.setRenderer(renderer)
+            }
+            self.updateContent()
+        }
     }
 
     /// Platform-agnostic async ```svg block render coordinator (dedup/三态/代际).
@@ -447,39 +560,19 @@ public final class MarkdownLabelView: UIView {
     private var _svgBlockRendererGeneration: Int = 0
     /// Injected ```svg block renderer; swapping it bumps the coordinator's generation.
     public var svgBlockRenderer: (any SVGBlockRendering)? {
-        // didSet 行为契约：
-        // 1) 异步把 renderer 推给 coordinator（gen bump + 清协调器自身的 caches）。
-        // 2) 在 coordinator 落地**之后**回到 MainActor 做后续：
-        //    - nil 分支：清 view-held + transient renderer 的 svg cache（让
-        //      已渲染 svg 立刻降级回高亮源码，匹配 .svgRenderer(nil) 的
-        //      「disable」文档契约——Copilot PR #5 R4 #1）。
-        //    - 任何分支：触发一次 updateContent 让 triggerSVGBlockLoads 在
-        //      新 renderer 下重新派发；解决 nil→非nil 时源串不变 → representable
-        //      早 return 不调 setMarkdown → svg 永停 marker 的死锁（Copilot
-        //      PR #5 R7 #1 + suppressed）。先 await setRenderer 再 updateContent
-        //      可避免 triggerSVGBlockLoads 抢在 setRenderer 之前用旧 coordinator
-        //      状态派发并被随后的 setRenderer drop 的竞态。
         didSet {
-            Task { [weak self] in
-                guard let self else { return }
-                await self._svgBlockCoordinator.setRenderer(self.svgBlockRenderer)
-                await MainActor.run {
-                    // **任何 renderer 变更**都失效 view-held svg cache：
-                    // - nil 分支：原 R4 #1 disable 契约要求清 cache 让已渲染
-                    //   svg 降级回高亮源码 + marker。
-                    // - 非 nil→非 nil swap：若不清，已 attachment 的 svg 会
-                    //   继续命中旧 cache（view-held _svgBlockRendererGeneration
-                    //   仍是旧值），renderSVGBlock 直接输出 attachment 而非
-                    //   marker，triggerSVGBlockLoads 枚举不到 marker → 新
-                    //   renderer 永不派发 → renderer swap 不真正生效
-                    //   （Copilot PR #5 R8 #1 + suppressed）。
-                    // 清 cache 后 updateContent 让所有 svg 走 miss→marker→
-                    // 新 coordinator 派发→回写链路；任何 renderer 切换都生效。
-                    self._svgBlockCache.removeAll()
-                    self._cachedRenderer?.svgBlockCache.removeAll()
-                    self.updateContent()
-                }
+            guard !self.isDismantled, oldValue !== self.svgBlockRenderer else { return }
+            self._svgBlockCache.removeAll()
+            self._cachedRenderer = nil
+            let coordinator = self._svgBlockCoordinator
+            let renderer = self.svgBlockRenderer
+            let previousUpdate = self.svgRendererUpdateTask
+            self.svgRendererUpdateTask = self.driver().resourceTaskOwner.start {
+                await previousUpdate?.value
+                guard !Task.isCancelled else { return }
+                await coordinator.setRenderer(renderer)
             }
+            self.updateContent()
         }
     }
 
@@ -499,7 +592,7 @@ public final class MarkdownLabelView: UIView {
     private var blockStarts: [Int] = []
 
     private var cachedRenderer: AttributedStringRenderer {
-        let w = max(bounds.width, 1)
+        let w = self.requestedWidth
         if self._cachedRenderer == nil || abs(w - self._cachedRendererWidth) > 0.5 {
             var renderer = AttributedStringRenderer(
                 style: renderStyle, availableWidth: w, placeholderMode: self.renderMode
@@ -568,10 +661,10 @@ public final class MarkdownLabelView: UIView {
         let w = max(bounds.width, 1)
         self.textContainer.size = CGSize(width: w, height: .greatestFiniteMagnitude)
         // If the renderer was built for a different width, re-render now so tab stops are correct.
-        if abs(w - self._cachedRendererWidth) > 0.5 {
-            self._cachedRenderer = nil // force re-creation with the correct width
-            self.updateContent() // re-renders and calls resetLayout again with matching width
-            return
+        if abs(w - self.requestedWidth) > 0.5 {
+            self.requestedWidth = w
+            self._cachedRenderer = nil
+            self.sessionDriver?.send(.replaceWidth(w))
         }
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         self._heightUpdateTask?.cancel()
@@ -579,8 +672,8 @@ public final class MarkdownLabelView: UIView {
         self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
         invalidateIntrinsicContentSize()
         setNeedsDisplay()
-        // Mirror applyDocument's host-relayout discipline: async write-back paths
-        // (image/math glyph resolution → updateContent → resetLayout) can shrink
+        // Preserve host-relayout discipline: asynchronous resource snapshots
+        // can shrink
         // content dramatically. invalidateIntrinsicContentSize() alone does not make
         // the SwiftUI host re-query our size, so request a host layout pass and a
         // deferred height re-measure exactly as the streaming incremental path does.
@@ -616,159 +709,6 @@ public final class MarkdownLabelView: UIView {
             invalidateIntrinsicContentSize()
             setNeedsLayout()
         }
-    }
-
-    private func scheduleParse(delayNanoseconds: UInt64) {
-        guard self._parseTask == nil else {
-            self._pendingParseAfterCurrent = true
-            return
-        }
-        let serial = self._parseSerial
-        self._parseTask = Task {
-            if delayNanoseconds > 0 {
-                do {
-                    try await Task.sleep(nanoseconds: delayNanoseconds)
-                } catch {
-                    self.finishParseTask(serial: serial)
-                    return
-                }
-            }
-            guard !Task.isCancelled, serial == self._parseSerial else {
-                self.finishParseTask(serial: serial)
-                return
-            }
-            let source = self.streamingSource
-            let prevBlocks = self.blocks
-            let prevParsedBlocks = self.parsedBlocks
-            let prevSource = self.lastParsedSource
-            let prevStarts = self.blockStarts
-            let newDocument = await Task.detached(priority: .userInitiated) {
-                MarkdownDocument(parsedBlocks: prevParsedBlocks)
-                    .parsingAppend(to: source, previousSource: prevSource)
-            }.value
-            guard !Task.isCancelled, serial == self._parseSerial else {
-                self.finishParseTask(serial: serial)
-                return
-            }
-            self.applyDocument(
-                newDocument,
-                source: source,
-                prevBlocks: prevBlocks,
-                prevParsedBlocks: prevParsedBlocks,
-                prevStarts: prevStarts
-            )
-            let needsFollowUp = self._pendingParseAfterCurrent || self.streamingSource != source
-            self.finishParseTask(serial: serial)
-            if needsFollowUp {
-                self._pendingParseAfterCurrent = false
-                self.scheduleParse(delayNanoseconds: 50_000_000)
-            }
-        }
-    }
-
-    private func finishParseTask(serial: Int) {
-        guard serial == self._parseSerial else {
-            return
-        }
-        self._parseTask = nil
-    }
-
-    /// Applies a newly parsed block array. Must be called on MainActor.
-    private func applyDocument(
-        _ document: MarkdownDocument,
-        source: String,
-        prevBlocks: [BlockNode],
-        prevParsedBlocks: [ParsedBlockNode],
-        prevStarts: [Int]
-    ) {
-        let newBlocks = document.blocks
-        let newParsedBlocks = document.parsedBlocks
-        self.parsedBlocks = document.parsedBlocks
-        self.lastParsedSource = source
-
-        let firstChanged = firstChangedMarkdownBlockIndex(
-            prevParsedBlocks: prevParsedBlocks,
-            newParsedBlocks: newParsedBlocks,
-            prevBlocks: prevBlocks,
-            newBlocks: newBlocks
-        )
-        guard firstChanged < prevBlocks.count || firstChanged < newBlocks.count else {
-            return
-        }
-
-        self._isIncrementalUpdate = true
-        self.blocks = newBlocks
-        self._isIncrementalUpdate = false
-
-        // Character offset in the attributed string where the stable prefix ends
-        // (just before the separator that precedes block[firstChanged]).
-        let stablePrefixLen: Int = if firstChanged == 0 {
-            0
-        } else if firstChanged < prevStarts.count {
-            prevStarts[firstChanged] - 1
-        } else {
-            self._liveString.length
-        }
-
-        // Render only the changed suffix.
-        let renderer = self.cachedRenderer
-        let sep = renderer.separator
-        let suffix = NSMutableAttributedString()
-        var newExtraStarts: [Int] = []
-        var pos = stablePrefixLen
-        for (offset, block) in newBlocks[firstChanged...].enumerated() {
-            if firstChanged + offset > 0 {
-                suffix.append(sep)
-                pos += sep.length
-            }
-            newExtraStarts.append(pos)
-            let rendered = renderer.renderBlock(block)
-            suffix.append(rendered)
-            pos += rendered.length
-        }
-        self.blockStarts = Array(prevStarts.prefix(firstChanged)) + newExtraStarts
-
-        // Splice directly into the canonical mutable store — avoids O(n) mutableCopy() per token.
-        self._liveString.replaceCharacters(
-            in: NSRange(location: stablePrefixLen, length: self._liveString.length - stablePrefixLen),
-            with: suffix
-        )
-        self.contentStorage.performEditingTransaction {
-            self.contentStorage.attributedString = self._liveString
-        }
-
-        // Re-layout and redraw only the changed region.
-        self.textContainer.size = CGSize(width: max(bounds.width, 1), height: .greatestFiniteMagnitude)
-        // Scope ensureLayout to the changed suffix instead of the entire document.
-        let docEnd = self.layoutManager.documentRange.endLocation
-        let layoutStart: NSTextLocation = if stablePrefixLen > 0, let loc = locationAt(stablePrefixLen) {
-            loc
-        } else {
-            self.layoutManager.documentRange.location
-        }
-        if let layoutRange = NSTextRange(location: layoutStart, end: docEnd) {
-            self.layoutManager.ensureLayout(for: layoutRange)
-        }
-        self.scheduleDeferredHeightUpdate()
-        // Find the Y of the first changed fragment; reuse layoutStart (no extra ensureLayout pass).
-        var dirtyY: CGFloat = 0
-        if stablePrefixLen > 0 {
-            self.layoutManager.enumerateTextLayoutFragments(from: layoutStart, options: []) { frag in
-                dirtyY = frag.layoutFragmentFrame.minY
-                return false
-            }
-        }
-        setNeedsDisplay(CGRect(
-            x: 0,
-            y: dirtyY,
-            width: bounds.width,
-            height: bounds.height - dirtyY
-        ))
-        self._pendingTableOverlaySyncStart = min(self._pendingTableOverlaySyncStart ?? firstChanged, firstChanged)
-        setNeedsLayout()
-        self.triggerImageLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
-        self.triggerMathLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
-        self.triggerSVGBlockLoads(in: NSRange(location: stablePrefixLen, length: suffix.length))
     }
 
     // MARK: Link tap
@@ -832,21 +772,22 @@ public final class MarkdownLabelView: UIView {
     }
 
     private func loadImage(source: String) {
-        guard let url = URL(string: source) else {
+        guard let url = URL(string: source), let token = currentCommitToken else {
             self._imageLoading.remove(source)
             return
         }
-        Task {
+        let registry = self.sessionRegistry
+        self.driver().resourceTaskOwner.start { [weak self] in
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
+                try Task.checkCancellation()
                 if let image = UIImage(data: data) {
-                    self.finishImageLoad(source: source, image: image)
-                } else {
-                    self.finishImageLoadFailure(source: source)
-                }
-            } catch {
-                self.finishImageLoadFailure(source: source)
-            }
+                    let applied = registry.withAuthorizedSink(for: token) { sink in
+                        (sink as? MarkdownLabelView)?.finishImageLoad(source: source, image: image)
+                    }
+                    if !applied { self?._imageLoading.remove(source) }
+                } else { self?.finishImageLoadFailure(source: source) }
+            } catch { self?.finishImageLoadFailure(source: source) }
         }
     }
 
@@ -871,7 +812,7 @@ public final class MarkdownLabelView: UIView {
         guard safe.length > 0 else {
             return
         }
-        let scale = self.window?.screen.scale ?? UIScreen.main.scale
+        let scale = self.displayScale
         // 同步枚举收集原始请求（latex/display/color/pt），代际相关的 key 构造
         // 推迟到下面那个唯一的 Task 内一次性完成（generation 受 actor 隔离）。
         var raw: [(latex: String, display: Bool, color: PlatformColor, pt: CGFloat)] = []
@@ -893,12 +834,15 @@ public final class MarkdownLabelView: UIView {
         guard !raw.isEmpty else {
             return
         }
-        Task { [weak self] in
-            guard let self else {
-                return
-            }
-            // 一次读取代际，用同一 gen 构造所有 key（保持与原实现一致的键公式）。
-            let gen = await self._mathCoordinator.generation
+        guard let token = currentCommitToken else { return }
+        let registry = self.sessionRegistry
+        let coordinator = self._mathCoordinator
+        let rendererUpdate = self.mathRendererUpdateTask
+        self.driver().resourceTaskOwner.start {
+            await rendererUpdate?.value
+            guard !Task.isCancelled else { return }
+            let gen = await coordinator.generation
+            guard !Task.isCancelled else { return }
             let requests: [(
                 key: MathCacheKey,
                 latex: String,
@@ -921,7 +865,8 @@ public final class MarkdownLabelView: UIView {
             }
             // 先派发全部渲染（去重由 coordinator 负责）。
             for r in requests {
-                await self._mathCoordinator.loadIfNeeded(
+                guard !Task.isCancelled else { return }
+                await coordinator.loadIfNeeded(
                     key: r.key, latex: r.latex, display: r.display,
                     pointSize: r.pt, scale: scale, color: r.color
                 )
@@ -929,29 +874,31 @@ public final class MarkdownLabelView: UIView {
             // 仅 await 各自 key 的在途任务，收集解析出的字形。
             var resolved: [(key: MathCacheKey, glyph: MathRenderedGlyph)] = []
             for r in requests {
-                if let glyph = await self._mathCoordinator.awaitGlyph(for: r.key) {
+                guard !Task.isCancelled else { return }
+                if let glyph = await coordinator.awaitGlyph(for: r.key) {
                     resolved.append((key: r.key, glyph: glyph))
                 }
             }
-            guard !resolved.isEmpty else {
+            guard !Task.isCancelled, !resolved.isEmpty else {
                 return
             }
             // 一次性合并回写并仅触发一次 updateContent（镜像图片加载纪律）。
-            await MainActor.run {
+            registry.withAuthorizedSink(for: token) { sink in
+                guard let view = sink as? MarkdownLabelView else { return }
                 // 真值源是 view-held store —— resetLayout() 在宽度抖动时会
                 // 丢弃 _cachedRenderer，下次 cachedRenderer 重建会从这里
                 // 重播种；同时也写当前 transient renderer（与
                 // finishImageLoad 同时写 _imageCache 与 _cachedRenderer?
                 // 完全同构）。
-                self._mathRasterScale = scale
-                self._mathRendererGeneration = gen
-                self._cachedRenderer?.mathRasterScale = scale
-                self._cachedRenderer?.mathRendererGeneration = gen
+                view._mathRasterScale = scale
+                view._mathRendererGeneration = gen
+                view._cachedRenderer?.mathRasterScale = scale
+                view._cachedRenderer?.mathRendererGeneration = gen
                 for entry in resolved {
-                    self._mathCache[entry.key] = entry.glyph
-                    self._cachedRenderer?.mathCache[entry.key] = entry.glyph
+                    view._mathCache[entry.key] = entry.glyph
+                    view._cachedRenderer?.mathCache[entry.key] = entry.glyph
                 }
-                self.updateContent()
+                view.updateContent()
             }
         }
     }
@@ -966,14 +913,14 @@ public final class MarkdownLabelView: UIView {
         guard safe.length > 0 else {
             return
         }
-        let scale = self.window?.screen.scale ?? UIScreen.main.scale
+        let scale = self.displayScale
         // 与 renderSVGBlock 共用同一宽度：renderSVGBlock 的 lookup key 走
         // self.cachedRenderer.availableWidth（renderer 持有），而 cachedRenderer
         // 只在 |Δw|>0.5pt 时才重建。若 trigger 直接用 max(bounds.width,1)，
         // 在 <0.5pt 抖动下 trigger 写入的 key 与 lookup 用的 key 不一致 →
         // 已解析 svg 永远 cache miss → marker 永留（Copilot PR #5 R5 #1）。
         // math 不受影响：MathCacheKey 不含 availableWidth。
-        let availableWidth = self.cachedRenderer.availableWidth
+        let availableWidth = self.currentSnapshot?.displayModel.availableWidth ?? self.requestedWidth
         // 同步枚举收集 svg 源串。代际相关的 key 构造推迟到下面唯一的 Task 内一次性
         // 完成（generation 受 actor 隔离），与 triggerMathLoads 同形。
         // 注：enumerateAttribute 对相同 value 的 .markdownSVGBlockSource 合并成单次
@@ -988,11 +935,15 @@ public final class MarkdownLabelView: UIView {
         guard !svgs.isEmpty else {
             return
         }
-        Task { [weak self] in
-            guard let self else {
-                return
-            }
-            let gen = await self._svgBlockCoordinator.generation
+        guard let token = currentCommitToken else { return }
+        let registry = self.sessionRegistry
+        let coordinator = self._svgBlockCoordinator
+        let rendererUpdate = self.svgRendererUpdateTask
+        self.driver().resourceTaskOwner.start {
+            await rendererUpdate?.value
+            guard !Task.isCancelled else { return }
+            let gen = await coordinator.generation
+            guard !Task.isCancelled else { return }
             let requests: [(key: SVGBlockCacheKey, svg: String)] = svgs.map { svg in
                 (key: SVGBlockCacheKey(
                     svg: svg, availableWidth: availableWidth,
@@ -1000,32 +951,35 @@ public final class MarkdownLabelView: UIView {
                 ), svg: svg)
             }
             for r in requests {
-                await self._svgBlockCoordinator.loadIfNeeded(
+                guard !Task.isCancelled else { return }
+                await coordinator.loadIfNeeded(
                     key: r.key, svg: r.svg, availableWidth: availableWidth, scale: scale
                 )
             }
             var resolved: [(key: SVGBlockCacheKey, glyph: SVGBlockGlyph)] = []
             for r in requests {
-                if let glyph = await self._svgBlockCoordinator.awaitGlyph(for: r.key) {
+                guard !Task.isCancelled else { return }
+                if let glyph = await coordinator.awaitGlyph(for: r.key) {
                     resolved.append((key: r.key, glyph: glyph))
                 }
             }
-            guard !resolved.isEmpty else {
+            guard !Task.isCancelled, !resolved.isEmpty else {
                 return
             }
-            await MainActor.run {
+            registry.withAuthorizedSink(for: token) { sink in
+                guard let view = sink as? MarkdownLabelView else { return }
                 // 真值源是 view-held store（与 _mathCache 同款）—— resetLayout()
                 // 在宽度抖动时丢弃 _cachedRenderer，下次 cachedRenderer 重建会从
                 // 这里重播种；同时也写当前 transient renderer。
-                self._svgRasterScale = scale
-                self._svgBlockRendererGeneration = gen
-                self._cachedRenderer?.svgRasterScale = scale
-                self._cachedRenderer?.svgRendererGeneration = gen
+                view._svgRasterScale = scale
+                view._svgBlockRendererGeneration = gen
+                view._cachedRenderer?.svgRasterScale = scale
+                view._cachedRenderer?.svgRendererGeneration = gen
                 for entry in resolved {
-                    self._svgBlockCache[entry.key] = entry.glyph
-                    self._cachedRenderer?.svgBlockCache[entry.key] = entry.glyph
+                    view._svgBlockCache[entry.key] = entry.glyph
+                    view._cachedRenderer?.svgBlockCache[entry.key] = entry.glyph
                 }
-                self.updateContent()
+                view.updateContent()
             }
         }
     }

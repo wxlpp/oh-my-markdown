@@ -46,6 +46,10 @@ public struct MarkdownText: View {
 #if canImport(UIKit)
 
 private struct _MarkdownTextRepresentable: UIViewRepresentable {
+    static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
+        uiView.dismantleRenderSession()
+    }
+
     final class Coordinator {
         var lastSource = ""
         var lastStyle: RenderStyle?
@@ -111,6 +115,10 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
 #elseif canImport(AppKit)
 
 private struct _MarkdownTextRepresentable: NSViewRepresentable {
+    static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
+        nsView.dismantleRenderSession()
+    }
+
     final class Coordinator {
         var lastSource = ""
         var lastStyle: RenderStyle?

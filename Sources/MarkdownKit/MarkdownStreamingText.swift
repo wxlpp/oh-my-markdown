@@ -100,6 +100,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     let svgBlockRenderer: (any SVGBlockRendering)?
 
     static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
+        uiView.dismantleRenderSession()
         coordinator.currentSource?.removeListener(coordinator.listenerID)
         coordinator.listenerID = nil
         coordinator.currentSource = nil
@@ -180,6 +181,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
     let svgBlockRenderer: (any SVGBlockRendering)?
 
     static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
+        nsView.dismantleRenderSession()
         coordinator.currentSource?.removeListener(coordinator.listenerID)
         coordinator.listenerID = nil
         coordinator.currentSource = nil
