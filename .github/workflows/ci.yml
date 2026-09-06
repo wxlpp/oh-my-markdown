@@ -9,6 +9,15 @@ permissions:
   contents: read
 
 jobs:
+  swiftformat:
+    name: SwiftFormat lint
+    runs-on: [self-hosted, macOS, ARM64, xcode-26]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint Swift formatting
+        run: swiftformat --lint .
+
   ios18-runtime:
     name: iOS 18 actual runtime
     runs-on: [self-hosted, macOS, ARM64, xcode-26]
@@ -22,19 +31,14 @@ jobs:
           echo "HARDENING_RESULT_DIR=$(mktemp -d "$PWD/.artifacts/ios18.XXXXXX")" >> "$GITHUB_ENV"
 
       - name: Require toolchain and iOS 18.0 runtime
-        run: |
-          set -euo pipefail
-          swift --version | grep -E 'Apple Swift version 6\.2([ .]|$)'
-          xcodebuild -version | head -1 | grep -E '^Xcode 26([.]|$)'
-          xcrun simctl list runtimes available | grep -E '^iOS 18\.0 '
-          xcrun simctl list devices available | grep -E '^    iPhone 16 Pro .*\(Shutdown\)|^    iPhone 16 Pro .*\(Booted\)'
+        run: Scripts/check-runtime-environment.sh ios18
 
       - name: Check declared platform floors
         run: Scripts/check-platform-floors.sh
 
       - name: Test package on iOS 18.0
         run: |
-          set -o pipefail
+          set -euo pipefail
           xcodebuild test \
             -scheme MarkdownKit-Package \
             -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' \
@@ -43,7 +47,7 @@ jobs:
 
       - name: Test Example on iOS 18.0
         run: |
-          set -o pipefail
+          set -euo pipefail
           xcodebuild test \
             -project Example/Example.xcodeproj \
             -scheme Example \
@@ -63,16 +67,7 @@ jobs:
         if: always()
         env:
           JOB_RESULT: ${{ job.status }}
-        run: |
-          {
-            echo "host_os=$(sw_vers -productVersion 2>&1 || true)"
-            echo "xcode_version=$(xcodebuild -version 2>&1 | head -1 || true)"
-            echo "swift_version=$(swift --version 2>&1 | head -1 || true)"
-            echo "simulator_runtime=iOS 18.0"
-            echo "scheme=MarkdownKit-Package,Example"
-            echo "git_sha=$GITHUB_SHA"
-            echo "result=$JOB_RESULT"
-          } > "$HARDENING_RESULT_DIR/runtime-metadata.txt"
+        run: Scripts/write-runtime-metadata.sh ios18 "$JOB_RESULT" "$HARDENING_RESULT_DIR/runtime-metadata.txt"
 
       - name: Upload iOS runtime evidence
         if: always()
@@ -95,18 +90,14 @@ jobs:
           echo "HARDENING_RESULT_DIR=$(mktemp -d "$PWD/.artifacts/macos15.XXXXXX")" >> "$GITHUB_ENV"
 
       - name: Require macOS 15 and expected toolchain
-        run: |
-          set -euo pipefail
-          sw_vers -productVersion | grep -E '^15\.'
-          swift --version | grep -E 'Apple Swift version 6\.2([ .]|$)'
-          xcodebuild -version | head -1 | grep -E '^Xcode 26([.]|$)'
+        run: Scripts/check-runtime-environment.sh macos15
 
-      - name: Check declared platform floors
-        run: Scripts/check-platform-floors.sh
+      - name: Run static gates on macOS 15
+        run: Scripts/run-static-gates.sh "$HARDENING_RESULT_DIR"
 
       - name: Test package on macOS 15
         run: |
-          set -o pipefail
+          set -euo pipefail
           xcodebuild test \
             -scheme MarkdownKit-Package \
             -destination 'platform=macOS' \
@@ -124,16 +115,7 @@ jobs:
         if: always()
         env:
           JOB_RESULT: ${{ job.status }}
-        run: |
-          {
-            echo "host_os=$(sw_vers -productVersion 2>&1 || true)"
-            echo "xcode_version=$(xcodebuild -version 2>&1 | head -1 || true)"
-            echo "swift_version=$(swift --version 2>&1 | head -1 || true)"
-            echo "simulator_runtime=not_applicable"
-            echo "scheme=MarkdownKit-Package"
-            echo "git_sha=$GITHUB_SHA"
-            echo "result=$JOB_RESULT"
-          } > "$HARDENING_RESULT_DIR/runtime-metadata.txt"
+        run: Scripts/write-runtime-metadata.sh macos15 "$JOB_RESULT" "$HARDENING_RESULT_DIR/runtime-metadata.txt"
 
       - name: Upload macOS runtime evidence
         if: always()

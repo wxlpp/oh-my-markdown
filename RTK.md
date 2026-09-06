@@ -5,11 +5,12 @@ This file defines the repository commands and runtime evidence required before r
 ## Static delivery gates
 
 ```bash
-chmod +x Scripts/check-platform-floors.sh Scripts/assert-xcresult-tests.sh Scripts/Tests/delivery-gates-tests.sh
+set -euo pipefail
+chmod +x Scripts/*.sh Scripts/Tests/delivery-gates-tests.sh
 Scripts/Tests/delivery-gates-tests.sh
-Scripts/check-platform-floors.sh
-swift test
-swift build -c release -Xswiftc -warnings-as-errors
+mkdir -p .artifacts
+HARDENING_STATIC_DIR="$(mktemp -d "$PWD/.artifacts/static-gates.XXXXXX")"
+Scripts/run-static-gates.sh "$HARDENING_STATIC_DIR"
 ```
 
 `check-platform-floors.sh` requires the Swift package to declare iOS 18.0 and macOS 15.0 and requires the Example Xcode build settings to resolve to the same exact values in Debug and Release.
@@ -19,10 +20,8 @@ swift build -c release -Xswiftc -warnings-as-errors
 The machine must have Xcode 26.x, Apple Swift 6.2, the iOS 18.0 simulator runtime, and an `iPhone 16 Pro` device for that runtime.
 
 ```bash
-set -o pipefail
-swift --version | grep -E 'Apple Swift version 6\.2([ .]|$)'
-xcodebuild -version | head -1 | grep -E '^Xcode 26([.]|$)'
-xcrun simctl list runtimes available | grep -E '^iOS 18\.0 '
+set -euo pipefail
+Scripts/check-runtime-environment.sh ios18
 mkdir -p .artifacts
 HARDENING_RESULT_DIR="$(mktemp -d "$PWD/.artifacts/ios18.XXXXXX")"
 xcodebuild test \
@@ -39,6 +38,7 @@ xcodebuild test \
 HARDENING_ARTIFACTS_DIR="$HARDENING_RESULT_DIR" Scripts/assert-xcresult-tests.sh ios18 \
   "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.xcresult" \
   "$HARDENING_RESULT_DIR/Example-iOS18.xcresult"
+Scripts/write-runtime-metadata.sh ios18 success "$HARDENING_RESULT_DIR/runtime-metadata.txt"
 ```
 
 ## macOS 15 runtime gate
@@ -46,12 +46,11 @@ HARDENING_ARTIFACTS_DIR="$HARDENING_RESULT_DIR" Scripts/assert-xcresult-tests.sh
 This gate must run on the self-hosted GitHub Actions runner labelled `[self-hosted, macOS, ARM64, macos-15, xcode-26]`. A run on a newer macOS release is not equivalent evidence.
 
 ```bash
-set -o pipefail
-sw_vers -productVersion | grep -E '^15\.'
-swift --version | grep -E 'Apple Swift version 6\.2([ .]|$)'
-xcodebuild -version | head -1 | grep -E '^Xcode 26([.]|$)'
+set -euo pipefail
+Scripts/check-runtime-environment.sh macos15
 mkdir -p .artifacts
 HARDENING_RESULT_DIR="$(mktemp -d "$PWD/.artifacts/macos15.XXXXXX")"
+Scripts/run-static-gates.sh "$HARDENING_RESULT_DIR"
 xcodebuild test \
   -scheme MarkdownKit-Package \
   -destination 'platform=macOS' \
@@ -59,6 +58,7 @@ xcodebuild test \
   | tee "$HARDENING_RESULT_DIR/MarkdownKit-macOS15.log"
 HARDENING_ARTIFACTS_DIR="$HARDENING_RESULT_DIR" Scripts/assert-xcresult-tests.sh macos15 \
   "$HARDENING_RESULT_DIR/MarkdownKit-macOS15.xcresult"
+Scripts/write-runtime-metadata.sh macos15 success "$HARDENING_RESULT_DIR/runtime-metadata.txt"
 ```
 
 ## Artifact schema

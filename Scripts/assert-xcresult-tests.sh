@@ -57,8 +57,13 @@ cases = sorted({node["name"] for node in case_nodes})
 results = [node.get("result") for node in case_nodes]
 executed = len(case_nodes)
 passed = sum(result == "Passed" for result in results)
-skipped = sum(result == "Skipped" for result in results)
-failed = sum(result in {"Failed", "unknown", None} for result in results)
+status_nodes = [node for node in nodes if "result" in node]
+skipped_nodes = [node for node in status_nodes if node["result"] == "Skipped"]
+accepted_results = {"Passed", "Expected Failure", "Skipped"}
+failed_nodes = [node for node in status_nodes if node["result"] not in accepted_results]
+missing_case_results = [node for node in case_nodes if "result" not in node]
+skipped = len(skipped_nodes)
+failed = len(failed_nodes) + len(missing_case_results)
 expected_failures = sum(result == "Expected Failure" for result in results)
 
 required = manifest[section]
@@ -69,6 +74,11 @@ print(f"section={section}")
 print(f"executed={executed} passed={passed} skipped={skipped} failed={failed} expected_failures={expected_failures}")
 print("targets=" + (", ".join(targets) or "<none>"))
 print("tests=" + (", ".join(cases) or "<none>"))
+bad_statuses = skipped_nodes + failed_nodes + missing_case_results
+if bad_statuses:
+    print("bad_statuses=" + ", ".join(
+        f"{node['nodeType']}:{node['name']}={node.get('result', '<missing>')}" for node in bad_statuses
+    ))
 print("reports=" + ", ".join(str(Path(path)) for path in report_paths))
 
 errors = []
