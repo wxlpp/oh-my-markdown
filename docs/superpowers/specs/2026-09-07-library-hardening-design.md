@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-07
 **Target release:** 0.2.0
-**Status:** In review
+**Status:** Approved
 
 ## 1. Context
 

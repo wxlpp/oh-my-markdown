@@ -166,7 +166,7 @@ Dispatch `superpowers-reviewer` over Task 1B and require exact floor assertions,
 
 - [ ] **Step 1: Write compile-time isolation and value-semantic tests**
 
-Define tests that pass `RenderInput` and `RenderDisplayModel` through `Task.detached` as `Sendable`, mutate a source `RenderStyle` after snapshot creation, and assert the snapshot remains unchanged. Add a main-actor test proving `RenderSnapshot` owns platform attributed content. Add a negative typecheck fixture that synchronously reads `snapshot.attributedString` inside a detached closure; `Scripts/check-api-isolation.sh` succeeds only when `swiftc -typecheck -strict-concurrency=complete` rejects that access with a main-actor isolation diagnostic. A positive fixture performs the same read through `await MainActor.run`.
+Define tests that pass `RenderInput` and `RenderDisplayModel` through `Task.detached` as `Sendable`, mutate a source `RenderStyle` after snapshot creation, and assert the snapshot remains unchanged. Wrap two custom styles independently and prove they get different IDs/cache namespaces by default; prove sharing happens only with the same explicit semantic ID. Add a main-actor test proving `RenderSnapshot` owns platform attributed content. Add a negative typecheck fixture that synchronously reads `snapshot.attributedString` inside a detached closure; `Scripts/check-api-isolation.sh` succeeds only when `swiftc -typecheck -strict-concurrency=complete` rejects that access with a main-actor isolation diagnostic. A positive fixture performs the same read through `await MainActor.run`.
 
 Run:
 
@@ -225,6 +225,17 @@ public struct RenderConfigurationSnapshot: Sendable, Equatable {
     public let colors: ColorTokens
     public let spacing: SpacingTokens
     public let generation: UInt64
+}
+
+@MainActor
+public struct MarkdownRenderConfiguration {
+    package let style: RenderStyle
+    public let configurationID: MarkdownConfigurationID
+
+    public init(
+        style: RenderStyle,
+        configurationID: MarkdownConfigurationID = .uniqueInstance()
+    )
 }
 
 public struct RenderInput: Sendable {
@@ -300,6 +311,12 @@ package struct ResolvedResourceSnapshot {
 @MainActor
 package protocol ResourceResidencyOwner: AnyObject {}
 
+@MainActor
+package final class LegacyResourceOwner: ResourceResidencyOwner {
+    package let retainedObject: AnyObject
+    package init(retaining object: AnyObject)
+}
+
 package struct ImmutableCGImageBacking: @unchecked Sendable {
     package let frames: [CGImage]
     package let accountedPixelBytes: Int
@@ -323,6 +340,8 @@ public final class RenderSnapshot {
 Use numeric RGBA/color tokens and named typography roles off-main; resolve `UIFont`/`NSFont`, platform colors, attachments, and TextKit objects only during main-actor materialization.
 
 `ImmutableCGImageBacking` is the only unchecked adapter planned for 0.2.0. Its initializer validates that every Core Graphics frame is immutable/read-only after construction; concurrency tests exercise repeated cross-actor reads and all platform-image creation remains in `RenderMaterializer` on `MainActor`.
+
+`MarkdownRenderConfiguration` owns cache identity rather than trusting a custom `RenderStyle` to report one. Each custom wrapper gets `.uniqueInstance()` by default; only an explicit caller-supplied semantic ID may share completed entries. Built-in configurations derive a deterministic semantic ID from every normalized style token. `LegacyResourceOwner` is a temporary main-actor retention adapter used only by Task 4B so pre-migration image/math/SVG attachments remain alive; Task 4C deletes it after all resources use explicit owners.
 
 Run `swift test --filter RenderConfigurationTests`; expected PASS for immutable snapshots while compatibility consumers still compile.
 
@@ -357,7 +376,27 @@ public import MarkdownPlatformView
 public import MarkdownRenderKit
 ```
 
-Add `configurationID: MarkdownConfigurationID` requirements to `MathRendering` and `SVGBlockRendering`; a temporary protocol-extension default derives a stable process-instance ID from `ObjectIdentifier(self)` so existing conformers compile. Task 4C removes that default, gives MathJax, SwiftDraw, and test doubles explicit instance/semantic IDs, and either isolates mutation in an actor/lock-backed private box with a documented invariant or removes the conformance.
+Add temporary `MathRendererConfiguration` and `SVGRendererConfiguration` wrappers whose initializers assign `.uniqueInstance()` by default and accept an explicit semantic ID for intentional completed-cache sharing. Do not take identity from custom renderer protocols or `ObjectIdentifier`. Task 4C makes these wrappers the only configuration entry points, gives built-in configurations deterministic IDs derived from all normalized settings, and either isolates producer mutation in an actor/lock-backed private box with a documented invariant or removes the conformance.
+
+```swift
+public struct MathRendererConfiguration: Sendable {
+    package let renderer: any MathRendering
+    public let configurationID: MarkdownConfigurationID
+    public init(
+        renderer: any MathRendering,
+        configurationID: MarkdownConfigurationID = .uniqueInstance()
+    )
+}
+
+public struct SVGRendererConfiguration: Sendable {
+    package let renderer: any SVGBlockRendering
+    public let configurationID: MarkdownConfigurationID
+    public init(
+        renderer: any SVGBlockRendering,
+        configurationID: MarkdownConfigurationID = .uniqueInstance()
+    )
+}
+```
 
 Run `swift test --filter RenderIsolationTests` and `bash Scripts/check-api-isolation.sh`; expected PASS before style conversion.
 
@@ -372,7 +411,7 @@ swift test --filter 'RenderIsolationTests|RenderConfigurationTests|MarkdownRende
 chmod +x Scripts/check-api-isolation.sh
 Scripts/check-api-isolation.sh
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild build -scheme MarkdownKit -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 git add Sources/MarkdownRenderKit Sources/MarkdownKit/MarkdownText.swift Sources/MarkdownKit/MarkdownEditor.swift Tests/MarkdownKitTests/RenderIsolationTests.swift Tests/MarkdownKitTests/RenderConfigurationTests.swift Tests/CompileFail/PlatformStateRequiresMainActor.swift Scripts/check-api-isolation.sh
 git commit -m "refactor: make render boundaries actor-safe"
 ```
@@ -397,7 +436,7 @@ Dispatch `superpowers-reviewer` over the Task 2 commit. Require it to trace ever
 
 - [ ] **Step 1: Write deterministic blocking-parser tests**
 
-Use an injected parser closure controlled by Swift Testing `confirmation` and an actor gate. Assert two active jobs globally, one active plus one replaceable pending input per token, 64 waiting tokens, latest-revision coalescing, three attempts/two-second deadline through an injected clock, and `.parseBusy` after exhaustion. While the fake parser blocks, release strong view/session references and assert weak references become nil.
+Use an injected parser closure blocked by `NSCondition` or `DispatchSemaphore`; use Swift Testing `confirmation` only to observe asynchronous state transitions. Assert two active jobs globally, one active plus one replaceable pending input per token, 64 waiting tokens, latest-revision coalescing, three attempts/two-second deadline through an injected clock, and `.parseBusy` after exhaustion. While the fake parser blocks, release strong driver/view/session references and assert all weak references become nil and every `enqueue` caller has already returned.
 
 Run:
 
@@ -426,6 +465,10 @@ package enum ParseExecutorResult: Sendable {
     case stale
 }
 
+package enum ParseAdmission: Sendable, Equatable {
+    case started, queued, replacedPending, busy
+}
+
 package struct ParseExecutorDiagnostics: Sendable, Equatable {
     let activeCount: Int
     let waitingTokenCount: Int
@@ -451,6 +494,21 @@ package enum ParseTokenState {
     case active(ActiveParse, latestPending: ParseJob?, tombstoned: Bool)
 }
 
+package protocol ParseResultSink: Actor {
+    func receive(_ result: ParseExecutorResult)
+}
+
+package final class WeakParseResultSink {
+    weak var value: (any ParseResultSink)?
+    init(_ value: any ParseResultSink) { self.value = value }
+}
+
+package actor ParseResultRegistry {
+    func register(_ sink: any ParseResultSink, for token: ParseSessionToken)
+    func unregister(_ token: ParseSessionToken)
+    func publish(_ result: ParseExecutorResult, to token: ParseSessionToken) async
+}
+
 package actor ParseExecutor {
     static let shared = ParseExecutor(
         maxActive: 2,
@@ -458,8 +516,7 @@ package actor ParseExecutor {
         parser: { MarkdownDocument(parsing: $0.source) }
     )
     init(maxActive: Int, maxWaitingTokens: Int, parser: @escaping SynchronousParser)
-    func submit(_ job: ParseJob) async -> ParseExecutorResult
-    func replacePending(_ job: ParseJob)
+    func enqueue(_ job: ParseJob, sink: any ParseResultSink) -> ParseAdmission
     func tombstone(_ token: ParseSessionToken)
     private func start(_ job: ParseJob)
     private func complete(_ output: ParseWorkerOutput)
@@ -467,7 +524,7 @@ package actor ParseExecutor {
 }
 ```
 
-`start` creates `Task.detached { [parser, job] in ParseWorkerOutput(job: job, document: parser(job)) }`; the executor immediately stores that handle, so it is never unowned. A separate executor-owned monitor task awaits `worker.value` and calls `complete`; synchronous cmark runs only on the detached worker, never on the actor executor. The worker captures exactly the immutable parser function and `ParseJob`, not a session/view/cache/callback. `complete` applies the active→pending/idle transition, resumes the matching submit continuation, and treats absent/tombstoned tokens as stale. `replacePending` resumes a superseded pending continuation with `.stale`. `tombstone` removes waiting work immediately or marks active state; active completion then drops output and removes the registry entry.
+`enqueue` returns an admission value immediately; there are no suspended submit continuations. It registers a weak result sink, replaces the token's pending job in place, and emits `.stale` for the superseded revision through the registry. `start` creates `Task.detached { [parser, job] in ParseWorkerOutput(job: job, document: parser(job)) }`; the executor immediately stores that handle, so it is never unowned. A separate executor-owned monitor awaits `worker.value` and calls `complete`; synchronous cmark never blocks the actor. The worker captures exactly the immutable parser function and `ParseJob`, not a session/view/cache/callback. `complete` applies active→pending/idle, publishes by token through the weak registry, and treats absent/tombstoned tokens as stale. `tombstone` removes waiting work/result registration immediately or marks active state; active completion drops output and removes remaining registry state.
 
 Run `swift test --filter ParseExecutorTests`; expected PASS for global/per-token limits, coalescing, actor responsiveness, and tombstone transitions.
 
@@ -476,7 +533,7 @@ Run `swift test --filter ParseExecutorTests`; expected PASS for global/per-token
 Create a session actor whose stored state is immutable/Sendable and whose publication sink is a weak main-actor registry token:
 
 ```swift
-package actor MarkdownRenderSession {
+package actor MarkdownRenderSession: ParseResultSink {
     func setSource(_ source: String, configuration: RenderConfigurationSnapshot) async
     func append(_ chunk: String) async
     func replaceConfiguration(_ configuration: RenderConfigurationSnapshot) async
@@ -517,19 +574,21 @@ package final class RenderSessionSinkRegistry {
 
 @MainActor
 package final class MarkdownRenderSessionDriver {
+    private let session: MarkdownRenderSession
     private let continuation: AsyncStream<RenderSessionEvent>.Continuation
     private let pump: Task<Void, Never>
+    package init(session: MarkdownRenderSession)
     package func send(_ event: RenderSessionEvent) { continuation.yield(event) }
 }
 ```
 
-The driver creates one `AsyncStream` pump that captures the session but not the view/driver, serially awaits actor commands, and calls `await session.dismantle()` when the stream finishes or the pump is cancelled. The driver owns the pump handle; `deinit` finishes the continuation and cancels the pump. Maintain one cancellable preparation task and one replaceable retry task in the session. Gate every parse/render/resource result on source revision and configuration generation. Retry busy admission no more than three times within two seconds using an injected clock; teardown cancels retry, clears pending input, tombstones the executor token, and unregisters the weak sink.
+Every session command mutates state, calls `enqueue`, and returns without awaiting cmark completion. The driver is the sole strong owner of its session. Its pump is created with `Task { [weak session] in ... }`; each loop iteration promotes that weak reference only for one short actor command, then drops it before waiting for the next event. Thus the stored pump cannot keep either driver or session alive. The driver owns the pump; `deinit` finishes/cancels it and releases its strong session property. The session's one retry task uses `[weak self]` plus immutable token/input; it promotes `self` only after each clock tick and for one retry command, so the stored task never creates a session→task→session cycle. Gate received results on source revision/configuration generation. Teardown cancels retry, clears pending input, tombstones the executor token, and unregisters both result and snapshot sinks.
 
 Run `swift test --filter MarkdownRenderSessionTests`; expected PASS for retry, weak sink, generation, driver teardown, and newest-only publication.
 
 - [ ] **Step 4: Prove lifecycle cleanup and stale rejection**
 
-Add tests for 1,000 create/dismantle cycles returning executor registry counts to baseline; teardown during active parse produces no publication, callback, cache write, retry, or follow-up. Add rapid set/append/replace sequences and assert only the newest snapshot reaches the sink.
+Add tests for 1,000 create/dismantle cycles returning executor/result registries to baseline; teardown during a permanently blocked worker releases driver/view/session, leaves no suspended enqueue caller, and produces no publication, callback, cache write, retry, or follow-up. Add rapid set/append/replace sequences and assert only the newest snapshot reaches the sink.
 
 - [ ] **Step 5: Verify and commit**
 
@@ -537,7 +596,7 @@ Add tests for 1,000 create/dismantle cycles returning executor registry counts t
 swift test --filter 'ParseExecutorTests|MarkdownRenderSessionTests|MarkdownCoreIncrementalParseTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild build -scheme MarkdownKit -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 git add Sources/MarkdownCore/DocumentParser.swift Sources/MarkdownPlatformView/RenderSessionTypes.swift Sources/MarkdownPlatformView/ParseExecutor.swift Sources/MarkdownPlatformView/MarkdownRenderSession.swift Tests/MarkdownKitTests/ParseExecutorTests.swift Tests/MarkdownKitTests/MarkdownRenderSessionTests.swift
 git commit -m "feat: add bounded markdown render sessions"
 ```
@@ -582,7 +641,7 @@ Leave only cross-platform value/helper declarations in `MarkdownLabelView.swift`
 ```bash
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild build -scheme MarkdownKit -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 git add Sources/MarkdownPlatformView/MarkdownLabelView.swift Sources/MarkdownPlatformView/MarkdownLabelView+iOS.swift Sources/MarkdownPlatformView/MarkdownLabelView+macOS.swift Sources/MarkdownPlatformView/MarkdownTextInput+iOS.swift Sources/MarkdownPlatformView/MarkdownSelection.swift Sources/MarkdownPlatformView/MarkdownTableOverlay.swift
 git commit -m "refactor: split markdown platform view files"
 ```
@@ -620,18 +679,19 @@ Assert set, append, style/renderer change, scale change, and teardown each emit 
 
 - [ ] **Step 2: Install the driver and weak sink**
 
-Replace duplicated parse tasks/revision fields/direct source update pipelines with one driver. Apply snapshots only through:
+Replace duplicated parse tasks/revision fields/direct source update pipelines with one driver. The session/result registries are the single authority for current revision and generation; a stale result is discarded before main-actor publication. Views therefore do not maintain an independent revision counter that can diverge. Apply snapshots only through:
 
 ```swift
 func receive(snapshot: RenderSnapshot, revision: UInt64) {
-    guard revision == sessionRevision else { return }
+    precondition(revision >= currentSnapshotRevision)
+    currentSnapshotRevision = revision
     currentSnapshot = snapshot
     contentStorage.attributedString = snapshot.attributedString
     synchronizePlatformSelectionAndOverlays(snapshot)
 }
 ```
 
-Both platform views conform to `RenderSessionSink` and strongly retain the current snapshot for at least as long as TextKit retains its attachments. Dismantle clears TextKit content/current snapshot, sends `.dismantle`, unregisters the sink ID, and releases the driver. Keep old resource cache adapter calls until Task 4C.
+Both platform views conform to `RenderSessionSink` and strongly retain the current snapshot for at least as long as TextKit retains its attachments. The monotonic assertion is diagnostic only; it is not a second acceptance guard. Dismantle clears TextKit content/current snapshot, sends `.dismantle`, unregisters the sink ID, and releases the driver. Wrap every legacy image/math/SVG object referenced by the published attributed string in Task 2's `LegacyResourceOwner`; add regression coverage proving those resources do not disappear during the migration. Keep old resource cache adapter calls until Task 4C.
 
 - [ ] **Step 3: Run focused green and commit**
 
@@ -639,7 +699,7 @@ Both platform views conform to `RenderSessionSink` and strongly retain the curre
 swift test --filter 'PlatformSessionWiringTests|MarkdownLabelViewRenderModeTests|TableMeasurementLaidOutEquivalenceTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild build -scheme MarkdownKit -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 git add Sources/MarkdownPlatformView Sources/MarkdownKit/MarkdownText.swift Sources/MarkdownKit/MarkdownStreamingText.swift Tests/MarkdownKitTests/PlatformSessionWiringTests.swift
 git commit -m "refactor: route platform views through render sessions"
 ```
@@ -654,7 +714,7 @@ Dispatch `superpowers-reviewer` over Task 4B with event ordering, weak sink owne
 - Modify: `Sources/MarkdownPlatformView/MathLoadCoordinator.swift`
 - Modify: `Sources/MarkdownPlatformView/SVGBlockLoadCoordinator.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownRenderSession.swift`
-- Modify: `Sources/MarkdownRenderKit/AttributedStringRenderer.swift`
+- Delete: `Sources/MarkdownRenderKit/AttributedStringRenderer.swift`
 - Modify: `Sources/MarkdownRenderKit/RenderStyle.swift`
 - Modify: `Sources/MarkdownRenderKit/MarkdownSourceHighlighter.swift`
 - Modify: `Sources/MarkdownRenderKit/MathRendering.swift`
@@ -684,7 +744,7 @@ Remove `.shared` task ownership. Keep completed caches injectable with 256-entry
 
 - [ ] **Step 3: Migrate all producers and delete the Task 2 adapter**
 
-Give MathJax, SVGRasterizer, SwiftDraw, and test doubles explicit stable IDs. Replace platform-image cross-actor outcomes with immutable render descriptions or Task 2's single audited `ImmutableCGImageBacking`; materialize images on `MainActor`. Move source-highlighter style access to main-actor snapshots. After every consumer compiles, delete legacy mutable renderer caches/generation fields, protocol default IDs, compatibility overloads, and unjustified `@unchecked Sendable` from `AttributedStringRenderer`/`RenderStyle`.
+Make `MathRendererConfiguration` and `SVGRendererConfiguration` own identity: custom instances remain unique unless the caller explicitly supplies a versioned semantic ID, while built-in MathJax/SwiftDraw/SVGRasterizer configurations derive deterministic IDs from all normalized settings. Replace platform-image cross-actor outcomes with immutable render descriptions or Task 2's single audited `ImmutableCGImageBacking`; materialize images on `MainActor`. Move source-highlighter style access to main-actor snapshots. After every consumer compiles, delete `LegacyResourceOwner`, the complete legacy `AttributedStringRenderer` file, mutable renderer caches/generation fields, compatibility overloads, and unjustified `@unchecked Sendable` from `RenderStyle`.
 
 - [ ] **Step 4: Replace touched sleeps and run green**
 
@@ -694,7 +754,7 @@ Replace the four product debounce sleeps with one driver/session-owned task usin
 swift test --filter 'MathLoadCoordinatorTests|SVGBlockLoadCoordinatorTests|SharedCoordinatorTests|AsyncMathWritebackRelayoutTests|StreamingMathCacheSurvivesRendererRecreationTests|StreamingSVGBlockCacheSurvivesRendererRecreationTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild build -scheme MarkdownMath -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 git add Sources/MarkdownPlatformView Sources/MarkdownRenderKit Sources/MarkdownMath Tests
 git commit -m "refactor: move rendered resources into sessions"
 ```
@@ -712,7 +772,7 @@ Dispatch `superpowers-reviewer` from Task 4B head through Task 4C head. Require 
 - Modify: `Sources/MarkdownCore/DocumentParser.swift`
 - Modify: `Sources/MarkdownCore/MathScanner.swift`
 - Modify: `Sources/MarkdownCore/MathSentinel.swift`
-- Modify: `Sources/MarkdownRenderKit/AttributedStringRenderer.swift`
+- Modify: `Sources/MarkdownRenderKit/RenderPreparer.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownRenderSession.swift`
 - Test: `Tests/MarkdownKitTests/IncrementalParseDifferentialTests.swift`
 - Test: `Tests/MarkdownKitTests/IncrementalWorkBudgetTests.swift`
@@ -807,7 +867,19 @@ Run `swift test --filter IncrementalWorkBudgetTests`; expected the source-buffer
 
 - [ ] **Step 4: Implement tail-only scanning/parsing/render preparation**
 
-Replace complete-source `MathScanner.scan`/`codeRegionMask` calls on safe append with state resumption. Parse only the invalidated tail, offset its source ranges, preserve stable prefix blocks, and prepare only `changedBlockRange`. Reuse the prior lineage when a reparsed block has the same immutable start anchor and semantic role, even if a paragraph/list/table end grows; allocate new lineage only for inserted/reclassified blocks. Check cancellation at fixed byte/block intervals in owned loops.
+Replace complete-source `MathScanner.scan`/`codeRegionMask` calls on safe append with state resumption. Parse only the invalidated tail, offset its source ranges, preserve stable prefix blocks, and have `MarkdownRenderSession` invoke the package `RenderPreparer.prepare(_:changedBlocks:metrics:)` production entry point for only `changedBlockRange`. Reuse the prior lineage when a reparsed block has the same immutable start anchor and semantic role, even if a paragraph/list/table end grows; allocate new lineage only for inserted/reclassified blocks. Check cancellation at fixed byte/block intervals in owned loops. Add a session-level spy/counter test proving append reaches this production entry point and that unchanged prefix blocks contribute zero preparation bytes; do not satisfy the test by invoking a helper directly.
+
+Add this overload in Task 5, after `ParseWorkMetrics` exists:
+
+```swift
+package extension RenderPreparer {
+    func prepare(
+        _ input: RenderInput,
+        changedBlocks: Range<Int>,
+        metrics: inout ParseWorkMetrics
+    ) throws -> RenderDisplayModel
+}
+```
 
 Run `swift test --filter IncrementalParseDifferentialTests`; expected PASS for all boundary/fallback and growing-lineage fixtures.
 
@@ -823,8 +895,8 @@ Run focused tests after implementing state, metrics, buffer/session integration,
 swift test --filter 'IncrementalParseDifferentialTests|IncrementalWorkBudgetTests|MarkdownCoreIncrementalParseTests|MathScannerTests|MathScannerCodeRegionHardStopTests|MathScannerCurrencyDollarTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild build -scheme MarkdownKit -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
-git add Sources/MarkdownCore Sources/MarkdownRenderKit/AttributedStringRenderer.swift Sources/MarkdownPlatformView/MarkdownRenderSession.swift Tests/MarkdownKitTests
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+git add Sources/MarkdownCore Sources/MarkdownRenderKit/RenderPreparer.swift Sources/MarkdownPlatformView/MarkdownRenderSession.swift Tests/MarkdownKitTests
 git commit -m "perf: bound incremental markdown work"
 ```
 
@@ -847,7 +919,7 @@ Dispatch `superpowers-reviewer` with correctness/performance focus. Require it t
 
 **Interfaces:**
 - Consumes: Task 4 session configuration events and Task 2 `MarkdownConfigurationID`.
-- Produces: `MarkdownImageLoading`, `MarkdownImageRequest`, `MarkdownEncodedImage`, default disabled policy, and SwiftUI `.markdownRemoteImages(_:)` configuration used by Task 7.
+- Produces: `MarkdownImageLoading`, untrusted `MarkdownImagePayload`, package-validated `MarkdownEncodedImage`, default disabled policy, sanitized failures, and SwiftUI `.markdownRemoteImages(_:)` configuration used by Task 7.
 
 - [ ] **Step 1: Write protocol, opt-in, generation, and cache-namespace tests**
 
@@ -859,8 +931,7 @@ Run `swift test --filter 'MarkdownImageLoaderTests|ResourceConfigurationTests'`.
 
 ```swift
 public protocol MarkdownImageLoading: Sendable {
-    var configurationID: MarkdownConfigurationID { get }
-    func load(_ request: MarkdownImageRequest) async throws -> MarkdownEncodedImage
+    func load(_ request: MarkdownImageRequest) async throws -> MarkdownImagePayload
 }
 
 public struct MarkdownImageRequest: Sendable {
@@ -878,10 +949,16 @@ public struct MarkdownImageMetadata: Sendable, Equatable {
     public init(mimeType: String, pixelWidth: Int, pixelHeight: Int, frameCount: Int, cumulativePixels: UInt64)
 }
 
-public struct MarkdownEncodedImage: Sendable {
+public struct MarkdownImagePayload: Sendable {
     public let data: Data
-    public let metadata: MarkdownImageMetadata
-    public init(data: Data, metadata: MarkdownImageMetadata)
+    public let declaredMIMEType: String?
+    public init(data: Data, declaredMIMEType: String?)
+}
+
+package struct MarkdownEncodedImage: Sendable {
+    package let data: Data
+    package let metadata: MarkdownImageMetadata
+    package init(validatedData: Data, metadata: MarkdownImageMetadata)
 }
 
 public enum MarkdownResourceError: Error, Sendable, Equatable {
@@ -889,21 +966,44 @@ public enum MarkdownResourceError: Error, Sendable, Equatable {
     case encodedLimit, metadataLimit, timedOut, cancelled, transport
 }
 
+public struct SanitizedMarkdownOrigin: Sendable, Equatable {
+    public let scheme: String
+    public let host: String
+    public let port: Int?
+}
+
+public struct MarkdownResourceFailure: Sendable, Equatable {
+    public let category: MarkdownResourceError
+    public let origin: SanitizedMarkdownOrigin?
+}
+
+public typealias MarkdownResourceErrorHandler =
+    @MainActor @Sendable (MarkdownResourceFailure) -> Void
+
 public struct MarkdownRemoteImageConfiguration: Sendable {
     package let loader: (any MarkdownImageLoading)?
-    public static let disabled = Self(loader: nil)
-    public static var defaultHTTPS: Self { Self(loader: DefaultHTTPSImageLoader()) }
-    public init(loader: any MarkdownImageLoading) { self.loader = loader }
+    public let configurationID: MarkdownConfigurationID
+    public static let disabled: Self
+    public static var defaultHTTPS: Self
+    public init(
+        loader: any MarkdownImageLoading,
+        configurationID: MarkdownConfigurationID = .uniqueInstance()
+    )
+    package init(
+        optionalLoader: (any MarkdownImageLoading)?,
+        configurationID: MarkdownConfigurationID
+    )
 }
 
 public actor DefaultHTTPSImageLoader: MarkdownImageLoading {
-    public let configurationID = MarkdownConfigurationID.semantic(namespace: "images.default-https", version: 1)
     public init(requestTimeout: Duration = .seconds(15), resourceTimeout: Duration = .seconds(30))
-    public func load(_ request: MarkdownImageRequest) async throws -> MarkdownEncodedImage
+    public func load(_ request: MarkdownImageRequest) async throws -> MarkdownImagePayload
 }
 ```
 
-`MarkdownEncodedImage` contains at most 20 MiB encoded bytes and validated MIME/ImageIO metadata, never a platform image. Error callbacks are `@MainActor` and receive a typed category plus sanitized origin only.
+Every loader result is untrusted `MarkdownImagePayload`. The session/coordinator always passes it through one package `ValidatedImageFactory`, including custom-loader results, before constructing `MarkdownEncodedImage`; the validated type has no public initializer. It contains at most 20 MiB encoded bytes and validated MIME/ImageIO metadata, never a platform image. Error callbacks have the exact `MarkdownResourceErrorHandler` signature and receive only a typed category plus scheme/host/port—never a raw URL, path, query, headers, response body, or underlying error.
+
+The configuration wrapper, not a loader conformer, owns namespace identity. Custom loader wrappers get `.uniqueInstance()` by default even if two conformers are otherwise identical. `.defaultHTTPS` derives a deterministic semantic ID from the complete normalized built-in settings (timeouts, redirect/MIME policy, byte/metadata limits). Sharing requires an explicit caller-supplied versioned semantic ID. Add a regression with two custom loaders that intentionally report/carry the same internal label and prove their default wrappers cannot share cache entries.
 
 Expose `.markdownRemoteImages(_:)` and `.onMarkdownResourceError(_:)` from `MarkdownResourceModifiers.swift`. The environment default is `.disabled`; `.defaultHTTPS` constructs the deterministic built-in semantic configuration.
 
@@ -929,7 +1029,7 @@ Cover redirects, status, MIME/signature mismatch, cookies/credentials/cache isol
 swift test --filter 'MarkdownImageLoaderTests|ResourceConfigurationTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild build -scheme MarkdownKit -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 git add Package.swift Sources/MarkdownPlatformView Sources/MarkdownKit Tests/MarkdownKitTests/MarkdownImageLoaderTests.swift Tests/MarkdownKitTests/ResourceConfigurationTests.swift
 git commit -m "feat: add secure opt-in markdown image transport"
 ```
@@ -956,9 +1056,9 @@ Dispatch `superpowers-reviewer` with network/privacy focus. Require verification
 
 - [ ] **Step 1: Write concurrency and hold-and-wait regressions**
 
-With controllable transports/decoders, assert per-session maximum two transfers/one decode, process maximum four transfers/two decodes, and exactly 20 MiB reserved before each network start from an 80 MiB ledger. Two 17 MiB and four 9 MiB bodies must finish or remain unstarted; none may pause while holding a partial body.
+With controllable transports/decoders, assert per-session maximum two transfers/one decode, process maximum four transfers/two decodes, and exactly 20 MiB reserved before each network start from an 80 MiB ledger. Two 17 MiB and four 9 MiB bodies must finish or remain unstarted; none may pause while holding a partial body. Add the complete 100-image adversarial fixture here, before production implementation, covering permit limits, reservation ceilings, promotion, cache publication/eviction, snapshot commit/cancel, memory pressure, and teardown-to-baseline.
 
-Run `swift test --filter ImageResourceCoordinatorTests`. Expected: FAIL because permit/reservation tokens do not exist.
+Run `swift test --filter 'ImageResourceCoordinatorTests|ImageResidencyLedgerTests|ImageAdversarialTests'`. Expected: FAIL because permit/reservation/ownership tokens do not exist; preserve this RED output as the Task 7 TDD checkpoint.
 
 - [ ] **Step 2: Implement permit and encoded-reservation actors**
 
@@ -981,7 +1081,7 @@ package actor EncodedBodyReservation {
     let byteLimit: Int
     func attach(_ image: MarkdownEncodedImage) throws -> ReservedEncodedImage
     func rejectAndRelease()
-    fileprivate func consumedByDecoder()
+    package func consumedByDecoder()
 }
 
 package struct ReservedEncodedImage: Sendable {
@@ -1003,12 +1103,12 @@ Obtain the decoded reservation before acquiring a decode permit, so a waiter hol
 package final class DecodedPixelReservation {
     let reservedBytes: Int
     func reconcile(actualBytes: Int) -> Bool
-    func promote(_ decoded: DecodedImage) -> ImageBacking
+    func promote(_ decoded: DecodedImage) -> OwnedImage?
     func cancel()
 }
 ```
 
-The decoder consumes `ReservedEncodedImage`, explicitly calls `consumedByDecoder()` after ImageIO no longer needs the bytes, and always releases `DecodePermit` in cancellation/error/success paths.
+The decoder consumes `ReservedEncodedImage`, explicitly calls the package-visible `consumedByDecoder()` after ImageIO no longer needs the bytes, and always releases `DecodePermit` in cancellation/error/success paths. All permit/reservation release methods are idempotent. Tests exercise success, validation rejection, decoder failure, cancellation before/after consumption, and double-release attempts so the encoded ledger returns exactly to baseline.
 
 Run the decode reservation/reconciliation subset of `ImageResidencyLedgerTests`; expected PASS before owner-lease implementation.
 
@@ -1018,8 +1118,14 @@ Run the decode reservation/reconciliation subset of `ImageResidencyLedgerTests`;
 @MainActor
 package final class ImageOwnerLease: ResourceResidencyOwner {
     let backingID: UUID
-    let image: PlatformImage
     let accountedPixelBytes: Int
+    private let token: ResidencyRecordToken
+    func release()
+}
+
+@MainActor
+package final class ResidencyRecordToken {
+    let backingID: UUID
     func release()
 }
 
@@ -1033,6 +1139,12 @@ package final class ImageBacking {
     let backingID: UUID
     let image: PlatformImage
     let accountedPixelBytes: Int
+}
+
+@MainActor
+package struct OwnedImage {
+    let backing: ImageBacking
+    let inFlightOwner: ImageOwnerLease
 }
 
 package struct ImageCacheKey: Hashable, Sendable {
@@ -1053,7 +1165,7 @@ package final class SnapshotLeaseTransaction {
 package final class ImageResidencyLedger {
     static let shared = ImageResidencyLedger(hardLimit: 192 << 20, cacheLimit: 128 << 20)
     func reserveDecodedPixelBytes(_ bytes: Int) -> DecodedPixelReservation?
-    func completedBacking(for key: ImageCacheKey) -> ImageBacking?
+    func completedImage(for key: ImageCacheKey) -> OwnedImage?
     func acquireCacheLease(for backingID: UUID, key: ImageCacheKey) -> ImageOwnerLease?
     func evictCacheEntry(for key: ImageCacheKey)
     func handleMemoryPressure()
@@ -1061,13 +1173,15 @@ package final class ImageResidencyLedger {
         session: RenderSessionID,
         oldSnapshotID: UUID?,
         newSnapshotID: UUID,
-        backingIDs: [UUID]
+        images: [OwnedImage]
     ) -> SnapshotLeaseTransaction?
     func releasePublishedSnapshots(session: RenderSessionID)
 }
 ```
 
-Identity is the physical decoded backing allocation, not merely the semantic cache key. `DecodedPixelReservation.promote` atomically transfers predecode cost into one backing record after successful reconciliation. If concurrent sessions decode the same key into two backings, charge both unless publication canonicalizes to one and discards the other before exposure. Cache eviction/memory pressure explicitly release only cache-owner leases. `prepareSnapshotReplacement` admits all new publication owners while the old snapshot remains charged; `commit` atomically swaps IDs and releases removed owners, while `cancel` releases only newly prepared owners. Final owner release alone uncharges the backing; session teardown calls `releasePublishedSnapshots`.
+Identity is the physical decoded backing allocation, not merely the semantic cache key. `DecodedPixelReservation.promote` atomically transfers predecode cost into one backing record plus an in-flight owner after successful reconciliation; it never returns a naked `ImageBacking`. A completed-cache hit also acquires and returns an `OwnedImage` before exposing its backing, so cache eviction cannot create an unowned interval. `prepareSnapshotReplacement` consumes those in-flight owners, admits publication owners while the old snapshot remains charged, then releases the consumed owners. `commit` atomically swaps snapshot IDs and releases removed publication owners, while `cancel` releases only newly prepared publication owners. If concurrent sessions decode the same key into two backings, charge both unless canonicalization discards one before exposure. Cache eviction/memory pressure explicitly release only cache-owner leases. Final owner release alone uncharges the backing; session teardown calls `releasePublishedSnapshots`.
+
+Every `ImageOwnerLease` delegates to one idempotent `ResidencyRecordToken`; explicit `release()` is the normal path and token `deinit` is the safety fallback, so rejection, cancellation, thrown materialization, or an abandoned transaction cannot strand ledger cost or decrement twice. Tests trace exact owner counts for decode→promotion→cache insertion, direct publication, rejected publication, cache hit followed by eviction, snapshot replacement commit/cancel, memory pressure, and session teardown.
 
 On `MainActor`, the session prepares a transaction, materializes `RenderSnapshot` with `transaction.owners`, verifies the weak sink still exists/current, commits the ledger transaction, and synchronously publishes the snapshot; otherwise it cancels. The platform view retains that snapshot while TextKit retains its attributed string, so attachment backing cannot outlive its ownership lease unnoticed.
 
@@ -1081,7 +1195,7 @@ Run `swift test --filter ImageResidencyLedgerTests`; expected PASS for owner cou
 
 Publish valid images, evict their cache ownership while attachments still display them, and assert ledger cost stays charged. Request additional images and assert smaller thumbnails/placeholders preserve the 192 MiB limit. Replace snapshots and dismantle views; assert ledger and queued work return to baseline. Measure process peak separately so allocator/framework overhead is reported but not confused with the decoded-pixel contract.
 
-Use one 100-image fixture to assert transfer/decode concurrency, 80 MiB encoded reservations, 192/128 MiB decoded/cache limits, cache eviction while published, memory-pressure cache-owner release, failed transaction rollback, atomic snapshot commit, and teardown baseline. Run it once before the implementation to record FAIL, then after each lifecycle slice until PASS.
+Use the Step 1 100-image fixture to assert transfer/decode concurrency, 80 MiB encoded reservations, 192/128 MiB decoded/cache limits, cache eviction while published, memory-pressure cache-owner release, failed transaction rollback, atomic snapshot commit, and teardown baseline. Rerun it after each lifecycle slice until the original RED cases pass.
 
 - [ ] **Step 6: Verify and commit**
 
@@ -1089,7 +1203,7 @@ Use one 100-image fixture to assert transfer/decode concurrency, 80 MiB encoded 
 swift test --filter 'ImageResourceCoordinatorTests|ImageResidencyLedgerTests|ImageAdversarialTests|MarkdownImageLoaderTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild build -scheme MarkdownKit -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 git add Sources/MarkdownPlatformView Sources/MarkdownRenderKit/RenderSnapshot.swift Tests/MarkdownKitTests
 git commit -m "feat: bound markdown image residency"
 ```
@@ -1124,7 +1238,6 @@ Run `swift test --filter MarkdownLinkPolicyTests`. Expected: FAIL because typed 
 
 ```swift
 public protocol MarkdownLinkPolicy: Sendable {
-    var configurationID: MarkdownConfigurationID { get }
     func disposition(for request: MarkdownLinkRequest) -> MarkdownLinkDisposition
 }
 
@@ -1141,13 +1254,25 @@ public enum MarkdownLinkDisposition: Sendable, Equatable {
 
 @MainActor
 public protocol MarkdownLinkHandler: AnyObject {
-    var configurationID: MarkdownConfigurationID { get }
     func open(_ url: URL)
+}
+
+@MainActor
+public struct MarkdownLinkConfiguration {
+    package let policy: any MarkdownLinkPolicy
+    package let handler: any MarkdownLinkHandler
+    public let policyID: MarkdownConfigurationID
+    public let handlerID: MarkdownConfigurationID
+    public init(
+        policy: any MarkdownLinkPolicy,
+        handler: any MarkdownLinkHandler,
+        policyID: MarkdownConfigurationID = .uniqueInstance(),
+        handlerID: MarkdownConfigurationID = .uniqueInstance()
+    )
 }
 
 public struct WebOnlyMarkdownLinkPolicy: MarkdownLinkPolicy {
     public static let `default` = Self()
-    public let configurationID = MarkdownConfigurationID.semantic(namespace: "links.web-only", version: 1)
     public func disposition(for request: MarkdownLinkRequest) -> MarkdownLinkDisposition
 }
 
@@ -1157,13 +1282,12 @@ public extension MarkdownLinkPolicy where Self == WebOnlyMarkdownLinkPolicy {
 
 @MainActor
 public final class PlatformMarkdownLinkHandler: MarkdownLinkHandler {
-    public let configurationID: MarkdownConfigurationID
-    public init(configurationID: MarkdownConfigurationID = .uniqueInstance())
+    public init()
     public func open(_ url: URL)
 }
 ```
 
-Include the current session generation in activation metadata. Revalidate generation immediately before calling the handler. Default handler delegates only an allowed HTTP/HTTPS URL to `UIApplication`/`NSWorkspace`.
+Include the current session generation in activation metadata. Revalidate generation immediately before calling the handler. Default handler delegates only an allowed HTTP/HTTPS URL to `UIApplication`/`NSWorkspace`. The configuration wrapper owns both identities: custom policy/handler instances are unique by default, even if conformers expose identical internal labels; the `.webOnly` convenience supplies the built-in policy's deterministic semantic ID while leaving a custom handler uniquely identified unless the caller explicitly opts into semantic sharing. Add collision regressions for two custom policy and handler instances.
 
 Run the pure policy and main-actor handler subset of `MarkdownLinkPolicyTests`; expected PASS before view wiring.
 
@@ -1181,7 +1305,7 @@ Run `swift test --filter MarkdownLinkPolicyTests`; expected PASS, including repl
 swift test --filter MarkdownLinkPolicyTests
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild build -scheme MarkdownKit -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 git add Sources/MarkdownPlatformView Sources/MarkdownKit Tests/MarkdownKitTests/MarkdownLinkPolicyTests.swift
 git commit -m "feat: enforce markdown link policy"
 ```
@@ -1259,7 +1383,7 @@ Run `swift test --filter 'MarkdownCopyTests|ReadOnlyCopyOriginalSourceTests'`; e
 swift test --filter 'MarkdownCopyTests|ReadOnlyCopyOriginalSourceTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild build -scheme MarkdownKit -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 git add Package.swift Sources/MarkdownPlatformView Sources/MarkdownRenderKit/RenderDisplayModel.swift Sources/MarkdownKit/MarkdownSelectionProxy.swift Sources/MarkdownKit/MarkdownSelectionReader.swift Tests/MarkdownKitTests/MarkdownCopyTests.swift Tests/MarkdownMathTests/ReadOnlyCopyOriginalSourceTests.swift
 git commit -m "feat: separate rendered and source copying"
 ```
@@ -1327,6 +1451,7 @@ Run `swift test --filter 'MarkdownAccessibilityModelTests|MarkdownAccessibilityP
 swift test --filter 'MarkdownAccessibilityModelTests|MarkdownAccessibilityPlatformTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 xcodebuild test -project Example/Example.xcodeproj -scheme Example -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:ExampleUITests
 git add Sources/MarkdownRenderKit Sources/MarkdownPlatformView Tests/MarkdownKitTests Example/ExampleUITests
 git commit -m "feat: expose structured markdown accessibility"
@@ -1341,7 +1466,8 @@ Dispatch `superpowers-reviewer` for semantic correctness and focus stability. Re
 **Files:**
 - Modify: `Sources/MarkdownRenderKit/RenderStyle.swift`
 - Modify: `Sources/MarkdownRenderKit/RenderConfiguration.swift`
-- Modify: `Sources/MarkdownRenderKit/AttributedStringRenderer.swift`
+- Modify: `Sources/MarkdownRenderKit/RenderPreparer.swift`
+- Modify: `Sources/MarkdownRenderKit/RenderMaterializer.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+iOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+macOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownTableOverlay.swift`
@@ -1395,6 +1521,7 @@ Run the Example on the iOS 18 simulator at normal and maximum Dynamic Type in li
 swift test --filter 'DynamicTypeTests|AdaptiveLayoutTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 xcodebuild test -project Example/Example.xcodeproj -scheme Example -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:ExampleUITests
 git add Sources/MarkdownRenderKit Sources/MarkdownPlatformView Tests/MarkdownKitTests Example/ExampleUITests
 git commit -m "feat: support adaptive markdown typography"
@@ -1495,7 +1622,7 @@ Use `superpowers:finishing-a-development-branch`, select the user-approved integ
 | Checkpoint | Audit IDs | Primary proof |
 |---|---|---|
 | 1A–1B | E1, E2, T1, S1, R1 | Dedicated formatting commit, CI, real runtime, non-template tests, `RTK.md` |
-| 2 | C2, M1 | Compile-time actor/value boundaries |
+| 2 + 4C | C2, M1 | Compile-time actor/value boundaries plus removal of every legacy unchecked/mutable render path |
 | 3, 4A–4C | C1, M2, T2 | Blocking parser, teardown/churn, behavior-only extraction, thin platform views, session-owned resources |
 | 4 | P1 | Differential fixtures and byte-work budgets |
 | 5A–5C | N1 | Transport security, deadlock-free budgets, residency leases, links |
