@@ -26,7 +26,7 @@ func firstChangedMarkdownBlockIndex(
     return sharedCount
 }
 
-func markdownBlocksMatch(
+private func markdownBlocksMatch(
     prevParsed: ParsedBlockNode?,
     newParsed: ParsedBlockNode?,
     prevBlock: BlockNode,

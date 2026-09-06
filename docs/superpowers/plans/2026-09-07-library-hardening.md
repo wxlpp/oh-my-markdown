@@ -661,7 +661,7 @@ Expected: PASS before extraction.
 
 - [ ] **Step 2: Move shared helpers one responsibility at a time**
 
-Move source-selection helpers, table overlay/layout helpers, and iOS `UITextInput` helper types to their named files without renaming symbols or changing access. After each move rerun the Step 1 command; each run must remain green.
+Move source-selection helpers, table overlay/layout helpers, and iOS `UITextInput` helper types to their named files without renaming symbols or changing public/package API. Implementation-only declarations may be minimally promoted to `internal` only when cross-file access objectively requires it; audit each promotion with its cross-file callsite. After each move rerun the Step 1 command; each run must remain green.
 
 - [ ] **Step 3: Move the conditional UIKit and AppKit class bodies**
 

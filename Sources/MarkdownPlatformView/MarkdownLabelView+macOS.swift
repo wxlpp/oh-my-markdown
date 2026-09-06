@@ -441,7 +441,7 @@ public final class MarkdownLabelView: NSView {
         block: BlockNode,
         naturalWidth: CGFloat
     )] = [:]
-    var _pendingTableOverlaySyncStart: Int?
+    private var _pendingTableOverlaySyncStart: Int?
 
     private var blockStarts: [Int] = []
 

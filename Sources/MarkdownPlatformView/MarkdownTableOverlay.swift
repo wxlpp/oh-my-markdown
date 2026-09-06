@@ -6,7 +6,7 @@ import MarkdownRenderKit
 import UIKit
 
 extension MarkdownLabelView {
-    func _tableNaturalWidth(at blockIndex: Int) -> CGFloat {
+    private func _tableNaturalWidth(at blockIndex: Int) -> CGFloat {
         self.decorations.tableNaturalWidth(at: blockIndex)
     }
 
@@ -150,7 +150,7 @@ extension MarkdownLabelView {
 import AppKit
 
 extension MarkdownLabelView {
-    func _tableNaturalWidth(at blockIndex: Int) -> CGFloat {
+    private func _tableNaturalWidth(at blockIndex: Int) -> CGFloat {
         self.decorations.tableNaturalWidth(at: blockIndex)
     }
 

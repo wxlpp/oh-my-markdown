@@ -13,7 +13,7 @@ import MarkdownRenderKit
 /// is O(byteOffset). On the copy path this is called exactly twice per copy
 /// operation (once for lowerByte, once for upperByte) and is not a hot path —
 /// the cost is intentionally accepted here; do not call in a loop or hot path.
-func utf8StringIndex(in source: String, at byteOffset: Int) -> String.Index? {
+private func utf8StringIndex(in source: String, at byteOffset: Int) -> String.Index? {
     guard byteOffset >= 0, byteOffset <= source.utf8.count else {
         return nil
     }

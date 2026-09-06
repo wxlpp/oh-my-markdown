@@ -490,7 +490,7 @@ public final class MarkdownLabelView: UIView {
         block: BlockNode,
         naturalWidth: CGFloat
     )] = [:]
-    var _pendingTableOverlaySyncStart: Int?
+    private var _pendingTableOverlaySyncStart: Int?
     /// Set by UITextInteraction so it can be notified of selection changes.
     weak var _inputDelegate: (any UITextInputDelegate)?
 
