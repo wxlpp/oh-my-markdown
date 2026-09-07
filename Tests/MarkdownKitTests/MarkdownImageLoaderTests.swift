@@ -6,6 +6,73 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct MarkdownImageLoaderTests {
+    /// Original generated fixture, not a renamed HEIC: ISO-BMFF mif1/jpeg brands,
+    /// a jpeg item, and complete JPEG-coded pixel data produced by ImageIO.
+    /// Box layout follows ISO/IEC 14496-12 and 23008-12; no third-party image or
+    /// implementation is distributed. libheif's JPEG codec documentation was
+    /// consulted to confirm that a full JPEG bitstream needs no jpgC split.
+    static func jpegHEIF() throws -> Data {
+        func word(_ n: Int) -> Data {
+            Data([UInt8((n >> 8) & 255), UInt8(n & 255)])
+        }
+        func integer(_ n: Int) -> Data {
+            Data([UInt8((n >> 24) & 255), UInt8((n >> 16) & 255), UInt8((n >> 8) & 255), UInt8(n & 255)])
+        }
+        func box(_ type: String, _ body: Data) -> Data {
+            integer(body.count + 8) + Data(type.utf8) + body
+        }
+        let context = try #require(CGContext(data: nil, width: 32, height: 32, bitsPerComponent: 8, bytesPerRow: 128, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        let pixels = try #require(context.makeImage())
+        let jpeg = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(jpeg, "public.jpeg" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, pixels, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        let ftyp = box("ftyp", Data("mif1".utf8) + integer(0) + Data("mif1jpeg".utf8))
+        func metadata(offset: Int) -> Data {
+            let hdlr = box("hdlr", integer(0) + integer(0) + Data("pict".utf8) + Data(repeating: 0, count: 13))
+            let pitm = box("pitm", integer(0) + word(1))
+            let iloc = box("iloc", integer(0) + Data([0x44, 0]) + word(1) + word(1) + word(0) + word(1) + integer(offset) + integer(jpeg.length))
+            let infe = box("infe", integer(0x0200_0000) + word(1) + word(0) + Data("jpeg".utf8) + Data([0]))
+            let iinf = box("iinf", integer(0) + word(1) + infe)
+            let ispe = box("ispe", integer(0) + integer(32) + integer(32))
+            let pixi = box("pixi", integer(0) + Data([3, 8, 8, 8]))
+            let ipco = box("ipco", ispe + pixi)
+            let ipma = box("ipma", integer(0) + integer(1) + word(1) + Data([2, 0x81, 0x82]))
+            return box("meta", integer(0) + hdlr + pitm + iloc + iinf + box("iprp", ipco + ipma))
+        }
+        return ftyp + metadata(offset: ftyp.count + metadata(offset: 0).count + 8) + box("mdat", jpeg as Data)
+    }
+
+    @Test func genuineHEIFValidatesOnlyWithItsDistinctDeclaredMIME() throws {
+        let data = try Self.jpegHEIF()
+        let source = CGImageSourceCreateIncremental([kCGImageSourceShouldCache: false] as CFDictionary)
+        CGImageSourceUpdateData(source, data as CFData, true)
+        #expect(CGImageSourceGetType(source) as String? == "public.heif")
+        #expect(CGImageSourceGetStatus(source) == .statusComplete)
+        #expect(CGImageSourceGetCount(source) == 1)
+        // Fixture fidelity: ImageIO can actually decode these JPEG-coded pixels.
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        #expect(image.width == 32 && image.height == 32)
+        let validated = try ValidatedImageFactory.validate(.init(data: data, declaredMIMEType: "image/heif"))
+        #expect(validated.metadata == .init(mimeType: "image/heif", pixelWidth: 32, pixelHeight: 32, frameCount: 1, cumulativePixels: 1024))
+        for mime in ["image/heic", "image/jpeg", "image/png"] {
+            #expect(throws: MarkdownResourceError.typeMismatch) { try ValidatedImageFactory.validate(.init(data: data, declaredMIMEType: mime)) }
+        }
+    }
+
+    @Test func directLoaderUsesTheStricterConfiguredAndRequestTimeoutCaps() async throws {
+        for (requested, expected) in [(15, 15), (20, 20), (120, 75)] {
+            let url = Self.route { proto in
+                #expect(proto.request.timeoutInterval == Double(expected))
+                proto.respond()
+            }
+            defer { ControlledProtocol.routes.withLock { $0[url.path] = nil } }
+            let loader = DefaultHTTPSImageLoader(requestTimeout: .seconds(75), resourceTimeout: .seconds(95), protocolClasses: [ControlledProtocol.self])
+            let request = requested == 15 ? MarkdownImageRequest(url: url) : MarkdownImageRequest(url: url, requestTimeout: .seconds(requested))
+            #expect(try await loader.load(request).data == Self.png)
+        }
+    }
+
     #if os(macOS)
     @Test func constructionGateRejectsAlternateConstructorSpellings() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

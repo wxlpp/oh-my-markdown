@@ -1,7 +1,8 @@
 import Foundation
 import ImageIO
 
-package struct MarkdownEncodedImage {
+// swiftformat:disable:next redundantSendable
+package struct MarkdownEncodedImage: Sendable {
     package let data: Data
     package let metadata: MarkdownImageMetadata
     fileprivate init(validatedData: Data, metadata: MarkdownImageMetadata) {

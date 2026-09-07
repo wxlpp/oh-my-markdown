@@ -83,6 +83,10 @@ public struct MarkdownResourceFailure: Sendable, Equatable {
 public typealias MarkdownResourceErrorHandler = @MainActor @Sendable (MarkdownResourceFailure) -> Void
 
 /// Isolated, HTTPS-only transport. Timeouts are clamped to 1...120 seconds.
+/// Each effective timeout is the smaller of the loader's configured cap and the
+/// request's cap. A request initialized with only a URL retains its 15/30-second
+/// defaults; pass longer request caps explicitly when increasing loader timeouts.
+/// The SwiftUI/native configuration wrapper supplies its configured caps for you.
 public actor DefaultHTTPSImageLoader: MarkdownImageLoading {
     package nonisolated let requestTimeout: Duration
     package nonisolated let resourceTimeout: Duration

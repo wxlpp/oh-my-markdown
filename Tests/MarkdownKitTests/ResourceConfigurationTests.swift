@@ -13,6 +13,7 @@ import AppKit
 @MainActor
 @Suite(.serialized)
 struct ResourceConfigurationTests {
+    private final class HandlerLifetime {}
     actor PausedLoader: MarkdownImageLoading {
         private var pending: [CheckedContinuation<MarkdownImagePayload, any Error>] = []
         private(set) var calls = 0
@@ -77,6 +78,31 @@ struct ResourceConfigurationTests {
             #expect(!rendered.contains(secret))
         }
         #expect(try SanitizedMarkdownOrigin(url: #require(URL(string: "https://example.test:8443/a")))?.port == 8443)
+    }
+
+    @Test(arguments: [false, true])
+    func pendingFailureUsesTheCurrentHandlerOrHonorsRemoval(removeHandler: Bool) async throws {
+        let loader = PausedLoader()
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        defer { view.dismantleRenderSession() }
+        var oldCalls = 0
+        var currentCalls = 0
+        var owner: HandlerLifetime? = HandlerLifetime()
+        weak var oldOwner = owner
+        view.onResourceError = { [owner] _ in withExtendedLifetime(owner) { oldCalls += 1 } }
+        owner = nil
+        view.remoteImages = .init(loader: loader)
+        view.blocks = MarkdownDocument(parsing: "![alt](https://example.test/image)").blocks
+        #expect(await eventually { await loader.calls == 1 })
+        let token = try #require(view.currentCommitToken)
+        if removeHandler { view.onResourceError = nil }
+        else { view.onResourceError = { _ in currentCalls += 1 } }
+        #expect(oldOwner == nil)
+        await loader.finish(.failure(MarkdownResourceError.transport))
+        #expect(await eventually { view.imageRequests.values.contains(.failed) })
+        #expect(view.currentCommitToken == token)
+        #expect(oldCalls == 0)
+        #expect(currentCalls == (removeHandler ? 0 : 1))
     }
 
     @Test func disablingDuringLoadDropsLateValidBytes() async throws {

@@ -687,7 +687,6 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             return
         }
         guard let loader = self.remoteImages.loader else { return }
-        let errorHandler = self.onResourceError
         let imageRequest = self.remoteImages.request(for: url)
         self.driver().resourceTaskOwner.start {
             do {
@@ -699,15 +698,16 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
                     if let image { view.finishImageLoad(request, image: image) }
                     else {
                         view.finishImageLoadFailure(request)
-                        errorHandler?(MarkdownResourceFailure(category: .typeMismatch, origin: SanitizedMarkdownOrigin(url: url)))
+                        view.onResourceError?(MarkdownResourceFailure(category: .typeMismatch, origin: SanitizedMarkdownOrigin(url: url)))
                     }
                 }
             } catch {
                 guard !Task.isCancelled, !(error is CancellationError),
                       (error as? URLError)?.code != .cancelled else { return }
                 registry.withAuthorizedSink(for: request.token) { sink in
-                    (sink as? MarkdownLabelView)?.finishImageLoadFailure(request)
-                    errorHandler?(MarkdownResourceFailure(category: .classify(error), origin: SanitizedMarkdownOrigin(url: url)))
+                    guard let view = sink as? MarkdownLabelView else { return }
+                    view.finishImageLoadFailure(request)
+                    view.onResourceError?(MarkdownResourceFailure(category: .classify(error), origin: SanitizedMarkdownOrigin(url: url)))
                 }
             }
         }
