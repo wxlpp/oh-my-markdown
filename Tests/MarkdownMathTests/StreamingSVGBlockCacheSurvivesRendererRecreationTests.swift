@@ -76,14 +76,12 @@ struct StreamingSVGBlockCacheSurvivesRendererRecreationTests {
     @Test("流式 + 持续宽度抖动下，已解析 svg 必须稳定熬过反复 renderer 重建")
     func churnHoldsResolved() async {
         let stable = await self.run(churnWidth: false)
-        print("[SVG-GUARD] STABLE  heldResolved=\(stable.heldResolved) attachTrace=\(stable.attachTrace)")
         #expect(
             stable.heldResolved,
             "健全性对照失败：宽度稳定下已解析 svg 都无法稳定保持（attachTrace=\(stable.attachTrace)）"
         )
 
         let churn = await self.run(churnWidth: true)
-        print("[SVG-GUARD] CHURN   heldResolved=\(churn.heldResolved) attachTrace=\(churn.attachTrace)")
         #expect(
             churn.heldResolved,
             "宽度抖动下已解析 svg 未能稳定熬过 renderer 重建：attachTrace=\(churn.attachTrace) —— resetLayout 反复丢弃 _cachedRenderer，需 view 持有 svgBlockCache/代际/scale 并在 cachedRenderer getter 重建重播种"

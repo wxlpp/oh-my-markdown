@@ -331,7 +331,7 @@ MarkdownText(source)
 ## 有序列表
 
 1. 解析：`swift-markdown` → `BlockNode` / `InlineNode`
-2. 渲染：`AttributedStringRenderer` → `NSAttributedString`
+2. 准备：`RenderPreparer` → `RenderDisplayModel`
 3. 排版：`NSTextLayoutManager` 排版并绘制
 4. 展示：`MarkdownText` SwiftUI 视图
 
@@ -361,7 +361,7 @@ MarkdownText(source)
 | MarkdownText | iOS | 26.0 | TextKit 2 | MainActor | ⭐⭐⭐⭐⭐ | ✅ | ✅ | SwiftUI 原生视图 |
 | MarkdownLabelView | iOS | 26.0 | TextKit 2 | MainActor | ⭐⭐⭐⭐⭐ | ✅ | ✅ | UIView 封装 |
 | MarkdownLabelView | macOS | 26.0 | TextKit 2 | MainActor | ⭐⭐⭐⭐⭐ | ✅ | ✅ | NSView 封装 |
-| AttributedStringRenderer | 全平台 | 26.0 | — | 任意 | ⭐⭐⭐⭐ | N/A | ✅ | 纯值类型渲染器 |
+| RenderPreparer | 全平台 | 26.0 | — | 任意 | ⭐⭐⭐⭐ | N/A | ✅ | 显示模型准备 |
 | MarkdownParser | 全平台 | 26.0 | swift-markdown | 任意 | ⭐⭐⭐⭐ | N/A | ✅ | 基于 cmark |
 
 ## 表格（数据对比）
@@ -561,7 +561,7 @@ private let streamTokens: [String] = {
       - `BlockNode` — 统一的中间表示，与平台无关
         - `.paragraph`, `.heading`, `.codeBlock`, `.table`…
     - **渲染层**
-      - `AttributedStringRenderer` — 值类型，线程安全
+      - `RenderDisplayModel` — 不可变、Sendable
         - 接收 `availableWidth`，内联计算 tab stops
         - 溢出表格：文字置透明，写入 `.markdownTableNaturalWidth`
     - **显示层**

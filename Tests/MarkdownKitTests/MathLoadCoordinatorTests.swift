@@ -1,4 +1,5 @@
 import Foundation
+import MarkdownCore
 @testable import MarkdownPlatformView
 @testable import MarkdownRenderKit
 import Synchronization
@@ -7,9 +8,47 @@ import Testing
 @MainActor
 @Suite("MathLoadCoordinator")
 struct MathLoadCoordinatorTests {
-    @Test func malformedEncodedResultIsDeterministicAndNeverAcquiresResidency() async {
+    @Test(arguments: [CGFloat.nan, .infinity, -.infinity, .greatestFiniteMagnitude])
+    func nonFiniteBaselineNeverReachesCacheOrAttachments(baseline: CGFloat) async throws {
+        let producer = BaselineValidationProducer(baseline: baseline)
+        let configuration = MathRendererConfiguration(renderer: producer)
+        let cache = RenderedResourceCache()
+        let coordinator = MathLoadCoordinator(cache: cache)
+        coordinator.configure(configuration)
+        let key = resourceMathKey(configuration: configuration)
+        var publications = 0
+        await coordinator.load(key, isCurrent: { true }, completed: { publications += 1 })?.value
+        #expect(cache.publication(for: .math(key)) == nil)
+        #expect(coordinator.publication(for: key) == nil)
+        #expect(cache.isNegative(.math(key)))
+        #expect(publications == 0)
+        let style = RenderStyle.default.snapshot(generation: 0)
+        let input = RenderInput(document: MarkdownDocument(parsing: "$x$"), source: "$x$", availableWidth: 320, configuration: style, placeholderMode: .streaming)
+        let model = try RenderPreparer(configuration: style).prepare(input)
+        var values: [ResourceID: ResolvedPlatformResource] = [:]
+        let resource = try #require(model.resources.first)
+        guard case .math(let id, _, _) = resource else {
+            Issue.record("Expected the math fixture to prepare a resource")
+            return
+        }
+        if let lease = coordinator.publication(for: key) { values[id] = .math(owner: lease) }
+        let snapshot = RenderMaterializer(configuration: style).materialize(model, resources: .init(values: values))
+        #expect(snapshot.resourceOwners.isEmpty)
+        #expect(snapshot.attributedString.attribute(.attachment, at: 0, effectiveRange: nil) == nil)
+        let height = TableMeasurement.height(of: snapshot.attributedString, naturalWidth: 320)
+        #expect(height.isFinite && height > 0)
+    }
+
+    @Test(arguments: [CGFloat.nan, .infinity, -.infinity])
+    func renderedMathConstructorRejectsNonFiniteBaseline(baseline: CGFloat) {
+        #expect(throws: RenderedMath.Failure.invalidGeometry) {
+            try RenderedMath(image: resourceTestImage(), baselineOffsetEx: baseline)
+        }
+    }
+
+    @Test func malformedEncodedResultIsDeterministicAndNeverAcquiresResidency() async throws {
         let image = RenderedImage(encodedData: Data([0]), pointSize: CGSize(width: 2, height: 2))
-        let configuration = MathRendererConfiguration(renderer: ResourceMathProducer(outcome: .rendered(RenderedMath(image: image, baselineOffsetEx: 0))))
+        let configuration = try MathRendererConfiguration(renderer: ResourceMathProducer(outcome: .rendered(RenderedMath(image: image, baselineOffsetEx: 0))))
         let cache = RenderedResourceCache()
         let coordinator = MathLoadCoordinator(cache: cache)
         coordinator.configure(configuration)

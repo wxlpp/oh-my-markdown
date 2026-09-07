@@ -25,8 +25,14 @@ public struct RenderedMath: Sendable {
     public let image: RenderedImage
     /// Baseline displacement in ex units; one ex is half the requested point size.
     public let baselineOffsetEx: CGFloat
-    /// Creates a transport result. The baseline offset must be finite.
-    public init(image: RenderedImage, baselineOffsetEx: CGFloat) {
+    /// Deterministic invalid geometry; custom producers should return `.failed`.
+    public enum Failure: Error, Sendable {
+        case invalidGeometry
+    }
+
+    /// Creates a transport result, rejecting non-finite baseline offsets.
+    public init(image: RenderedImage, baselineOffsetEx: CGFloat) throws(Failure) {
+        guard baselineOffsetEx.isFinite else { throw .invalidGeometry }
         self.image = image
         self.baselineOffsetEx = baselineOffsetEx
     }

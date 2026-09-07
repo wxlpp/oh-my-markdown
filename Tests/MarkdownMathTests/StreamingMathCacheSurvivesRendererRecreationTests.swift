@@ -117,7 +117,6 @@ struct StreamingMathCacheSurvivesRendererRecreationTests {
         // 健全性对照：宽度稳定 → 已解析 math 必能稳定保持（无残留占位、
         // attachment 满）。若这都做不到，说明搭法/渲染器本身有问题，不是本 bug。
         let stable = await self.run(churnWidth: false)
-        print("[GUARD] STABLE  heldResolved=\(stable.heldResolved) attachTrace=\(stable.attachTrace)")
         #expect(
             stable.heldResolved,
             "健全性对照失败：宽度稳定下已解析 math 都无法稳定保持（attachTrace=\(stable.attachTrace)），搭法/渲染器本身有问题，不是本 bug"
@@ -128,7 +127,6 @@ struct StreamingMathCacheSurvivesRendererRecreationTests {
         // transient renderer → 每次重建空 renderer → renderMath 回退占位 →
         // 解析形态在占位↔attachment 间永振荡 → 永远凑不齐连续保持。
         let churn = await self.run(churnWidth: true)
-        print("[GUARD] CHURN   heldResolved=\(churn.heldResolved) attachTrace=\(churn.attachTrace)")
         #expect(
             churn.heldResolved,
             "宽度抖动下已解析 math 未能稳定熬过 renderer 重建：attachment 形态在抖动窗口内振荡（attachTrace=\(churn.attachTrace)）—— resetLayout 的 _cachedRenderer=nil 反复丢弃刚写回的 mathCache/gen/scale，新 renderer 键永不匹配 → resolve→discard 死循环、公式渲染形态永振荡（Bug 1 math 子症根因）"

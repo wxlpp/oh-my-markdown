@@ -47,7 +47,7 @@ actor ResourceMathProducer: MathRendering {
     let outcome: MathRenderOutcome
     let gate: ResourceRenderGate?
     private(set) var calls = 0
-    init(outcome: MathRenderOutcome = .rendered(RenderedMath(image: resourceTestImage(), baselineOffsetEx: -0.25)), gate: ResourceRenderGate? = nil) {
+    init(outcome: MathRenderOutcome = .rendered(try! RenderedMath(image: resourceTestImage(), baselineOffsetEx: -0.25)), gate: ResourceRenderGate? = nil) {
         self.outcome = outcome
         self.gate = gate
     }
@@ -72,6 +72,21 @@ actor ResourceSVGProducer: SVGBlockRendering {
         self.calls += 1
         await self.gate?.enter()
         return self.outcome
+    }
+}
+
+actor BaselineValidationProducer: MathRendering {
+    let baseline: CGFloat
+    init(baseline: CGFloat) {
+        self.baseline = baseline
+    }
+
+    func render(latex: String, display: Bool, pointSize: CGFloat, scale: CGFloat, colorHex: String) async -> MathRenderOutcome {
+        do {
+            return try .rendered(RenderedMath(image: resourceTestImage(), baselineOffsetEx: self.baseline))
+        } catch {
+            return .failed
+        }
     }
 }
 

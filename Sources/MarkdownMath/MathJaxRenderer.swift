@@ -44,6 +44,8 @@ public actor MathJaxRenderer: MathRendering, BuiltInRenderedResourceProducer {
             return Task.isCancelled ? .cancelled : .failed
         } catch SVGRasterizerError.invalidDimensions {
             return Task.isCancelled ? .cancelled : .failed
+        } catch RenderedMath.Failure.invalidGeometry {
+            return Task.isCancelled ? .cancelled : .failed
         } catch { return Task.isCancelled ? .cancelled : .transientFailure }
     }
 }

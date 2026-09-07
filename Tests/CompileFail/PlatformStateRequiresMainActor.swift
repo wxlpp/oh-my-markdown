@@ -83,6 +83,13 @@ func umbrellaClientSurface() {
     _ = MarkdownEditorInputAction.self
     _ = MarkdownEditorCommands.self
     _ = MarkdownDocument(parsing: "client")
+    // README UIKit/AppKit example: the supported rendering and editing boundaries.
+    let view = MarkdownLabelView()
+    view.renderStyle = .default
+    view.setMarkdown("# Hello, **World**!")
+    let editor = MarkdownEditorTextView()
+    editor.renderStyle = .default
+    editor.setMarkdown("# Draft\n\n- [ ] Ship the editor")
     _ = MarkdownText("$x$").mathRenderer(MathRendererConfiguration(renderer: MathJaxRenderer()))
     _ = MarkdownRenderConfiguration.default.snapshot(generation: 0)
 }

@@ -62,13 +62,18 @@ package final class MathLoadCoordinator {
             guard !Task.isCancelled, isCurrent() else { return }
             switch outcome {
             case .rendered(let result):
+                let baselineOffset = result.baselineOffsetEx * key.pointSize * 0.5
+                guard result.baselineOffsetEx.isFinite, baselineOffset.isFinite else {
+                    self.cache.insertNegative(.math(key))
+                    return
+                }
                 let image: PlatformImage
                 do { image = try result.image.materialize() }
                 catch {
                     if (error as? RenderedImage.Failure)?.isDeterministic == true { self.cache.insertNegative(.math(key)) }
                     return
                 }
-                let flight = RenderedResourceRecord(image: image, baselineOffset: Double(result.baselineOffsetEx * key.pointSize * 0.5)).acquireLease()
+                let flight = RenderedResourceRecord(image: image, baselineOffset: Double(baselineOffset)).acquireLease()
                 self.cache.insert(flight, for: .math(key))
                 self.pending.removeValue(forKey: key)?.release()
                 self.pending[key] = flight

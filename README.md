@@ -140,14 +140,6 @@ let document = MarkdownDocument(parsing: "# Title\n\nHello")
 print(document.blocks)
 ```
 
-### Rendering Only
-
-```swift
-let document = MarkdownDocument(parsing: "| A | B |\n|:-:|--:|\n| 1 | 2 |")
-let renderer = AttributedStringRenderer(style: .default, availableWidth: 320)
-let attributedString = renderer.render(document.blocks)
-```
-
 ### Math (LaTeX)
 
 LaTeX math is an opt-in feature provided by the separate **MarkdownMath** product. Attach a renderer with the `.mathRenderer(_:)` modifier:

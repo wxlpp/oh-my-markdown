@@ -100,7 +100,7 @@ enum SVGRasterizer {
         let targetPointSize = CGSize(width: heightPoints * aspect, height: heightPoints)
 
         let image = try rasterImage(drawing, pointSize: targetPointSize, scale: scale)
-        return RenderedMath(image: image, baselineOffsetEx: self.parseVerticalAlignEx(svg))
+        return try RenderedMath(image: image, baselineOffsetEx: self.parseVerticalAlignEx(svg))
     }
 
     /// Draw into privately allocated Core Graphics storage; no platform image escapes.

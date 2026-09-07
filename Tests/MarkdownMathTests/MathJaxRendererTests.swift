@@ -53,7 +53,14 @@ struct MathJaxRendererTests {
     func invalidStillRenders() async {
         let r = MathJaxRenderer()
         let out = await r.render(latex: "\\thisCommandDoesNotExist", display: false, pointSize: 16, scale: 2, colorHex: "#000000")
-        if case .failed = out { Issue.record("LaTeX 语法错误不应是 .failed") }
+        guard case .rendered(let result) = out else {
+            Issue.record("Expected rendered MathJax error SVG, got \(out)")
+            return
+        }
+        #expect(!result.image.encodedData.isEmpty)
+        #expect(result.image.pointSize.width.isFinite && result.image.pointSize.width > 0)
+        #expect(result.image.pointSize.height.isFinite && result.image.pointSize.height > 0)
+        #expect(result.baselineOffsetEx.isFinite)
     }
 
     @Test("取消的 Task → .cancelled，不污染")
@@ -62,7 +69,10 @@ struct MathJaxRendererTests {
         let task = Task { await r.render(latex: "\\int_0^1 x", display: true, pointSize: 16, scale: 2, colorHex: "#000000") }
         task.cancel()
         let out = await task.value
-        if case .failed = out { Issue.record("取消不应映射为 .failed") }
+        guard case .cancelled = out else {
+            Issue.record("Expected cancelled outcome, got \(out)")
+            return
+        }
     }
 
     // MARK: - Task-13 评审强制的 4 项契约测试
