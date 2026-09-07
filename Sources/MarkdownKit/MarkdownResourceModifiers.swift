@@ -23,14 +23,29 @@ extension View {
     /// Decides which links may activate and who opens them. The default is
     /// HTTP/HTTPS through the platform opener; a custom scheme needs **both** a
     /// policy that permits it and a handler that knows how to open it.
+    /// Identities are derived from the policy's type and the handler's object
+    /// identity, so rebuilding the body does not read as a replacement. A
+    /// value-type policy whose behaviour depends on its stored properties needs
+    /// `markdownLinkConfiguration(_:)` with an explicit ID instead.
     public func markdownLinkPolicy(
-        _ policy: any MarkdownLinkPolicy, handler: any MarkdownLinkHandler = PlatformMarkdownLinkHandler()
+        _ policy: any MarkdownLinkPolicy, handler: any MarkdownLinkHandler = PlatformMarkdownLinkHandler.shared
     ) -> some View {
-        environment(\.markdownLinkConfiguration, MarkdownLinkConfiguration(policy: policy, handler: handler))
+        environment(\.markdownLinkConfiguration, MarkdownLinkConfiguration.derived(policy: policy, handler: handler))
     }
 
     /// Installs a link configuration whose identities the caller controls.
     public func markdownLinkConfiguration(_ configuration: MarkdownLinkConfiguration) -> some View {
         environment(\.markdownLinkConfiguration, configuration)
+    }
+}
+
+/// Two identities compared as one value, so the update guard cannot drift by
+/// checking only half of what identifies a link configuration.
+struct Pair<First: Equatable, Second: Equatable>: Equatable {
+    let first: First
+    let second: Second
+    init(_ first: First, _ second: Second) {
+        self.first = first
+        self.second = second
     }
 }

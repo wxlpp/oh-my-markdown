@@ -62,7 +62,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
         var lastImageReplacementID: UUID?
-        var lastLinkReplacementID: UUID?
+        var lastLinkIdentity: Pair<MarkdownConfigurationID, MarkdownConfigurationID>?
     }
 
     let source: String
@@ -88,9 +88,10 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
         uiView.onResourceError = self.resourceErrorHandler
-        if let link = self.linkConfiguration, context.coordinator.lastLinkReplacementID != link.replacementID {
+        let linkIdentity = self.linkConfiguration.map { Pair($0.policyID, $0.handlerID) }
+        if let link = self.linkConfiguration, context.coordinator.lastLinkIdentity != linkIdentity {
             uiView.linkConfiguration = link
-            context.coordinator.lastLinkReplacementID = link.replacementID
+            context.coordinator.lastLinkIdentity = linkIdentity
         }
         if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
             uiView.remoteImages = self.remoteImages
@@ -145,7 +146,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
         var lastImageReplacementID: UUID?
-        var lastLinkReplacementID: UUID?
+        var lastLinkIdentity: Pair<MarkdownConfigurationID, MarkdownConfigurationID>?
     }
 
     let source: String
@@ -166,9 +167,10 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
         nsView.onResourceError = self.resourceErrorHandler
-        if let link = self.linkConfiguration, context.coordinator.lastLinkReplacementID != link.replacementID {
+        let linkIdentity = self.linkConfiguration.map { Pair($0.policyID, $0.handlerID) }
+        if let link = self.linkConfiguration, context.coordinator.lastLinkIdentity != linkIdentity {
             nsView.linkConfiguration = link
-            context.coordinator.lastLinkReplacementID = link.replacementID
+            context.coordinator.lastLinkIdentity = linkIdentity
         }
         if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
             nsView.remoteImages = self.remoteImages

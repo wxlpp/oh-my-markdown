@@ -47,7 +47,7 @@ struct AllowEverythingPolicy: MarkdownLinkPolicy {
 @Suite(.serialized)
 struct MarkdownLinkPolicyTests {
     private func request(_ string: String, generation: UInt64 = 0) throws -> MarkdownLinkRequest {
-        try MarkdownLinkRequest(url: #require(URL(string: string)), sourceRange: nil, sessionGeneration: generation)
+        try MarkdownLinkRequest(url: #require(URL(string: string)), configurationGeneration: generation)
     }
 
     @Test func defaultPolicyAllowsOnlyWebSchemes() throws {
@@ -194,6 +194,61 @@ struct MarkdownLinkPolicyTests {
         #expect(await eventually { handler.opened.first?.scheme == "myapp" })
         withExtendedLifetime(host) {}
     }
+
+    /// SwiftUI rebuilds a body many times. Installing the same policy again must
+    /// not look like a replacement: a generation bump cancels math/SVG work,
+    /// resubmits the whole document, changes every ResourceID, and silently
+    /// discards any link activation that is mid-flight.
+    @Test @MainActor func repeatedIdenticalInstallsDoNotBumpTheGeneration() async throws {
+        let handler = RecordingLinkHandler()
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        defer { view.dismantleRenderSession() }
+        view.linkConfiguration = MarkdownLinkConfiguration(policy: AllowEverythingPolicy(), handler: handler)
+        view.setMarkdown("[web](https://example.com/stable) ![img](https://images.test/a.png)")
+        #expect(await eventually { view.currentSnapshot != nil })
+        let before = try #require(view.currentCommitToken)
+        let resourcesBefore = try resourceIdentifiers(of: #require(view.currentSnapshot))
+
+        let installed = view.linkConfiguration
+        for _ in 0 ..< 5 {
+            view.linkConfiguration = installed
+        }
+        for _ in 0 ..< 200 {
+            await Task.yield()
+        }
+        #expect(view.currentCommitToken?.configurationGeneration == before.configurationGeneration)
+        #expect(try resourceIdentifiers(of: #require(view.currentSnapshot)) == resourcesBefore)
+    }
+
+    @Test @MainActor func theModifierIsStableAcrossBodyEvaluations() {
+        let policy = AllowEverythingPolicy()
+        let handler = RecordingLinkHandler()
+        // Two evaluations of the same modifier must produce the same identities,
+        // or every SwiftUI update reads as a configuration replacement.
+        let first = MarkdownLinkConfiguration.derived(policy: policy, handler: handler)
+        let second = MarkdownLinkConfiguration.derived(policy: policy, handler: handler)
+        #expect(first.policyID == second.policyID)
+        #expect(first.handlerID == second.handlerID)
+        #expect(
+            MarkdownLinkConfiguration.derived(policy: policy, handler: RecordingLinkHandler()).handlerID
+                != first.handlerID
+        )
+        #expect(
+            MarkdownLinkConfiguration.derived(policy: WebOnlyMarkdownLinkPolicy.default, handler: handler).policyID
+                != first.policyID
+        )
+    }
+}
+
+@MainActor
+private func resourceIdentifiers(of snapshot: RenderSnapshot) -> Set<String> {
+    var identifiers: Set<String> = []
+    for resource in snapshot.displayModel.resourceValues {
+        switch resource {
+        case .image(let id, _, _), .math(let id, _, _), .svg(let id, _): identifiers.insert(id.rawValue)
+        }
+    }
+    return identifiers
 }
 
 @MainActor

@@ -31,7 +31,7 @@ import AppKit
     private(set) var activations: [URL] = []
     func replaceLinkConfiguration(_ configuration: MarkdownLinkConfiguration) {
         self.linkConfiguration = configuration
-        self.send(.replaceLinkConfiguration(policyID: configuration.policyID, handlerID: configuration.handlerID))
+        self.send(.replaceLinkConfiguration)
     }
 
     func activateLink(_ url: URL, sourceRange: MarkdownSourceRange?) {

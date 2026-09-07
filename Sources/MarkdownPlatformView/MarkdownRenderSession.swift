@@ -499,25 +499,31 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
     package func replaceLinkConfiguration(_ configuration: MarkdownLinkConfiguration) {
         guard !self.dismantled else { return }
         self.linkConfiguration = configuration
-        self.send(.replaceLinkConfiguration(policyID: configuration.policyID, handlerID: configuration.handlerID))
+        self.send(.replaceLinkConfiguration)
     }
 
     /// The decision runs off the main actor, so the configuration can be replaced
     /// while it is in flight. Everything captured here is revalidated against the
     /// live driver state before the handler is allowed to run.
+    ///
+    /// `sourceRevision` is deliberately not revalidated: the contract is that the
+    /// URL the reader saw at the moment of the tap is the one that activates, so a
+    /// streaming append that arrives mid-decision does not void it.
     package func activateLink(_ url: URL, sourceRange: MarkdownSourceRange?) {
         guard !self.dismantled else { return }
         let configuration = self.linkConfiguration
         let request = MarkdownLinkRequest(
-            url: url, sourceRange: sourceRange, sessionGeneration: self.configurationGeneration
+            url: url, sourceRange: sourceRange, configurationGeneration: self.configurationGeneration
         )
         Task { [weak self] in
             let disposition = await MarkdownLinkEvaluation.disposition(of: configuration.policy, for: request)
+            // Identities, not instance identity: a host that installs the same
+            // semantic IDs is saying "this is the same configuration", and an
+            // in-flight decision under those IDs stays valid.
             guard let self, !self.dismantled,
                   self.linkConfiguration.policyID == configuration.policyID,
                   self.linkConfiguration.handlerID == configuration.handlerID,
-                  self.linkConfiguration.replacementID == configuration.replacementID,
-                  self.configurationGeneration == request.sessionGeneration,
+                  self.configurationGeneration == request.configurationGeneration,
                   case .allow(let allowed) = disposition
             else { return }
             configuration.handler.open(allowed)

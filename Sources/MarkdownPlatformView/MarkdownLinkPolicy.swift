@@ -18,11 +18,11 @@ public struct MarkdownLinkRequest: Sendable, Equatable {
     public let sourceRange: MarkdownSourceRange?
     /// Configuration generation the activation was captured at. Revalidated
     /// against the live generation before the handler runs.
-    public let sessionGeneration: UInt64
-    public init(url: URL, sourceRange: MarkdownSourceRange?, sessionGeneration: UInt64) {
+    public let configurationGeneration: UInt64
+    public init(url: URL, sourceRange: MarkdownSourceRange? = nil, configurationGeneration: UInt64) {
         self.url = url
         self.sourceRange = sourceRange
-        self.sessionGeneration = sessionGeneration
+        self.configurationGeneration = configurationGeneration
     }
 }
 
@@ -65,11 +65,21 @@ extension MarkdownLinkPolicy where Self == WebOnlyMarkdownLinkPolicy {
 /// The only place in the library that calls a platform opener.
 @MainActor
 public final class PlatformMarkdownLinkHandler: MarkdownLinkHandler {
-    public init() {}
+    /// Shared by default so a SwiftUI body evaluation does not mint a new handler
+    /// identity on every frame.
+    public static let shared = PlatformMarkdownLinkHandler()
+    private let allowedSchemes: Set<String>
+    /// A policy that permits `mailto:` or `tel:` also has to say so here; the
+    /// default refuses to hand the system anything but the web schemes.
+    public init(allowedSchemes: Set<String> = ["http", "https"]) {
+        self.allowedSchemes = Set(allowedSchemes.map { $0.lowercased() })
+    }
+
     public func open(_ url: URL) {
-        // Defence in depth: the policy already rejected other schemes, and this
-        // refuses to hand one to the system even if a custom policy allowed it.
-        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return }
+        guard let scheme = url.scheme?.lowercased(), self.allowedSchemes.contains(scheme) else {
+            assertionFailure("policy allowed \(scheme(of: url)) but this handler only opens \(self.allowedSchemes.sorted())")
+            return
+        }
         #if canImport(UIKit)
         UIApplication.shared.open(url)
         #elseif canImport(AppKit)
@@ -101,6 +111,26 @@ public struct MarkdownLinkConfiguration {
         self.handlerID = handlerID
     }
 
+    /// Identities derived from what a SwiftUI body can actually keep stable: the
+    /// policy's concrete type and the handler's object identity. A body rebuilt
+    /// every frame therefore installs the same configuration rather than a
+    /// replacement. A value-type policy whose behaviour depends on its stored
+    /// properties must be installed with an explicit ID instead, because two such
+    /// instances share a type and would look identical here.
+    public static func derived(
+        policy: any MarkdownLinkPolicy, handler: any MarkdownLinkHandler
+    ) -> Self {
+        Self(
+            policy: policy, handler: handler,
+            policyID: policy is WebOnlyMarkdownLinkPolicy
+                ? WebOnlyMarkdownLinkPolicy.identity
+                : .semantic(namespace: "link-policy-type:\(String(reflecting: type(of: policy)))", version: 1),
+            handlerID: .semantic(
+                namespace: "link-handler-object:\(UInt(bitPattern: ObjectIdentifier(handler).hashValue))", version: 1
+            )
+        )
+    }
+
     /// The built-in policy keeps its deterministic identity; the handler stays
     /// uniquely identified unless the caller opts into semantic sharing.
     public static func webOnly(
@@ -112,6 +142,10 @@ public struct MarkdownLinkConfiguration {
             policyID: WebOnlyMarkdownLinkPolicy.identity, handlerID: handlerID
         )
     }
+}
+
+private func scheme(of url: URL) -> String {
+    url.scheme?.lowercased() ?? "no scheme"
 }
 
 package enum MarkdownLinkEvaluation {

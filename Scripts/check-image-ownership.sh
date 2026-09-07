@@ -155,7 +155,7 @@ while IFS= read -r -d '' file; do
         echo "FAIL: unowned or unbounded image handling (reason above)" >&2
         exit 1
     fi
-done < <(rg --files --hidden --no-ignore -0 -g '*.swift' "$source_root")
+done < <(rg --files --follow --hidden --no-ignore -0 -g '*.swift' "$source_root")
 
 if [[ "$count" -eq 0 ]]; then
     echo 'FAIL: empty source inventory' >&2

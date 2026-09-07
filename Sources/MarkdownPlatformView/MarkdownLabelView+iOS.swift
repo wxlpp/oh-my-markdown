@@ -527,7 +527,14 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// Web-only policy and the platform opener until a host replaces them.
     public var linkConfiguration: MarkdownLinkConfiguration = .webOnly() {
         didSet {
-            guard !self.isDismantled else { return }
+            // Identity, not instance: a SwiftUI body rebuilds every frame, and a
+            // replacement bumps the generation, which cancels rendered-resource
+            // work, resubmits the document, renumbers every ResourceID and voids
+            // any link activation still being decided.
+            guard !self.isDismantled,
+                  oldValue.policyID != self.linkConfiguration.policyID
+                  || oldValue.handlerID != self.linkConfiguration.handlerID
+            else { return }
             self.driver().replaceLinkConfiguration(self.linkConfiguration)
         }
     }
