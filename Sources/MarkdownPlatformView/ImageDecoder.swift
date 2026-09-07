@@ -10,10 +10,7 @@ package struct DecodedImage {
     /// reconciliation rejection, so the caller must read it here rather than
     /// assume the extent it asked for.
     package let decodedPixelSize: Int
-    package init(
-        backingID: UUID = UUID(), backing: ImmutableCGImageBacking,
-        decodedPixelSize: Int = ImageDecoder.maxOutputSide
-    ) {
+    package init(backingID: UUID = UUID(), backing: ImmutableCGImageBacking, decodedPixelSize: Int) {
         self.backingID = backingID
         self.backing = backing
         self.decodedPixelSize = decodedPixelSize

@@ -15,10 +15,11 @@ package struct ImageCacheKey: Hashable {
     }
 }
 
-/// Pre-decode identity. The real output extent is unknown until the bytes arrive,
-/// so the completed-cache index and the negative cache are keyed by the extent the
-/// request *asked for*. A downsized retry is therefore indexed under its own
-/// smaller extent and can never be served to a full-extent requester.
+/// Pre-decode identity. Production always builds it with the coordinator's
+/// configured extent, so it is the *requested* extent, never the achieved one.
+/// A downsized result is kept out of the process cache by the explicit
+/// `decodedPixelSize == maxPixelSize` guard in `ImageLoadCoordinator`, not by this
+/// key — do not delete that guard on the strength of this type's name.
 package struct ImageSourceKey: Hashable {
     package let source: URL
     package let configurationID: MarkdownConfigurationID
@@ -173,24 +174,22 @@ package struct ImageSourceKey: Hashable {
         self.owners = owners
     }
 
-    /// `install` receives the new owners and must call `handOver` with the object
-    /// that now retains them; only then does a later throw keep them alive. Handing
-    /// over anything else is a programmer error, not a silent rollback suppression.
+    /// `install` receives the new owners and reports, through `handOver`, which of
+    /// them the new snapshot now retains. Whatever it does not take stays this
+    /// transaction's to release — including on the success path, because a
+    /// materializer legitimately declines owners it cannot display (a resource
+    /// inside a blockquote resolves to nothing). Releasing all-or-nothing here
+    /// would uncharge an image the installed snapshot is still showing.
     package func commit(_ install: (([any ResourceResidencyOwner]) -> Void, [any ResourceResidencyOwner]) throws -> Void) rethrows {
-        let expected = Set(self.owners.map(ObjectIdentifier.init))
-        var handedOver = false
-        do {
-            try install({ retained in
-                // Latching, so a later call with the wrong array cannot revoke a
-                // correct hand-over that already happened.
-                handedOver = handedOver || expected.isSubset(of: Set(retained.map(ObjectIdentifier.init)))
-            }, self.owners)
-        } catch {
-            if handedOver { self.owners.removeAll() } else { self.cancel() }
-            throw error
+        let owners = self.owners
+        var retained: Set<ObjectIdentifier> = []
+        defer {
+            for owner in owners where !retained.contains(ObjectIdentifier(owner)) {
+                owner.release()
+            }
+            self.owners.removeAll()
         }
-        // Returning without handing over means nothing retained them.
-        if handedOver { self.owners.removeAll() } else { self.cancel() }
+        try install({ handed in retained.formUnion(handed.map(ObjectIdentifier.init)) }, owners)
     }
 
     package func cancel() {
@@ -533,7 +532,9 @@ package struct ImageSourceKey: Hashable {
         self.sessionID = sessionID
         self.ledger = residency.ledger
         self.permits = residency.permits
-        self.maxPixelSize = residency.maxPixelSize
+        // The decoder clamps to its own ceiling, so a larger configured value would
+        // make every result look downsized and silently disable the process cache.
+        self.maxPixelSize = min(max(1, residency.maxPixelSize), ImageDecoder.maxOutputSide)
     }
 
     package func configure(_ configuration: MarkdownRemoteImageConfiguration) {

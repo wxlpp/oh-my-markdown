@@ -640,4 +640,39 @@ struct ImageAdversarialTests {
         residency.ledger.handleMemoryPressure()
         #expect(await settle(clock) { residency.ledger.isAtBaseline })
     }
+
+    /// A blockquote suppresses resource resolution for its whole subtree, so the
+    /// materializer declines an owner that `resolvedResources` already acquired.
+    /// The transaction must release only what was declined — not treat a partial
+    /// hand-over as "nothing was retained" and uncharge the displayed image too.
+    @Test func aQuotedImageDoesNotUnchargeTheImagesTheSnapshotDisplays() async throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
+        let png = try encodedPNG(width: 16, height: 16)
+        let loader = FixtureImageLoader(data: png)
+        let residency = isolatedImageResidency(maxPixelSize: 32)
+        let view = imageTestView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency,
+            clock: clock, executor: executor
+        )
+        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.blocks = MarkdownDocument(parsing: """
+        ![shown](https://images.test/quoted/shown.png)
+
+        > ![quoted](https://images.test/quoted/quoted.png)
+        """).blocks
+        #expect(await settle(clock) { await loader.calls == 2 })
+        #expect(await settle(clock) { (view.imageCoordinator?.settledResolutionCount ?? 0) == 2 })
+        #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
+        // Read the identity without retaining the lease: holding it here would keep
+        // the backing charged and mask the teardown assertion below.
+        let displayed = try #require(view.currentSnapshot?.resourceOwners.first as? ImageOwnerLease).backingID
+        // Session resolution owner plus the snapshot's publication owner, and the
+        // cache owner: the displayed image stays charged while it is on screen.
+        #expect(residency.ledger.ownerCount(displayed) == 3)
+        #expect(residency.ledger.accountedBytes > 0)
+        view.dismantleRenderSession()
+        residency.ledger.handleMemoryPressure()
+        #expect(await settle(clock) { residency.ledger.isAtBaseline })
+    }
 }

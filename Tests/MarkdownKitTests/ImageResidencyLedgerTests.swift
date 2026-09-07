@@ -18,7 +18,7 @@ struct ImageResidencyLedgerTests {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ))
         let frame = try #require(context.makeImage())
-        return try DecodedImage(backing: ImmutableCGImageBacking(frames: [frame]))
+        return try DecodedImage(backing: ImmutableCGImageBacking(frames: [frame]), decodedPixelSize: 4096)
     }
 
     func sourceKey(_ suffix: Int = 0, requestedPixelSize: Int = 4096) -> ImageSourceKey {
@@ -132,6 +132,9 @@ struct ImageResidencyLedgerTests {
         }
         #expect(offered == [16384, 4096])
         #expect(decoded.backing.frames[0].width == 32)
+        // The decoder halved on its own, so it must report 32 and not the 64 it
+        // was asked for; the cache guard reads exactly this value.
+        #expect(decoded.decodedPixelSize == 32)
         #expect(await coordinator.statistics.isEmpty)
 
         let second = try await coordinator.reserveEncodedBody(session: .init(rawValue: UUID()))
@@ -199,9 +202,9 @@ struct ImageResidencyLedgerTests {
     @Test func promotingADuplicateBackingIdentityIsRefusedAndRollsBack() throws {
         let ledger = ImageResidencyLedger(hardLimit: 1024, cacheLimit: 512)
         let identity = UUID()
-        let first = try #require(try ledger.reserveDecodedPixelBytes(256)?.promote(DecodedImage(backingID: identity, backing: self.decoded().backing)))
+        let first = try #require(try ledger.reserveDecodedPixelBytes(256)?.promote(DecodedImage(backingID: identity, backing: self.decoded().backing, decodedPixelSize: 4096)))
         let reservation = try #require(ledger.reserveDecodedPixelBytes(256))
-        #expect(try reservation.promote(DecodedImage(backingID: identity, backing: self.decoded().backing)) == nil)
+        #expect(try reservation.promote(DecodedImage(backingID: identity, backing: self.decoded().backing, decodedPixelSize: 4096)) == nil)
         #expect(ledger.accountedBytes == 256)
         first.inFlightOwner.release()
         #expect(ledger.isAtBaseline)
@@ -293,6 +296,31 @@ struct ImageResidencyLedgerTests {
             }
         } catch Failure.materialization {}
         #expect(ledger.ownerCount(secondID) == 0)
+        decoy.inFlightOwner.release()
+        #expect(ledger.isAtBaseline)
+    }
+
+    @Test func aLaterWrongHandOverCannotRevokeACorrectOne() throws {
+        enum Failure: Error { case materialization }
+        let ledger = ImageResidencyLedger(hardLimit: 1024, cacheLimit: 512)
+        let owned = try #require(ledger.reserveDecodedPixelBytes(256)?.promote(self.decoded()))
+        let decoy = try #require(ledger.reserveDecodedPixelBytes(256)?.promote(self.decoded()))
+        let backingID = owned.backing.backingID
+        let transaction = try #require(ledger.prepareSnapshotReplacement(images: [owned]))
+        var retained: [any ResourceResidencyOwner] = []
+        do {
+            try transaction.commit { handOver, owners in
+                retained = owners
+                handOver(owners)
+                handOver([decoy.inFlightOwner])
+                throw Failure.materialization
+            }
+        } catch Failure.materialization {}
+        // Without the latch the second call would drop the correct hand-over and
+        // release an owner the caller already retained.
+        #expect(ledger.ownerCount(backingID) == 1)
+        #expect(retained.count == 1)
+        retained.removeAll()
         decoy.inFlightOwner.release()
         #expect(ledger.isAtBaseline)
     }

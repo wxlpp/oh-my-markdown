@@ -133,7 +133,7 @@ func decodedTestBacking(width: Int = 4, height: Int = 4) throws -> DecodedImage 
         data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
         space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
     ))
-    return try DecodedImage(backing: ImmutableCGImageBacking(frames: [#require(context.makeImage())]))
+    return try DecodedImage(backing: ImmutableCGImageBacking(frames: [#require(context.makeImage())]), decodedPixelSize: 4096)
 }
 
 /// Promotes one real backing through the ledger so tests own a genuine lease.
@@ -194,9 +194,11 @@ func paddedEncodedPNG(byteCount: Int) throws -> Data {
 
 /// Waits on an injected session clock instead of the wall clock: each round drives
 /// the 33 ms coalescing debounce forward and lets the resulting MainActor work run.
-/// Bounded by rounds, so a stuck predicate fails fast instead of spinning for 10 s.
+/// Bounded by rounds rather than by a wall clock, so it stays deterministic; the
+/// budget has to cover a real image resolution on a loaded machine, which 40
+/// rounds intermittently did not.
 func settle(
-    _ clock: ManualRenderClock, rounds: Int = 40,
+    _ clock: ManualRenderClock, rounds: Int = 400,
     isolation: isolated (any Actor)? = #isolation,
     until predicate: () async -> Bool
 ) async -> Bool {

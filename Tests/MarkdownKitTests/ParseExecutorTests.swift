@@ -72,12 +72,13 @@ actor PausedParseSink: ParseResultSink {
 /// The budget must exceed the longest legitimate stall, and the largest measured
 /// one is 121.5 s (the iOS 18 append-budget case on a loaded simulator), so ten
 /// seconds was never a valid liveness bound. Sleeping rather than spinning keeps
-/// a waiting poller from adding to the contention it is waiting out.
+/// an uncancelled waiter from adding to the contention it is waiting out; once
+/// cancelled the sleep returns immediately and the caller gives up.
 func eventually(isolation: isolated (any Actor)? = #isolation, _ predicate: () async -> Bool) async -> Bool {
     let deadline = ContinuousClock.now.advanced(by: .seconds(180))
     while await !predicate() {
         if ContinuousClock.now >= deadline { return false }
-        try? await Task.sleep(for: .milliseconds(1))
+        guard await (try? Task.sleep(for: .milliseconds(1))) != nil else { return false }
     }
     return true
 }
