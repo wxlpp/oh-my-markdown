@@ -78,6 +78,14 @@ public typealias MarkdownEditorEditResult = MarkdownPlatformView.MarkdownEditorE
 public typealias MarkdownEditorInputAction = MarkdownPlatformView.MarkdownEditorInputAction
 public typealias MarkdownEditorCommands = MarkdownPlatformView.MarkdownEditorCommands
 
+public typealias MarkdownLinkPolicy = MarkdownPlatformView.MarkdownLinkPolicy
+public typealias MarkdownLinkRequest = MarkdownPlatformView.MarkdownLinkRequest
+public typealias MarkdownLinkDisposition = MarkdownPlatformView.MarkdownLinkDisposition
+public typealias MarkdownLinkHandler = MarkdownPlatformView.MarkdownLinkHandler
+public typealias MarkdownLinkConfiguration = MarkdownPlatformView.MarkdownLinkConfiguration
+public typealias WebOnlyMarkdownLinkPolicy = MarkdownPlatformView.WebOnlyMarkdownLinkPolicy
+public typealias PlatformMarkdownLinkHandler = MarkdownPlatformView.PlatformMarkdownLinkHandler
+
 public typealias RenderedImage = MarkdownRenderKit.RenderedImage
 public typealias RenderedMath = MarkdownRenderKit.RenderedMath
 public typealias RenderedSVG = MarkdownRenderKit.RenderedSVG

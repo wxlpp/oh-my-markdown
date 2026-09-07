@@ -271,9 +271,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             anchors: [], modifiers: [], selecting: false,
             bounds: CGRect(origin: .zero, size: self.textContainer.size)
         )
-        guard
-            let selLoc = sels.first?.textRanges.first?.location,
-            let str = contentStorage.attributedString else {
+        guard let selLoc = sels.first?.textRanges.first?.location else {
             return
         }
         let offset = self.contentStorage.offset(
@@ -286,17 +284,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         guard offset < docLen else {
             return
         }
-        let attrs = str.attributes(at: offset, effectiveRange: nil)
-        let url: URL? = if let u = attrs[.link] as? URL {
-            u
-        } else if let s = attrs[.link] as? String {
-            URL(string: s)
-        } else {
-            nil
-        }
-        if let url {
-            NSWorkspace.shared.open(url)
-        }
+        _ = self.activateLink(at: offset)
     }
 
     // MARK: Keyboard
@@ -493,6 +481,34 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     }
 
     public var onResourceError: MarkdownResourceErrorHandler?
+
+    /// Web-only policy and the platform opener until a host replaces them.
+    public var linkConfiguration: MarkdownLinkConfiguration = .webOnly() {
+        didSet {
+            guard !self.isDismantled else { return }
+            self.driver().replaceLinkConfiguration(self.linkConfiguration)
+        }
+    }
+
+    /// Returns whether the offset carried an activatable link. The decision is
+    /// asynchronous and may still be refused; the platform opener is never called
+    /// from here.
+    @discardableResult
+    package func activateLink(at offset: Int) -> Bool {
+        guard !self.isDismantled, let string = contentStorage.attributedString,
+              offset >= 0, offset < string.length else { return false }
+        let attributes = string.attributes(at: offset, effectiveRange: nil)
+        let url: URL? = if let value = attributes[.link] as? URL {
+            value
+        } else if let value = attributes[.link] as? String {
+            URL(string: value)
+        } else {
+            nil
+        }
+        guard let url else { return false }
+        self.driver().activateLink(url, sourceRange: nil)
+        return true
+    }
 
     /// Install a stable wrapper to preserve its completed-cache identity.
     public var mathRenderer: MathRendererConfiguration? {

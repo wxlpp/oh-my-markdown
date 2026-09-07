@@ -75,6 +75,7 @@ public struct MarkdownStreamingText: View {
             mathRenderer: self.mathRenderer,
             svgBlockRenderer: self.svgBlockRenderer,
             remoteImages: self.remoteImages,
+            linkConfiguration: self.linkConfiguration,
             resourceErrorHandler: self.resourceErrorHandler
         )
     }
@@ -83,6 +84,7 @@ public struct MarkdownStreamingText: View {
     @Environment(\.markdownMathRenderer) private var mathRenderer
     @Environment(\.markdownSVGBlockRenderer) private var svgBlockRenderer
     @Environment(\.markdownRemoteImageConfiguration) private var remoteImages
+    @Environment(\.markdownLinkConfiguration) private var linkConfiguration
     @Environment(\.markdownResourceErrorHandler) private var resourceErrorHandler
 
     private let source: MarkdownStreamingSource
@@ -97,6 +99,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
         var lastImageReplacementID: UUID?
+        var lastLinkReplacementID: UUID?
     }
 
     let source: MarkdownStreamingSource
@@ -104,6 +107,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
     let remoteImages: MarkdownRemoteImageConfiguration
+    let linkConfiguration: MarkdownLinkConfiguration?
     let resourceErrorHandler: MarkdownResourceErrorHandler?
 
     static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
@@ -129,6 +133,10 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
         uiView.onResourceError = self.resourceErrorHandler
+        if let link = self.linkConfiguration, context.coordinator.lastLinkReplacementID != link.replacementID {
+            uiView.linkConfiguration = link
+            context.coordinator.lastLinkReplacementID = link.replacementID
+        }
         if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
             uiView.remoteImages = self.remoteImages
             context.coordinator.lastImageReplacementID = self.remoteImages.replacementID
@@ -186,6 +194,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
         var lastImageReplacementID: UUID?
+        var lastLinkReplacementID: UUID?
     }
 
     let source: MarkdownStreamingSource
@@ -193,6 +202,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
     let remoteImages: MarkdownRemoteImageConfiguration
+    let linkConfiguration: MarkdownLinkConfiguration?
     let resourceErrorHandler: MarkdownResourceErrorHandler?
 
     static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
@@ -214,6 +224,10 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
         nsView.onResourceError = self.resourceErrorHandler
+        if let link = self.linkConfiguration, context.coordinator.lastLinkReplacementID != link.replacementID {
+            nsView.linkConfiguration = link
+            context.coordinator.lastLinkReplacementID = link.replacementID
+        }
         if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
             nsView.remoteImages = self.remoteImages
             context.coordinator.lastImageReplacementID = self.remoteImages.replacementID

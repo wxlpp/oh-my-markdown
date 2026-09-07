@@ -27,6 +27,7 @@ run_gate() {
 
 run_gate platform-floors Scripts/check-platform-floors.sh
 run_gate image-ownership Scripts/check-image-ownership.sh
+run_gate link-activation Scripts/check-link-activation.sh
 run_gate swift-test "$swift_bin" test
 run_gate swift-release "$swift_bin" build -c release -Xswiftc -warnings-as-errors
 run_gate swiftformat "$swiftformat_bin" --lint .

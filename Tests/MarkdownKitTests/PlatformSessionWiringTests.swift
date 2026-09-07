@@ -20,10 +20,22 @@ import AppKit
         case .append(let source): self.events.append("append:\(source)")
         case .replaceConfiguration: self.events.append("configuration")
         case .replaceImageConfiguration: self.events.append("images")
+        case .replaceLinkConfiguration: self.events.append("links")
         case .replaceWidth(let width): self.events.append("width:\(Int(width))")
         case .setDocument: self.events.append("document")
         case .dismantle: self.events.append("dismantle")
         }
+    }
+
+    private(set) var linkConfiguration = MarkdownLinkConfiguration.webOnly()
+    private(set) var activations: [URL] = []
+    func replaceLinkConfiguration(_ configuration: MarkdownLinkConfiguration) {
+        self.linkConfiguration = configuration
+        self.send(.replaceLinkConfiguration(policyID: configuration.policyID, handlerID: configuration.handlerID))
+    }
+
+    func activateLink(_ url: URL, sourceRange: MarkdownSourceRange?) {
+        self.activations.append(url)
     }
 }
 

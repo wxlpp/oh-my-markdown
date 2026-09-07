@@ -4,6 +4,9 @@ import SwiftUI
 extension EnvironmentValues {
     @Entry public var markdownRemoteImageConfiguration: MarkdownRemoteImageConfiguration = .disabled
     @Entry public var markdownResourceErrorHandler: MarkdownResourceErrorHandler? = nil
+    /// `nil` leaves each view on its own web-only default; the type is
+    /// `@MainActor`, so it cannot carry a main-actor default into this context.
+    @Entry public var markdownLinkConfiguration: MarkdownLinkConfiguration? = nil
 }
 
 extension View {
@@ -15,5 +18,19 @@ extension View {
     /// Receives typed failures containing only a sanitized URL origin.
     public func onMarkdownResourceError(_ handler: @escaping MarkdownResourceErrorHandler) -> some View {
         environment(\.markdownResourceErrorHandler, handler)
+    }
+
+    /// Decides which links may activate and who opens them. The default is
+    /// HTTP/HTTPS through the platform opener; a custom scheme needs **both** a
+    /// policy that permits it and a handler that knows how to open it.
+    public func markdownLinkPolicy(
+        _ policy: any MarkdownLinkPolicy, handler: any MarkdownLinkHandler = PlatformMarkdownLinkHandler()
+    ) -> some View {
+        environment(\.markdownLinkConfiguration, MarkdownLinkConfiguration(policy: policy, handler: handler))
+    }
+
+    /// Installs a link configuration whose identities the caller controls.
+    public func markdownLinkConfiguration(_ configuration: MarkdownLinkConfiguration) -> some View {
+        environment(\.markdownLinkConfiguration, configuration)
     }
 }

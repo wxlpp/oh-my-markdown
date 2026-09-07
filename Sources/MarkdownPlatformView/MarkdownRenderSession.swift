@@ -110,7 +110,7 @@ package actor MarkdownRenderSession: ParseResultSink {
             self.suppliedDocument = nil
             self.placeholderMode = .streaming
         case .replaceConfiguration(let configuration): self.configuration = configuration
-        case .replaceImageConfiguration: break
+        case .replaceImageConfiguration, .replaceLinkConfiguration: break
         case .replaceWidth(let width): self.availableWidth = max(1, width)
         case .dismantle:
             await self.dismantle()
@@ -350,6 +350,11 @@ package actor MarkdownRenderSession: ParseResultSink {
 package protocol RenderSessionDriving: AnyObject {
     func send(_ mutation: RenderSessionMutation)
     var resourceTaskOwner: RenderSessionResourceTaskOwner { get }
+    /// The driver owns the live policy and handler; the session only ever sees
+    /// their identities and the generation they were captured at.
+    var linkConfiguration: MarkdownLinkConfiguration { get }
+    func replaceLinkConfiguration(_ configuration: MarkdownLinkConfiguration)
+    func activateLink(_ url: URL, sourceRange: MarkdownSourceRange?)
 }
 
 /// Owns all resource work and the single coalesced layout/publication clock task.
@@ -435,6 +440,7 @@ package final class RenderSessionResourceTaskOwner {
 @MainActor
 package final class MarkdownRenderSessionDriver: RenderSessionDriving {
     package let resourceTaskOwner: RenderSessionResourceTaskOwner
+    package private(set) var linkConfiguration = MarkdownLinkConfiguration.webOnly()
     private let session: MarkdownRenderSession
     private let continuation: AsyncStream<RenderSessionEvent>.Continuation
     private let pump: Task<Void, Never>
@@ -462,7 +468,7 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
     package func send(_ mutation: RenderSessionMutation) {
         guard !self.dismantled else { return }
         switch mutation {
-        case .append, .replaceConfiguration, .replaceWidth:
+        case .append, .replaceConfiguration, .replaceWidth, .replaceLinkConfiguration:
             self.resourceTaskOwner.cancelAll(preservingResolvedImages: true)
         case .setSource, .setDocument, .replaceImageConfiguration, .dismantle:
             self.resourceTaskOwner.cancelAll()
@@ -473,7 +479,8 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
             self.sourceRevision += 1
             self.configurationGeneration += 1
         case .append: self.sourceRevision += 1
-        case .replaceConfiguration, .replaceImageConfiguration, .replaceWidth: self.configurationGeneration += 1
+        case .replaceConfiguration, .replaceImageConfiguration, .replaceLinkConfiguration, .replaceWidth:
+            self.configurationGeneration += 1
         case .dismantle:
             self.dismantled = true
             self.resourceTaskOwner.cancelAll()
@@ -487,6 +494,34 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
         if !self.dismantled { self.session.registry.authorize(token) }
         self.continuation.yield(RenderSessionEvent(mutation: mutation, commitToken: token))
         if self.dismantled { self.continuation.finish() }
+    }
+
+    package func replaceLinkConfiguration(_ configuration: MarkdownLinkConfiguration) {
+        guard !self.dismantled else { return }
+        self.linkConfiguration = configuration
+        self.send(.replaceLinkConfiguration(policyID: configuration.policyID, handlerID: configuration.handlerID))
+    }
+
+    /// The decision runs off the main actor, so the configuration can be replaced
+    /// while it is in flight. Everything captured here is revalidated against the
+    /// live driver state before the handler is allowed to run.
+    package func activateLink(_ url: URL, sourceRange: MarkdownSourceRange?) {
+        guard !self.dismantled else { return }
+        let configuration = self.linkConfiguration
+        let request = MarkdownLinkRequest(
+            url: url, sourceRange: sourceRange, sessionGeneration: self.configurationGeneration
+        )
+        Task { [weak self] in
+            let disposition = await MarkdownLinkEvaluation.disposition(of: configuration.policy, for: request)
+            guard let self, !self.dismantled,
+                  self.linkConfiguration.policyID == configuration.policyID,
+                  self.linkConfiguration.handlerID == configuration.handlerID,
+                  self.linkConfiguration.replacementID == configuration.replacementID,
+                  self.configurationGeneration == request.sessionGeneration,
+                  case .allow(let allowed) = disposition
+            else { return }
+            configuration.handler.open(allowed)
+        }
     }
 
     isolated deinit {

@@ -195,6 +195,9 @@ package enum RenderSessionMutation {
     case append(String)
     case replaceConfiguration(RenderConfigurationSnapshot)
     case replaceImageConfiguration(MarkdownRemoteImageConfiguration)
+    /// Only the immutable identities cross into the session; the policy and
+    /// handler themselves stay on the main-actor driver.
+    case replaceLinkConfiguration(policyID: MarkdownConfigurationID, handlerID: MarkdownConfigurationID)
     case replaceWidth(Double)
     case dismantle
 }
