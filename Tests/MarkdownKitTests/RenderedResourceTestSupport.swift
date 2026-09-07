@@ -159,8 +159,69 @@ func isolatedImageResidency(
 }
 
 @MainActor
-func imageTestView(frame: CGRect, residency: ImageResidencyConfiguration = isolatedImageResidency()) -> MarkdownLabelView {
+func imageTestView(
+    frame: CGRect, residency: ImageResidencyConfiguration = isolatedImageResidency(),
+    clock: (any RenderSessionClock)? = nil, executor: ParseExecutor? = nil
+) -> MarkdownLabelView {
     let view = MarkdownLabelView(frame: frame)
-    view.imageResidency = residency
+    view.sessionOverrides = RenderSessionOverrides(
+        executor: executor ?? .shared, clock: clock ?? ContinuousRenderSessionClock(), residency: residency
+    )
     return view
+}
+
+/// Drives the session's coalescing debounce forward deterministically and lets the
+/// resulting MainActor work run, instead of waiting on a real 33 ms sleep.
+@MainActor
+func flushCoalescedResources(_ clock: ManualRenderClock, rounds: Int = 6) async {
+    for _ in 0 ..< rounds {
+        clock.advance(by: .milliseconds(40))
+        for _ in 0 ..< 20 {
+            await Task.yield()
+        }
+    }
+}
+
+/// A real PNG padded with trailing bytes to an exact encoded size. ImageIO reports
+/// `statusComplete` for it, so it survives Task 6 validation and can drive genuine
+/// multi-megabyte encoded bodies without fabricating pixels.
+func paddedEncodedPNG(byteCount: Int) throws -> Data {
+    var data = try encodedPNG(width: 8, height: 8)
+    #expect(data.count < byteCount)
+    data.append(Data(repeating: 0, count: byteCount - data.count))
+    return data
+}
+
+/// Waits on an injected session clock instead of the wall clock: each round drives
+/// the 33 ms coalescing debounce forward and lets the resulting MainActor work run.
+/// Bounded by rounds, so a stuck predicate fails fast instead of spinning for 10 s.
+func settle(
+    _ clock: ManualRenderClock, rounds: Int = 40,
+    isolation: isolated (any Actor)? = #isolation,
+    until predicate: () async -> Bool
+) async -> Bool {
+    for _ in 0 ..< rounds {
+        if await predicate() { return true }
+        clock.advance(by: .milliseconds(40))
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+    }
+    return await predicate()
+}
+
+/// Yields without advancing the injected clock, so pending work settles while the
+/// coalescing debounce stays closed. Callers flush it once afterwards instead of
+/// paying for one full re-materialization per intermediate batch.
+func quiesce(
+    rounds: Int = 400, isolation: isolated (any Actor)? = #isolation,
+    until predicate: () async -> Bool
+) async -> Bool {
+    for _ in 0 ..< rounds {
+        if await predicate() { return true }
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+    }
+    return await predicate()
 }

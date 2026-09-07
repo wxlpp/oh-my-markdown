@@ -15,14 +15,18 @@ package struct ImageCacheKey: Hashable {
     }
 }
 
-/// Pre-decode identity. Output extent is unknown until the bytes arrive, so the
-/// completed-cache index and the negative cache are both keyed by source alone.
+/// Pre-decode identity. The real output extent is unknown until the bytes arrive,
+/// so the completed-cache index and the negative cache are keyed by the extent the
+/// request *asked for*. A downsized retry is therefore indexed under its own
+/// smaller extent and can never be served to a full-extent requester.
 package struct ImageSourceKey: Hashable {
     package let source: URL
     package let configurationID: MarkdownConfigurationID
-    package init(source: URL, configurationID: MarkdownConfigurationID) {
+    package let requestedPixelSize: Int
+    package init(source: URL, configurationID: MarkdownConfigurationID, requestedPixelSize: Int) {
         self.source = source
         self.configurationID = configurationID
+        self.requestedPixelSize = requestedPixelSize
     }
 }
 
@@ -168,12 +172,15 @@ package struct ImageSourceKey: Hashable {
 
     /// `install` must retain the owners it receives; it runs without suspension so
     /// no other MainActor work can observe a half-installed snapshot.
-    package func commit(_ install: ([any ResourceResidencyOwner]) throws -> Void) rethrows {
+    /// `install` must retain the owners it receives before it can fail; anything
+    /// it throws after that point keeps them, because the new snapshot now owns them.
+    package func commit(_ install: (([any ResourceResidencyOwner]) -> Void, [any ResourceResidencyOwner]) throws -> Void) rethrows {
+        var handedOver = false
         do {
-            try install(self.owners)
+            try install({ _ in handedOver = true }, self.owners)
             self.owners.removeAll()
         } catch {
-            self.cancel()
+            if handedOver { self.owners.removeAll() } else { self.cancel() }
             throw error
         }
     }
@@ -191,7 +198,12 @@ package struct ImageSourceKey: Hashable {
 }
 
 @MainActor package final class ImageResidencyLedger {
-    package static let shared = ImageResidencyLedger()
+    package static let shared: ImageResidencyLedger = {
+        let ledger = ImageResidencyLedger()
+        ledger.observeMemoryPressure()
+        return ledger
+    }()
+
     package static let negativeTTL = Duration.seconds(300)
     package static let negativeCapacity = 128
 
@@ -200,9 +212,10 @@ package struct ImageSourceKey: Hashable {
         var owners: Int
     }
 
-    private let hardLimit: Int
-    private let cacheLimit: Int
+    package let hardLimit: Int
+    package let cacheLimit: Int
     private let clock: any RenderSessionClock
+    private var pressureSource: (any DispatchSourceMemoryPressure)?
     private var reservations: [UUID: Int] = [:]
     private var records: [UUID: Record] = [:]
     private var cache: [ImageCacheKey: ImageOwnerLease] = [:]
@@ -320,12 +333,12 @@ package struct ImageSourceKey: Hashable {
 
     // MARK: Completed cache
 
-    package func insert(_ image: OwnedImage, for key: ImageCacheKey) {
+    package func insert(_ image: OwnedImage, for key: ImageCacheKey, indexedBy source: ImageSourceKey) {
         guard image.backing.accountedPixelBytes <= self.cacheLimit, let owner = acquire(image.backing.backingID) else { return }
         self.evictCacheEntry(for: key)
         self.cache[key] = owner
         self.order.append(key)
-        self.index[ImageSourceKey(source: key.source, configurationID: key.configurationID)] = key
+        self.index[source] = key
         while self.cacheBytes > self.cacheLimit, let oldest = order.first, oldest != key {
             self.evictCacheEntry(for: oldest)
         }
@@ -338,17 +351,30 @@ package struct ImageSourceKey: Hashable {
         return OwnedImage(inFlightOwner: owner)
     }
 
-    package func completedImage(source: URL, configurationID: MarkdownConfigurationID) -> OwnedImage? {
-        guard let key = index[ImageSourceKey(source: source, configurationID: configurationID)] else { return nil }
+    package func completedImage(for source: ImageSourceKey) -> OwnedImage? {
+        guard let key = index[source] else { return nil }
         return self.completedImage(for: key)
     }
 
     package func evictCacheEntry(for key: ImageCacheKey) {
         guard let lease = cache.removeValue(forKey: key) else { return }
         self.order.removeAll { $0 == key }
-        let source = ImageSourceKey(source: key.source, configurationID: key.configurationID)
-        if self.index[source] == key { self.index[source] = nil }
+        for (source, indexed) in self.index where indexed == key {
+            self.index[source] = nil
+        }
         lease.release()
+    }
+
+    /// Subscribes the process signal to cache-owner release. Only the shared
+    /// instance does this; injected test ledgers stay inert and deterministic.
+    package func observeMemoryPressure() {
+        guard self.pressureSource == nil else { return }
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            MainActor.assumeIsolated { self?.handleMemoryPressure() }
+        }
+        source.resume()
+        self.pressureSource = source
     }
 
     /// Releases cache ownership only. Anything still published stays charged.
@@ -438,13 +464,31 @@ package struct ImageSourceKey: Hashable {
     }
 }
 
+/// Test seam: session-level injection so a suite can keep its parse admission,
+/// clock and residency budgets private instead of contending for the process-wide
+/// ones. Production always uses the shared instances and the real clock.
+@MainActor package struct RenderSessionOverrides {
+    package var executor: ParseExecutor
+    package var clock: any RenderSessionClock
+    package var residency: ImageResidencyConfiguration
+    package init(
+        executor: ParseExecutor = .shared,
+        clock: any RenderSessionClock = ContinuousRenderSessionClock(),
+        residency: ImageResidencyConfiguration = .shared
+    ) {
+        self.executor = executor
+        self.clock = clock
+        self.residency = residency
+    }
+}
+
 /// Session-owned image admission. Process budgets live in the shared coordinator
 /// and ledger; this type owns only per-session tasks and completed hand-offs.
 @MainActor package final class ImageLoadCoordinator {
     package enum Deferral: Equatable { case residency, admission }
 
     private enum Outcome {
-        case owned(OwnedImage, ImageCacheKey)
+        case owned(OwnedImage, ImageCacheKey, requestedPixelSize: Int)
         /// Residency or admission pressure: an accessible placeholder, no callback.
         case deferred(Deferral)
         /// `cacheable` is false for connectivity and timeout failures, which are
@@ -461,6 +505,9 @@ package struct ImageSourceKey: Hashable {
     private var resolved: [ImageSourceKey: ImageOwnerLease] = [:]
     private var epoch: UInt64 = 0
     package private(set) var configuration: MarkdownRemoteImageConfiguration = .disabled
+    /// Counts finished resolutions, including results a replaced generation
+    /// discards. Tests wait on this instead of counting actor turns.
+    package private(set) var settledResolutionCount = 0
     package var taskCount: Int {
         self.tasks.count
     }
@@ -481,18 +528,16 @@ package struct ImageSourceKey: Hashable {
         self.configuration = configuration
     }
 
-    package func cancelAll() {
+    /// Cancels in-flight work only. A width, style or append mutation must not drop
+    /// a displayed image back to a placeholder and refetch it.
+    package func cancelTasks() {
         self.epoch &+= 1
         let hadTasks = !self.tasks.isEmpty
         for task in self.tasks.values {
             task.cancel()
         }
         self.tasks.removeAll()
-        for lease in self.resolved.values {
-            lease.release()
-        }
-        self.resolved.removeAll()
-        // Every view mutation calls this. Only a session that actually queued work
+        // Every view mutation reaches here. Only a session that actually queued work
         // may touch the shared coordinator, which is otherwise a process-wide
         // serialization point for views that never load an image at all.
         guard hadTasks else { return }
@@ -501,8 +546,21 @@ package struct ImageSourceKey: Hashable {
         Task { await permits.cancelQueued(session: sessionID) }
     }
 
-    private func sourceKey(_ source: URL) -> ImageSourceKey {
-        ImageSourceKey(source: source, configurationID: self.configuration.configurationID)
+    /// Also drops this session's completed resolutions, for source, image
+    /// configuration and teardown changes that invalidate what it resolved.
+    package func cancelAll() {
+        self.cancelTasks()
+        for lease in self.resolved.values {
+            lease.release()
+        }
+        self.resolved.removeAll()
+    }
+
+    private func sourceKey(_ source: URL, requestedPixelSize: Int? = nil) -> ImageSourceKey {
+        ImageSourceKey(
+            source: source, configurationID: self.configuration.configurationID,
+            requestedPixelSize: requestedPixelSize ?? self.maxPixelSize
+        )
     }
 
     /// Hands out an independent publication owner. The session keeps its own
@@ -512,7 +570,7 @@ package struct ImageSourceKey: Hashable {
     package func publication(for source: URL) -> ImageOwnerLease? {
         let key = self.sourceKey(source)
         if let publication = resolved[key]?.acquirePublication() { return publication }
-        guard let hit = ledger.completedImage(source: source, configurationID: key.configurationID) else { return nil }
+        guard let hit = ledger.completedImage(for: key) else { return nil }
         self.resolved[key] = hit.inFlightOwner
         return hit.inFlightOwner.acquirePublication()
     }
@@ -534,7 +592,7 @@ package struct ImageSourceKey: Hashable {
             completed()
             return nil
         }
-        if let hit = ledger.completedImage(source: source, configurationID: key.configurationID) {
+        if let hit = ledger.completedImage(for: key) {
             self.resolved[key] = hit.inFlightOwner
             completed()
             return nil
@@ -545,18 +603,26 @@ package struct ImageSourceKey: Hashable {
         let task = Task { [weak self] in
             guard let start = self else { return }
             let outcome = await start.resolve(loader: loader, request: request, key: key)
-            guard let self, self.epoch == epoch else {
-                if case .owned(let owned, _) = outcome { owned.inFlightOwner.release() }
+            guard let self else {
+                if case .owned(let owned, _, _) = outcome { owned.inFlightOwner.release() }
+                return
+            }
+            self.settledResolutionCount &+= 1
+            guard self.epoch == epoch else {
+                if case .owned(let owned, _, _) = outcome { owned.inFlightOwner.release() }
                 return
             }
             self.tasks[key] = nil
             guard !Task.isCancelled, isCurrent() else {
-                if case .owned(let owned, _) = outcome { owned.inFlightOwner.release() }
+                if case .owned(let owned, _, _) = outcome { owned.inFlightOwner.release() }
                 return
             }
             switch outcome {
-            case .owned(let owned, let cacheKey):
-                self.ledger.insert(owned, for: cacheKey)
+            case .owned(let owned, let cacheKey, let requestedPixelSize):
+                self.ledger.insert(
+                    owned, for: cacheKey,
+                    indexedBy: self.sourceKey(cacheKey.source, requestedPixelSize: requestedPixelSize)
+                )
                 self.resolved.removeValue(forKey: key)?.release()
                 self.resolved[key] = owned.inFlightOwner
                 completed()
@@ -659,7 +725,7 @@ package struct ImageSourceKey: Hashable {
         return .owned(owned, ImageCacheKey(
             source: request.url, pixelWidth: frame.width, pixelHeight: frame.height,
             configurationID: key.configurationID
-        ))
+        ), requestedPixelSize: side)
     }
 
     isolated deinit {

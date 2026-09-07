@@ -81,11 +81,15 @@ final class VanishingSink: RenderSessionSink {
 @Suite(.serialized)
 struct ImageAdversarialTests {
     private func views(
-        _ residency: ImageResidencyConfiguration, sessions: Int = 5, perSession: Int = 20,
+        _ residency: ImageResidencyConfiguration, clock: ManualRenderClock, executor: ParseExecutor,
+        sessions: Int = 5, perSession: Int = 20,
         configuration: (Int) -> MarkdownRemoteImageConfiguration
     ) -> [MarkdownLabelView] {
         (0 ..< sessions).map { session in
-            let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency)
+            let view = imageTestView(
+                frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency,
+                clock: clock, executor: executor
+            )
             view.remoteImages = configuration(session)
             view.blocks = MarkdownDocument(parsing: (0 ..< perSession).map {
                 "![alt \(session)-\($0)](https://images.test/\(session)/\($0).png)"
@@ -95,14 +99,16 @@ struct ImageAdversarialTests {
     }
 
     @Test func hundredImagesBoundTransfersAndReserveFullBodiesBeforeAnyNetworkStart() async {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
         let loader = HeldImageLoader()
         let residency = isolatedImageResidency()
-        let views = self.views(residency) { _ in MarkdownRemoteImageConfiguration(loader: loader) }
-        #expect(await eventually { views.allSatisfy { $0.currentSnapshot != nil } })
+        let views = self.views(residency, clock: clock, executor: executor) { _ in MarkdownRemoteImageConfiguration(loader: loader) }
+        #expect(await settle(clock) { views.allSatisfy { $0.currentSnapshot != nil } })
         // Quiescence is the exact admitted/queued split, not a wall-clock or
         // yield-count guess: four of the hundred requests hold transfer slots and
         // the remaining ninety-six wait without any body reserved.
-        #expect(await eventually {
+        #expect(await settle(clock) {
             let statistics = await residency.permits.statistics
             return statistics.transfers == 4 && statistics.transferWaiters == 96
         })
@@ -119,7 +125,7 @@ struct ImageAdversarialTests {
             view.dismantleRenderSession()
         }
         await loader.rejectAll()
-        #expect(await eventually { await residency.permits.statistics.isEmpty })
+        #expect(await settle(clock) { await residency.permits.statistics.isEmpty })
         let final = await residency.permits.statistics
         #expect(final.peakTransfers == 4)
         #expect(final.peakDecodes == 0)
@@ -127,16 +133,25 @@ struct ImageAdversarialTests {
     }
 
     @Test func hundredImagesDegradeInsteadOfExceedingResidencyAndReturnToBaseline() async throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
         let png = try encodedPNG(width: 40, height: 40)
         let loader = FixtureImageLoader(data: png)
         // 32 px thumbnails cost alignUp(32 * 4, 64) * 32 = 4096 bytes each, so a
         // 24 KiB ledger can hold at most six of the hundred requests at once.
         let residency = isolatedImageResidency(hardLimit: 24 << 10, cacheLimit: 8 << 10, maxPixelSize: 32)
         let before = residentBytes()
-        let views = self.views(residency) { _ in MarkdownRemoteImageConfiguration(loader: loader) }
-        #expect(await eventually { views.allSatisfy { $0.currentSnapshot != nil } })
-        #expect(await eventually { await loader.calls == 100 })
-        #expect(await eventually { views.allSatisfy { $0.imageRequests.values.allSatisfy { $0 != .loading } } })
+        let views = self.views(residency, clock: clock, executor: executor) { _ in MarkdownRemoteImageConfiguration(loader: loader) }
+        #expect(await settle(clock) { views.allSatisfy { $0.currentSnapshot != nil } })
+        // Let all hundred resolutions settle with the coalescing debounce still
+        // closed, then flush once: one re-materialization per view instead of one
+        // per arriving batch.
+        #expect(await quiesce { await loader.calls == 100 })
+        // Every resolution has settled: a deterministic signal, not a turn count.
+        let settled = { views.reduce(0) { $0 + $1.imageCoordinator.settledResolutionCount } }
+        #expect(await quiesce { settled() == 100 })
+        await flushCoalescedResources(clock)
+        #expect(views.allSatisfy { $0.imageRequests.values.allSatisfy { $0 != .loading } })
         let peak = await residency.permits.statistics
         #expect(peak.peakTransfers <= 4)
         #expect(peak.peakDecodes <= 2)
@@ -146,7 +161,7 @@ struct ImageAdversarialTests {
         // The completion callback clears the request before the coalesced
         // re-materialization installs the attachment, so publication is observed
         // separately rather than assumed from the request state above.
-        #expect(await eventually { views.contains { !($0.currentSnapshot?.resourceOwners.isEmpty ?? true) } })
+        #expect(views.contains { !($0.currentSnapshot?.resourceOwners.isEmpty ?? true) })
         #expect(views.contains { $0.imageRequests.values.contains(.deferred) })
 
         // Evicting cache ownership while attachments still display the backings
@@ -159,40 +174,42 @@ struct ImageAdversarialTests {
         for view in views {
             view.dismantleRenderSession()
         }
-        #expect(await eventually { residency.ledger.isAtBaseline })
-        #expect(await eventually { await residency.permits.statistics.isEmpty })
+        #expect(await settle(clock) { residency.ledger.isAtBaseline })
+        #expect(await settle(clock) { await residency.permits.statistics.isEmpty })
         print("task-7 diagnostic: resident bytes \(before) -> \(residentBytes())")
     }
 
     @Test func defaultWrappersIsolateCompletedCacheButSharedSemanticIDReuses() async throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
         let png = try encodedPNG(width: 16, height: 16)
         let residency = isolatedImageResidency(maxPixelSize: 32)
         let source = "![alt](https://images.test/shared.png)"
         let first = FixtureImageLoader(data: png)
         let second = FixtureImageLoader(data: png)
 
-        let isolatedA = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency)
+        let isolatedA = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         isolatedA.remoteImages = MarkdownRemoteImageConfiguration(loader: first)
         isolatedA.blocks = MarkdownDocument(parsing: source).blocks
-        #expect(await eventually { isolatedA.currentSnapshot?.resourceOwners.count == 1 })
-        let isolatedB = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency)
+        #expect(await settle(clock) { isolatedA.currentSnapshot?.resourceOwners.count == 1 })
+        let isolatedB = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         isolatedB.remoteImages = MarkdownRemoteImageConfiguration(loader: second)
         isolatedB.blocks = MarkdownDocument(parsing: source).blocks
-        #expect(await eventually { isolatedB.currentSnapshot?.resourceOwners.count == 1 })
+        #expect(await settle(clock) { isolatedB.currentSnapshot?.resourceOwners.count == 1 })
         #expect(await first.calls == 1)
         #expect(await second.calls == 1)
 
         let identity = MarkdownConfigurationID.semantic(namespace: "adversarial.images", version: 1)
         let third = FixtureImageLoader(data: png)
         let fourth = FixtureImageLoader(data: png)
-        let sharedA = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency)
+        let sharedA = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         sharedA.remoteImages = MarkdownRemoteImageConfiguration(loader: third, configurationID: identity)
         sharedA.blocks = MarkdownDocument(parsing: source).blocks
-        #expect(await eventually { sharedA.currentSnapshot?.resourceOwners.count == 1 })
-        let sharedB = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency)
+        #expect(await settle(clock) { sharedA.currentSnapshot?.resourceOwners.count == 1 })
+        let sharedB = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         sharedB.remoteImages = MarkdownRemoteImageConfiguration(loader: fourth, configurationID: identity)
         sharedB.blocks = MarkdownDocument(parsing: source).blocks
-        #expect(await eventually { sharedB.currentSnapshot?.resourceOwners.count == 1 })
+        #expect(await settle(clock) { sharedB.currentSnapshot?.resourceOwners.count == 1 })
         #expect(await third.calls == 1)
         #expect(await fourth.calls == 0)
         #expect(sharedA.currentSnapshot?.resourceOwners.first as? ImageOwnerLease !== sharedB.currentSnapshot?.resourceOwners.first as? ImageOwnerLease)
@@ -205,92 +222,102 @@ struct ImageAdversarialTests {
             view.dismantleRenderSession()
         }
         residency.ledger.handleMemoryPressure()
-        #expect(await eventually { residency.ledger.isAtBaseline })
+        #expect(await settle(clock) { residency.ledger.isAtBaseline })
     }
 
     @Test func replacedGenerationResultNeverPublishesOrWritesEitherCache() async throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
         let png = try encodedPNG(width: 16, height: 16)
         let loader = PausedFixtureLoader()
         let residency = isolatedImageResidency(maxPixelSize: 32)
         let identity = MarkdownConfigurationID.semantic(namespace: "adversarial.generation", version: 1)
-        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency)
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         var failures: [MarkdownResourceFailure] = []
         view.onResourceError = { failures.append($0) }
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader, configurationID: identity)
         view.blocks = MarkdownDocument(parsing: "![alt](https://images.test/generation.png)").blocks
-        #expect(await eventually { await loader.calls == 1 })
+        #expect(await settle(clock) { await loader.calls == 1 })
         let stale = try #require(view.currentCommitToken)
 
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader, configurationID: identity)
-        #expect(await eventually { view.currentCommitToken?.configurationGeneration == stale.configurationGeneration + 1 })
-        #expect(await eventually { await loader.calls == 2 })
+        #expect(await settle(clock) { view.currentCommitToken?.configurationGeneration == stale.configurationGeneration + 1 })
+        #expect(await settle(clock) { await loader.calls == 2 })
 
+        let images = view.imageCoordinator
+        #expect(images.settledResolutionCount == 0)
         await loader.finish(.success(MarkdownImagePayload(data: png, declaredMIMEType: "image/png")))
-        for _ in 0 ..< 200 {
-            await Task.yield()
-        }
+        // The stale resolution has demonstrably run to completion before anything
+        // is asserted about it, so "nothing happened" cannot mean "not yet".
+        #expect(await settle(clock) { images.settledResolutionCount == 1 })
         #expect(view.currentSnapshot?.resourceOwners.isEmpty == true)
         #expect(residency.ledger.cacheCount == 0)
         #expect(residency.ledger.negativeCount == 0)
         #expect(failures.isEmpty)
 
         await loader.finish(.success(MarkdownImagePayload(data: png, declaredMIMEType: "image/png")))
-        #expect(await eventually { view.currentSnapshot?.resourceOwners.count == 1 })
+        #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
         #expect(residency.ledger.cacheCount == 1)
         view.dismantleRenderSession()
         residency.ledger.handleMemoryPressure()
-        #expect(await eventually { residency.ledger.isAtBaseline })
+        #expect(await settle(clock) { residency.ledger.isAtBaseline })
     }
 
     @Test func negativeCacheHoldsOnlyDeterministicFailuresAndExpiresOnTheInjectedClock() async throws {
         let clock = ManualRenderClock()
-        let residency = isolatedImageResidency(maxPixelSize: 32, clock: clock)
+        let executor = ParseExecutor()
+        // A separate clock owns the five-minute TTL so driving the session's 33 ms
+        // coalescing forward cannot drift the expiry under test.
+        let ttlClock = ManualRenderClock()
+        let residency = isolatedImageResidency(maxPixelSize: 32, clock: ttlClock)
         let identity = MarkdownConfigurationID.semantic(namespace: "adversarial.negative", version: 1)
         let source = "![alt](https://images.test/negative.png)"
 
         let deterministic = PausedFixtureLoader()
-        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency)
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         var failures: [MarkdownResourceFailure] = []
         view.onResourceError = { failures.append($0) }
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: deterministic, configurationID: identity)
         view.blocks = MarkdownDocument(parsing: source).blocks
-        #expect(await eventually { await deterministic.calls == 1 })
+        #expect(await settle(clock) { await deterministic.calls == 1 })
         try await deterministic.finish(.success(MarkdownImagePayload(data: encodedPNG(width: 8, height: 8), declaredMIMEType: "image/jpeg")))
-        #expect(await eventually { failures.count == 1 })
+        #expect(await settle(clock) { failures.count == 1 })
         #expect(failures.first?.category == .typeMismatch)
         #expect(residency.ledger.negativeCount == 1)
 
         view.blocks = MarkdownDocument(parsing: "prefix\n\n\(source)").blocks
-        #expect(await eventually { failures.count == 2 })
+        #expect(await settle(clock) { failures.count == 2 })
         #expect(failures.last?.category == .typeMismatch)
         #expect(await deterministic.calls == 1)
 
-        clock.advance(by: .seconds(299))
+        ttlClock.advance(by: .seconds(299))
         view.blocks = MarkdownDocument(parsing: "second\n\n\(source)").blocks
-        #expect(await eventually { failures.count == 3 })
+        #expect(await settle(clock) { failures.count == 3 })
         #expect(await deterministic.calls == 1)
-        clock.advance(by: .seconds(2))
+        ttlClock.advance(by: .seconds(2))
         view.blocks = MarkdownDocument(parsing: "third\n\n\(source)").blocks
-        #expect(await eventually { await deterministic.calls == 2 })
+        #expect(await settle(clock) { await deterministic.calls == 2 })
 
         // Connectivity failures are reported but never suppress the next attempt.
         await deterministic.finish(.failure(URLError(.timedOut)))
-        #expect(await eventually { failures.count == 4 })
+        #expect(await settle(clock) { failures.count == 4 })
         #expect(failures.last?.category == .timedOut)
         // The expired deterministic entry was dropped by the lookup above and the
         // timeout added nothing, so the negative cache is empty.
         #expect(residency.ledger.negativeCount == 0)
         view.blocks = MarkdownDocument(parsing: "fourth\n\n\(source)").blocks
-        #expect(await eventually { await deterministic.calls == 3 })
+        #expect(await settle(clock) { await deterministic.calls == 3 })
         view.dismantleRenderSession()
         await deterministic.finish(.failure(CancellationError()))
-        #expect(await eventually { residency.ledger.isAtBaseline })
+        #expect(await settle(clock) { residency.ledger.isAtBaseline })
     }
 
     @Test func authorizationGateStopsOldTokenInstallCallbackAndLeaseCommit() throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
         let residency = isolatedImageResidency()
         let registry = RenderSessionSinkRegistry()
-        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency)
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         let id = RenderSessionID(rawValue: UUID())
         registry.register(view, for: id)
         let old = RenderCommitToken(sessionID: id, sequence: 1, sourceRevision: 1, configurationGeneration: 1)
@@ -308,7 +335,7 @@ struct ImageAdversarialTests {
         registry.authorize(new)
         var installed = false
         let authorized = registry.withAuthorizedSink(for: old) { _ in
-            transaction.commit { _ in installed = true }
+            transaction.commit { _, _ in installed = true }
         }
         #expect(!authorized)
         #expect(!installed)
@@ -320,16 +347,21 @@ struct ImageAdversarialTests {
     }
 
     @Test func thrownMaterializationAndDisappearingSinkExposeNothing() async throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
         enum Failure: Error { case materialization }
         let png = try encodedPNG(width: 16, height: 16)
         let residency = isolatedImageResidency(maxPixelSize: 32)
         let loader = FixtureImageLoader(data: png)
-        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency)
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.blocks = MarkdownDocument(parsing: "![alt](https://images.test/throwing.png)").blocks
-        #expect(await eventually { view.currentSnapshot?.resourceOwners.count == 1 })
-        var published: RenderSnapshot? = try #require(view.currentSnapshot)
-        let charged = residency.ledger.accountedBytes
+        #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
+        var published = view.currentSnapshot
+        let backingID = try #require(published?.resourceOwners.first as? ImageOwnerLease).backingID
+        // Session resolution owner, snapshot publication owner, cache owner.
+        let owners = residency.ledger.ownerCount(backingID)
+        #expect(owners == 3)
 
         view._materializationFailureForTesting = Failure.materialization
         let model = try #require(published).displayModel
@@ -337,8 +369,9 @@ struct ImageAdversarialTests {
         view.installSnapshot(model: model, configuration: MarkdownRenderConfiguration.default.snapshot(generation: 0), token: token)
         #expect(view.currentSnapshot === published)
         #expect(view.lastRenderError == .preparationFailed)
-        // Rolling back released only the owners this attempt admitted.
-        #expect(residency.ledger.accountedBytes == charged)
+        // The attempt acquired a fourth owner and the rollback gave it back; an
+        // owner count that stayed at four would fail this.
+        #expect(residency.ledger.ownerCount(backingID) == owners)
         view._materializationFailureForTesting = nil
 
         let registry = RenderSessionSinkRegistry()
@@ -350,7 +383,7 @@ struct ImageAdversarialTests {
         try registry.register(#require(temporary), for: vanishing)
         let vanishingToken = RenderCommitToken(sessionID: vanishing, sequence: 1, sourceRevision: 1, configurationGeneration: 1)
         registry.authorize(vanishingToken)
-        weak var observed = temporary
+        weak let observed = temporary
         temporary = nil
         #expect(observed == nil)
         #expect(!registry.withAuthorizedSink(for: vanishingToken) { _ in Issue.record("Disappeared sink installed a snapshot") })
@@ -358,24 +391,26 @@ struct ImageAdversarialTests {
         published = nil
         view.dismantleRenderSession()
         residency.ledger.handleMemoryPressure()
-        #expect(await eventually { residency.ledger.isAtBaseline })
+        #expect(await settle(clock) { residency.ledger.isAtBaseline })
     }
 
     @Test func externallyRetainedOldSnapshotKeepsItsBackingChargedAcrossReplacement() async throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
         let png = try encodedPNG(width: 16, height: 16)
         let residency = isolatedImageResidency(maxPixelSize: 32)
         let loader = FixtureImageLoader(data: png)
-        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency)
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.blocks = MarkdownDocument(parsing: "![alt](https://images.test/retained.png)").blocks
-        #expect(await eventually { view.currentSnapshot?.resourceOwners.count == 1 })
+        #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
         var retained: RenderSnapshot? = view.currentSnapshot
         let backingID = try #require(retained?.resourceOwners.first as? ImageOwnerLease).backingID
         // Session resolution owner, snapshot publication owner and cache owner.
         #expect(residency.ledger.ownerCount(backingID) == 3)
 
         view.blocks = MarkdownDocument(parsing: "plain text only").blocks
-        #expect(await eventually { view.currentSnapshot?.resourceOwners.isEmpty == true })
+        #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.isEmpty == true })
         // The session released its resolution owner; the retained snapshot and the
         // completed cache still hold the backing charged.
         #expect(residency.ledger.ownerCount(backingID) == 2)
@@ -386,5 +421,104 @@ struct ImageAdversarialTests {
         #expect(residency.ledger.ownerCount(backingID) == 0)
         #expect(residency.ledger.isAtBaseline)
         view.dismantleRenderSession()
+    }
+
+    /// Plan gate 2: pause *inside* replacement, between the lease commit and the
+    /// snapshot install, and prove the outgoing backing is still alive and charged.
+    @Test func replacementGateKeepsTheOldBackingChargedUntilTextKitIsReplaced() async throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
+        let png = try encodedPNG(width: 16, height: 16)
+        let residency = isolatedImageResidency(maxPixelSize: 32)
+        let loader = FixtureImageLoader(data: png)
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
+        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.blocks = MarkdownDocument(parsing: "![alt](https://images.test/gate.png)").blocks
+        #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
+        var old = view.currentSnapshot
+        let backingID = try #require(old?.resourceOwners.first as? ImageOwnerLease).backingID
+        #expect(residency.ledger.ownerCount(backingID) == 3)
+
+        let token = try #require(view.currentCommitToken)
+        let configuration = MarkdownRenderConfiguration.default.snapshot(generation: 0)
+        let newSnapshotID = UUID()
+        var resources: ResolvedResourceSnapshot? = try view.resolvedResources(
+            for: #require(old).displayModel, configuration: configuration
+        )
+        let transaction = try residency.ledger.prepareSnapshotReplacement(
+            session: .init(rawValue: UUID()), oldSnapshotID: #require(old).id, newSnapshotID: newSnapshotID,
+            owners: #require(resources).owners
+        )
+        var installedAtGate: UUID?
+        var ownersAtGate = 0
+        var chargedAtGate = 0
+        transaction.commit { handOver, _ in
+            // Gate: new owners are committed, nothing is installed yet.
+            installedAtGate = view.currentSnapshot?.id
+            ownersAtGate = residency.ledger.ownerCount(backingID)
+            chargedAtGate = residency.ledger.accountedBytes
+            let replacement = RenderMaterializer(configuration: configuration)
+                .materialize(old!.displayModel, resources: resources!, snapshotID: newSnapshotID)
+            handOver(replacement.resourceOwners)
+            view.replaceSnapshot(replacement, token: token)
+        }
+        #expect(installedAtGate == old?.id)
+        #expect(ownersAtGate == 4)
+        #expect(chargedAtGate > 0)
+        #expect(view.currentSnapshot?.id == newSnapshotID)
+        // The outgoing snapshot released its own owner only after TextKit content
+        // was replaced; this test still holds `old`, so its charge survives.
+        #expect(residency.ledger.ownerCount(backingID) == 4)
+        old = nil
+        resources = nil
+        // Only the replacement snapshot and the session/cache owners remain.
+        #expect(residency.ledger.ownerCount(backingID) == 3)
+        view.dismantleRenderSession()
+        residency.ledger.handleMemoryPressure()
+        #expect(await settle(clock) { residency.ledger.isAtBaseline })
+    }
+
+    @Test func residencyDeferralHoldsThePlaceholderUntilTheNextCommitToken() async throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
+        let png = try encodedPNG(width: 40, height: 40)
+        let loader = FixtureImageLoader(data: png)
+        // One 32 px thumbnail costs 4096 bytes, so exactly one of the two fits.
+        let residency = isolatedImageResidency(hardLimit: 4096, cacheLimit: 4096, maxPixelSize: 32)
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
+        var failures: [MarkdownResourceFailure] = []
+        view.onResourceError = { failures.append($0) }
+        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.blocks = MarkdownDocument(parsing: """
+        ![a](https://images.test/defer/a.png)
+
+        ![b](https://images.test/defer/b.png)
+        """).blocks
+        #expect(await settle(clock) { view.imageCoordinator.settledResolutionCount == 2 })
+        #expect(await loader.calls == 2)
+        #expect(view.imageRequests.values.contains(.deferred))
+        // Deferral is not a failure: no negative-cache entry and no host callback.
+        #expect(residency.ledger.negativeCount == 0)
+        #expect(failures.isEmpty)
+
+        // Within this commit token the placeholder is terminal — no retry storm.
+        #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
+        #expect(await loader.calls == 2)
+        #expect(view.imageRequests.values.contains(.deferred))
+
+        // A new commit token retries it; residency is still full, so it defers again
+        // rather than exceeding the limit.
+        view.blocks = MarkdownDocument(parsing: """
+        changed
+
+        ![a](https://images.test/defer/a.png)
+
+        ![b](https://images.test/defer/b.png)
+        """).blocks
+        #expect(await settle(clock) { await loader.calls > 2 })
+        #expect(residency.ledger.accountedBytes <= 4096)
+        view.dismantleRenderSession()
+        residency.ledger.handleMemoryPressure()
+        #expect(await settle(clock) { residency.ledger.isAtBaseline })
     }
 }

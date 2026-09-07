@@ -63,18 +63,54 @@ struct ImageResourceCoordinatorTests {
         #expect(await coordinator.statistics.isEmpty)
     }
 
-    @Test(arguments: [2, 4])
-    func fullEncodedAllowancePrecedesLargeBodies(count: Int) async throws {
+    /// Drives real 17 MiB and 9 MiB bodies through the full admission path. The
+    /// point is that an admitted request owns its whole body and a waiter owns
+    /// nothing at all, so the schedule can only finish or stay unstarted.
+    @Test(arguments: [(2, 17), (4, 9)])
+    func fullBodySchedulesNeverLeaveAWaiterHoldingAPartialBody(count: Int, megabytes: Int) async throws {
         let coordinator = ImageResourceCoordinator()
-        var reservations: [EncodedBodyReservation] = []
+        let encoded = try ValidatedImageFactory.validate(MarkdownImagePayload(
+            data: paddedEncodedPNG(byteCount: megabytes * 1024 * 1024), declaredMIMEType: "image/png"
+        ))
+        #expect(encoded.data.count == megabytes * 1024 * 1024)
+        var admissions: [ImageResourceCoordinator.TransferAdmission] = []
+        var bodies: [ReservedEncodedImage] = []
         for _ in 0 ..< count {
-            try await reservations.append(coordinator.reserveEncodedBody(session: .init(rawValue: UUID())))
+            let admission = try await coordinator.acquireTransfer(session: .init(rawValue: UUID()))
+            admissions.append(admission)
+            try await bodies.append(admission.reservation.attach(encoded))
         }
+        #expect(await coordinator.statistics.transfers == count)
         #expect(await coordinator.statistics.encodedBytes == count * 20 * 1024 * 1024)
-        let bodyBytes = count == 2 ? 17 * 1024 * 1024 : 9 * 1024 * 1024
-        #expect(bodyBytes <= reservations[0].byteLimit)
-        for reservation in reservations {
-            await reservation.rejectAndRelease()
+        #expect(bodies.count == count)
+
+        // Network is over; the bodies stay charged against the encoded ledger.
+        for admission in admissions {
+            await admission.permit.release()
+        }
+        #expect(await coordinator.statistics.transfers == 0)
+        #expect(await coordinator.statistics.encodedBytes == count * 20 * 1024 * 1024)
+
+        // Saturate the remaining allowance, then prove the next request waits with
+        // no transfer slot, no reservation and no body of its own.
+        var filler: [EncodedBodyReservation] = []
+        while await coordinator.statistics.encodedBytes < 80 * 1024 * 1024 {
+            try await filler.append(coordinator.reserveEncodedBody(session: .init(rawValue: UUID())))
+        }
+        let queued = Task { [coordinator] in try await coordinator.acquireTransfer(session: .init(rawValue: UUID())) }
+        #expect(await eventually { await coordinator.statistics.transferWaiters == 1 })
+        #expect(await coordinator.statistics.encodedBytes == 80 * 1024 * 1024)
+        #expect(await coordinator.statistics.transfers == 0)
+
+        for body in bodies {
+            await body.reservation.consumedByDecoder()
+        }
+        // Consumption frees `count` allowances and the waiter takes exactly one.
+        let admitted = try await queued.value
+        #expect(await coordinator.statistics.encodedBytes == 80 * 1024 * 1024 - (count - 1) * 20 * 1024 * 1024)
+        await admitted.permit.release()
+        await admitted.reservation.rejectAndRelease()
+        for reservation in filler {
             await reservation.rejectAndRelease()
         }
         #expect(await coordinator.statistics.isEmpty)
@@ -167,12 +203,19 @@ struct ImageResourceCoordinatorTests {
         let coordinator = ImageResourceCoordinator()
         let session = RenderSessionID(rawValue: UUID())
         do {
-            _ = try await coordinator.acquireTransferPermit(session: session)
-            _ = try await coordinator.acquireTransfer(session: session)
-            _ = try await coordinator.reserveEncodedBody(session: session)
+            let permit = try await coordinator.acquireTransferPermit(session: session)
+            let admission = try await coordinator.acquireTransfer(session: session)
+            let reservation = try await coordinator.reserveEncodedBody(session: session)
+            // Read the peaks while every grant is provably still alive, so the
+            // assertion cannot depend on when ARC releases a discarded temporary.
+            let peak = await coordinator.statistics
+            #expect(peak.transfers == 2)
+            #expect(peak.peakTransfers == 2)
+            #expect(peak.peakEncodedBytes == 40 * 1024 * 1024)
+            withExtendedLifetime((permit, admission, reservation)) {}
         }
+        // Nothing was released explicitly; deinit alone returns every budget.
         #expect(await eventually { await coordinator.statistics.isEmpty })
-        #expect(await coordinator.statistics.peakTransfers == 2)
     }
 
     @Test func cancellationRacingTheGrantHandoffNeverLeaksOrStrandsAPermit() async throws {

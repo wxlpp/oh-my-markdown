@@ -111,10 +111,11 @@ package actor ImageResourceCoordinator {
         return permit
     }
 
-    /// Arrival-ordered within every shared limit. A waiter is skipped only when
-    /// its own session cap blocks it, never when a global limit does; turning this
-    /// into strict positional FIFO would let one saturated session block every
-    /// other session's transfers behind it.
+    /// Arrival-ordered within each shared limit: a waiter contending for a limit is
+    /// never overtaken by a later waiter contending for that same limit. Skipping is
+    /// only across limits — a waiter blocked by its own session cap, or by a limit
+    /// the skipped-over waiter does not share. Turning this into strict positional
+    /// FIFO would let one saturated session block every other session behind it.
     private func drain() {
         var index = 0
         while index < self.waiting.count {

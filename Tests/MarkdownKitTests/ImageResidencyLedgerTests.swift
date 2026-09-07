@@ -21,6 +21,14 @@ struct ImageResidencyLedgerTests {
         return try DecodedImage(backing: ImmutableCGImageBacking(frames: [frame]))
     }
 
+    func sourceKey(_ suffix: Int = 0, requestedPixelSize: Int = 4096) -> ImageSourceKey {
+        ImageSourceKey(
+            source: URL(string: "https://image.test/\(suffix)")!,
+            configurationID: .semantic(namespace: "test", version: 1),
+            requestedPixelSize: requestedPixelSize
+        )
+    }
+
     func key(_ suffix: Int = 0) -> ImageCacheKey {
         ImageCacheKey(
             source: URL(string: "https://image.test/\(suffix)")!,
@@ -46,7 +54,7 @@ struct ImageResidencyLedgerTests {
         let owned = try #require(try reservation.promote(self.decoded()))
         #expect(ledger.accountedBytes == 256)
         #expect(ledger.ownerCount(owned.backing.backingID) == 1)
-        ledger.insert(owned, for: self.key())
+        ledger.insert(owned, for: self.key(), indexedBy: self.sourceKey())
         let hit = try #require(ledger.completedImage(for: self.key()))
         #expect(ledger.ownerCount(hit.backing.backingID) == 3)
         ledger.handleMemoryPressure()
@@ -86,12 +94,12 @@ struct ImageResidencyLedgerTests {
             session: session, oldSnapshotID: nil, newSnapshotID: firstSnapshot, images: [first]
         ))
         var oldOwners: [any ResourceResidencyOwner] = []
-        old.commit { oldOwners = $0 }
+        old.commit { _, owners in oldOwners = owners }
         let new = try #require(ledger.prepareSnapshotReplacement(
             session: session, oldSnapshotID: firstSnapshot, newSnapshotID: UUID(), images: [second]
         ))
         #expect(new.oldSnapshotID == firstSnapshot)
-        do { try new.commit { _ in throw Failure.materialization } } catch Failure.materialization {}
+        do { try new.commit { _, _ in throw Failure.materialization } } catch Failure.materialization {}
         #expect(ledger.accountedBytes == 256)
         #expect(oldOwners.count == 1)
         oldOwners.removeAll()
@@ -134,13 +142,12 @@ struct ImageResidencyLedgerTests {
     @Test func completedCacheIsReachableBySourceAndEvictionClearsThatIndex() throws {
         let ledger = ImageResidencyLedger(hardLimit: 4096, cacheLimit: 2048)
         let owned = try #require(try ledger.reserveDecodedPixelBytes(256)?.promote(self.decoded()))
-        ledger.insert(owned, for: self.key())
-        let configuration = self.key().configurationID
-        let hit = try #require(ledger.completedImage(source: self.key().source, configurationID: configuration))
+        ledger.insert(owned, for: self.key(), indexedBy: self.sourceKey())
+        let hit = try #require(ledger.completedImage(for: self.sourceKey()))
         #expect(hit.backing.backingID == owned.backing.backingID)
         hit.inFlightOwner.release()
         ledger.evictCacheEntry(for: self.key())
-        #expect(ledger.completedImage(source: self.key().source, configurationID: configuration) == nil)
+        #expect(ledger.completedImage(for: self.sourceKey()) == nil)
         #expect(ledger.cacheCount == 0)
         owned.inFlightOwner.release()
         #expect(ledger.isAtBaseline)
@@ -150,7 +157,11 @@ struct ImageResidencyLedgerTests {
         let clock = ManualRenderClock()
         let ledger = ImageResidencyLedger(clock: clock)
         func negative(_ index: Int) -> ImageSourceKey {
-            ImageSourceKey(source: URL(string: "https://image.test/n/\(index)")!, configurationID: .semantic(namespace: "test", version: 1))
+            ImageSourceKey(
+                source: URL(string: "https://image.test/n/\(index)")!,
+                configurationID: .semantic(namespace: "test", version: 1),
+                requestedPixelSize: 4096
+            )
         }
         for index in 0 ..< 129 {
             ledger.insertNegative(negative(index), category: .typeMismatch)
@@ -168,7 +179,7 @@ struct ImageResidencyLedgerTests {
         let ledger = ImageResidencyLedger(hardLimit: 512, cacheLimit: 512)
         let published = try #require(try ledger.reserveDecodedPixelBytes(256)?.promote(self.decoded()))
         let cached = try #require(try ledger.reserveDecodedPixelBytes(256)?.promote(self.decoded()))
-        ledger.insert(cached, for: self.key(1))
+        ledger.insert(cached, for: self.key(1), indexedBy: self.sourceKey(1))
         cached.inFlightOwner.release()
         #expect(ledger.accountedBytes == 512)
         // The cache-only backing is evictable, so one more reservation fits.
@@ -190,6 +201,64 @@ struct ImageResidencyLedgerTests {
         #expect(try reservation.promote(DecodedImage(backingID: identity, backing: self.decoded().backing)) == nil)
         #expect(ledger.accountedBytes == 256)
         first.inFlightOwner.release()
+        #expect(ledger.isAtBaseline)
+    }
+
+    @Test func shippedResidencyDefaultsAreTheSpecifiedLimits() throws {
+        let ledger = ImageResidencyLedger()
+        #expect(ledger.hardLimit == 192 << 20)
+        #expect(ledger.cacheLimit == 128 << 20)
+        #expect(ImageResidencyLedger.shared.hardLimit == 192 << 20)
+        #expect(ImageResidencyLedger.shared.cacheLimit == 128 << 20)
+        // Three maximum-size images exactly fill the hard limit; the next byte is refused.
+        var reservations: [DecodedPixelReservation] = []
+        for _ in 0 ..< 3 {
+            try reservations.append(#require(ledger.reserveDecodedPixelBytes(64 << 20)))
+        }
+        #expect(ledger.accountedBytes == 192 << 20)
+        #expect(ledger.reserveDecodedPixelBytes(1) == nil)
+        for reservation in reservations {
+            reservation.cancel()
+        }
+        #expect(ledger.isAtBaseline)
+    }
+
+    @Test func aDownsizedRetryIsNeverServedToAFullExtentRequester() throws {
+        let ledger = ImageResidencyLedger(hardLimit: 4096, cacheLimit: 4096)
+        let owned = try #require(try ledger.reserveDecodedPixelBytes(256)?.promote(self.decoded()))
+        let degraded = self.sourceKey(requestedPixelSize: 2048)
+        ledger.insert(owned, for: self.key(), indexedBy: degraded)
+        #expect(ledger.completedImage(for: self.sourceKey()) == nil)
+        let hit = try #require(ledger.completedImage(for: degraded))
+        #expect(hit.backing.backingID == owned.backing.backingID)
+        hit.inFlightOwner.release()
+        ledger.evictCacheEntry(for: self.key())
+        #expect(ledger.completedImage(for: degraded) == nil)
+        owned.inFlightOwner.release()
+        #expect(ledger.isAtBaseline)
+    }
+
+    @Test func installClosureThatFailsAfterHandingOverKeepsTheNewOwnersAlive() throws {
+        enum Failure: Error { case afterInstall }
+        let ledger = ImageResidencyLedger(hardLimit: 1024, cacheLimit: 512)
+        let owned = try #require(try ledger.reserveDecodedPixelBytes(256)?.promote(self.decoded()))
+        let backingID = owned.backing.backingID
+        let transaction = try #require(ledger.prepareSnapshotReplacement(
+            session: .init(rawValue: UUID()), oldSnapshotID: nil, newSnapshotID: UUID(), images: [owned]
+        ))
+        #expect(ledger.ownerCount(backingID) == 1)
+        var retained: [any ResourceResidencyOwner] = []
+        do {
+            try transaction.commit { handOver, owners in
+                retained = owners
+                handOver(owners)
+                throw Failure.afterInstall
+            }
+        } catch Failure.afterInstall {}
+        // Handing over transfers ownership, so the throw must not release them.
+        #expect(ledger.ownerCount(backingID) == 1)
+        #expect(retained.count == 1)
+        retained.removeAll()
         #expect(ledger.isAtBaseline)
     }
 }

@@ -35,6 +35,11 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     private let sessionID = RenderSessionID(rawValue: UUID())
     private let configurationID = MarkdownConfigurationID.uniqueInstance()
     package private(set) var sessionDriver: (any RenderSessionDriving)?
+    /// Session-owned image admission, exposed for residency assertions.
+    package var imageCoordinator: ImageLoadCoordinator {
+        self.driver().resourceTaskOwner.images
+    }
+
     private var isDismantled = false
     private var requestedWidth: CGFloat = 1
     private var displayScale: CGFloat = 1
@@ -51,9 +56,12 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
 
     private func driver() -> any RenderSessionDriving {
         if let sessionDriver { return sessionDriver }
-        let session = MarkdownRenderSession(id: sessionID, registry: sessionRegistry, availableWidth: requestedWidth, configuration: configurationSnapshot())
+        let session = MarkdownRenderSession(
+            id: sessionID, executor: sessionOverrides.executor, registry: self.sessionRegistry,
+            clock: self.sessionOverrides.clock, availableWidth: self.requestedWidth, configuration: self.configurationSnapshot()
+        )
         self.sessionRegistry.register(self, for: self.sessionID)
-        let driver = MarkdownRenderSessionDriver(session: session, residency: self.imageResidency)
+        let driver = MarkdownRenderSessionDriver(session: session, residency: self.sessionOverrides.residency)
         sessionDriver = driver
         return driver
     }
@@ -98,6 +106,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     package func resolvedResources(for model: RenderDisplayModel, configuration: RenderConfigurationSnapshot) -> ResolvedResourceSnapshot {
+        guard !self.isDismantled else { return ResolvedResourceSnapshot(values: [:]) }
         var values: [ResourceID: ResolvedPlatformResource] = [:]
         for resource in model.resourceValues {
             switch resource {
@@ -493,9 +502,8 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// after ~33ms so a transient flag would race, hence a durable counter. Zero
     /// production behavior beyond an Int increment at the primitive's entry.
     var _deferredHeightScheduleCount = 0
-    /// Test seam: private residency instances keep parallel suites from contending
-    /// for the process-wide image budgets. Assign before the first render.
-    package var imageResidency = ImageResidencyConfiguration.shared
+    /// Test seam: session-level injection. Assign before the first render.
+    package var sessionOverrides = RenderSessionOverrides()
     /// Test seam: forces the snapshot-replacement install closure to throw.
     package var _materializationFailureForTesting: (any Error)?
     /// Source URLs currently being fetched (prevents duplicate requests).
@@ -726,10 +734,17 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             owners: resources.owners
         )
         do {
-            try transaction.commit { _ in
+            try transaction.commit { handOver, _ in
+                // The transaction was prepared against the snapshot that is still
+                // installed. Anything that re-entered and replaced it in between
+                // invalidates this attempt, and the new owners roll back.
+                guard self.currentSnapshot?.id == transaction.oldSnapshotID else {
+                    throw RenderSessionError.preparationFailed
+                }
                 if let failure = self._materializationFailureForTesting { throw failure }
                 let snapshot = RenderMaterializer(configuration: configuration)
                     .materialize(model, resources: resources, snapshotID: snapshotID)
+                handOver(snapshot.resourceOwners)
                 self.replaceSnapshot(snapshot, token: token)
             }
         } catch {

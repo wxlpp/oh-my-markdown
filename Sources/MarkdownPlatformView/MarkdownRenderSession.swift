@@ -405,10 +405,13 @@ package final class RenderSessionResourceTaskOwner {
         return task
     }
 
-    package func cancelAll() {
+    /// `preservingResolvedImages` keeps this session's completed image leases, which
+    /// a width, style or append mutation must not drop: re-resolving from the shared
+    /// cache alone would turn any eviction into a placeholder plus a refetch.
+    package func cancelAll(preservingResolvedImages: Bool = false) {
         self.math.cancelAll()
         self.svg.cancelAll()
-        self.images.cancelAll()
+        if preservingResolvedImages { self.images.cancelTasks() } else { self.images.cancelAll() }
         self.debounceTask?.cancel()
         self.debounceTask = nil
         self.deferredActions.removeAll()
@@ -458,7 +461,12 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
 
     package func send(_ mutation: RenderSessionMutation) {
         guard !self.dismantled else { return }
-        self.resourceTaskOwner.cancelAll()
+        switch mutation {
+        case .append, .replaceConfiguration, .replaceWidth:
+            self.resourceTaskOwner.cancelAll(preservingResolvedImages: true)
+        case .setSource, .setDocument, .replaceImageConfiguration, .dismantle:
+            self.resourceTaskOwner.cancelAll()
+        }
         self.sequence += 1
         switch mutation {
         case .setSource, .setDocument:
