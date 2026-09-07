@@ -35,6 +35,7 @@ CGDataProvider;MarkdownRenderKit/ResolvedResource.swift
 CGContext;MarkdownRenderKit/ResolvedResource.swift,MarkdownMath/SVGRasterizer.swift,MarkdownPlatformView/MarkdownLabelDecorations.swift
 CGBitmapContext;
 NSGraphicsContext;MarkdownPlatformView/MarkdownLabelView+macOS.swift,MarkdownPlatformView/TableScrollView.swift
+UIGraphicsGetCurrentContext;MarkdownPlatformView/MarkdownLabelView+iOS.swift,MarkdownPlatformView/TableScrollView.swift
 CGAnimateImageData;
 UIImageReader;
 NSImageRep;
@@ -125,13 +126,16 @@ while IFS= read -r -d '' file; do
             $fail->($line->(), "gives `$target` a second name `$alias`");
         }
         # Residency owners are an inventory. Strings and comments are blanked in one
-        # ordered pass so neither can impersonate the other: a string literal cannot
-        # open a comment that swallows a real declaration, and a comment can neither
-        # end an inheritance clause with a brace nor fake one with prose. Newlines
-        # survive the blanking, so reported lines are the real ones.
+        # ordered pass, so a string literal cannot open a comment that swallows a real
+        # declaration and a comment can neither end an inheritance clause with a brace
+        # nor fake one with prose. That is what this pass is sound against, not a
+        # closure claim: it is lexical, and a Swift shape it mis-lexes still hides a
+        # declaration. Newlines survive the blanking, so reported lines are real.
+        # Unlike the platform-image rule above, this one deliberately ignores prose:
+        # naming a type is the violation there, declaring one is the violation here.
         my $scan = $text;
         $scan =~ s{
-            ( """ .*? """ | \#+" .*? "\#+ | " (?: \\. | [^"\\\n] )* " )
+            ( """ (?: \\. | "(?!"") | [^"\\] )* """ | \#+" .*? "\#+ | " (?: \\. | [^"\\\n] )* " )
           | ( /\* .*? \*/ )
           | ( // [^\n]* )
         }{
@@ -139,7 +143,7 @@ while IFS= read -r -d '' file; do
             my $newlines = ($matched =~ tr/\n//);
             " " . ("\n" x $newlines)
         }gsex;
-        while ($scan =~ /\b(?:class|struct|enum|actor|protocol|extension)\s+(\w+)\s*(?:<[^>]*>)?\s*:[^{]*?\b(?:ResourceResidencyOwner|RenderedResourceOwning)\b/gs) {
+        while ($scan =~ /\b(?:class|struct|enum|actor|protocol|extension)\s+(\w+)\s*(?:<[^<>]*(?:<[^<>]*>[^<>]*)*>)?\s*:[^{]*?\b(?:ResourceResidencyOwner|RenderedResourceOwning)\b/gs) {
             next if $owners{$1};
             my $upto = substr($scan, 0, $-[0]);
             my $at = 1 + ($upto =~ tr/\n//);

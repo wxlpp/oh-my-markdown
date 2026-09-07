@@ -1665,6 +1665,13 @@ Dispatch `superpowers-reviewer` over Task 11 after visual findings are resolved.
 
 ### Task 12: Finish deterministic tests, documentation, migration, and release gates
 
+**Carried from Task 7 (checkpoint 5B), disclosed rather than fixed there:**
+
+- `Scripts/run-static-gates.sh` cannot exit 0 while `Sources/MarkdownRenderKit/RenderConfiguration.swift` fails `swiftformat --lint`. Every individual gate passes; the aggregate script does not, so it cannot yet be wired as a CI gate on its own. Clearing the debt makes its `PASS` reachable.
+- `SnapshotLeaseTransaction.commit` releases the owners an install declined. Deleting that release loop leaves every image test green, because `ResidencyRecordToken`'s `deinit` uncharges once the last reference drops — so the uncharge would silently move from deterministic-at-commit to whenever ARC runs. The over-release direction is covered by tests; the positive direction needs one that holds a strong reference to a declined owner and asserts it is already uncharged.
+- `Scripts/check-image-ownership.sh` is a lexical, name-based gate and two bypasses are known open: a container that erases or parameterizes its element type (`[String: Any]`, `Store<PlatformImage>`) names no forbidden symbol, and the residency-owner inventory matches on name only, so a same-named type in another module would pass. Neither yields a platform image outside the ten audited files.
+- `eventually`'s anti-hang budget is 180 s and `settle`'s is 400 rounds because two pre-existing tests run 60–120 s on the iOS simulator. Replacing the polling with deterministic gates is this task's item; the budgets can come back down with it.
+
 **Files:**
 - Modify: remaining files under `Tests/MarkdownKitTests` and `Tests/MarkdownMathTests` containing `Task.sleep`
 - Modify: `Example/Sources/ContentView.swift`
