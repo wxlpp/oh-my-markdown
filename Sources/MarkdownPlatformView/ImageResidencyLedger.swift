@@ -156,6 +156,9 @@ package struct ImageSourceKey: Hashable {
 /// old snapshot itself once the view has cleared and replaced its TextKit content.
 @MainActor package final class SnapshotLeaseTransaction {
     package let session: RenderSessionID
+    /// Diagnostic identity, deliberately not load-bearing: an earlier attempt to
+    /// guard the install on it compared a value against itself, because nothing
+    /// can suspend between capturing it and committing.
     package let oldSnapshotID: UUID?
     package let newSnapshotID: UUID
     private var owners: [any ResourceResidencyOwner]
@@ -178,13 +181,16 @@ package struct ImageSourceKey: Hashable {
         var handedOver = false
         do {
             try install({ retained in
-                handedOver = expected.isSubset(of: Set(retained.map(ObjectIdentifier.init)))
+                // Latching, so a later call with the wrong array cannot revoke a
+                // correct hand-over that already happened.
+                handedOver = handedOver || expected.isSubset(of: Set(retained.map(ObjectIdentifier.init)))
             }, self.owners)
-            self.owners.removeAll()
         } catch {
             if handedOver { self.owners.removeAll() } else { self.cancel() }
             throw error
         }
+        // Returning without handing over means nothing retained them.
+        if handedOver { self.owners.removeAll() } else { self.cancel() }
     }
 
     package func cancel() {
@@ -637,8 +643,9 @@ package struct ImageSourceKey: Hashable {
             switch outcome {
             case .owned(let owned, let cacheKey, let requestedPixelSize):
                 // A downsized decode stays session-local: publishing it to the
-                // process cache under its own smaller extent would hold a cache
-                // lease no lookup can ever reach.
+                // process cache would serve a degraded image to a later
+                // full-extent requester. The decoder reports the extent it
+                // actually used, because it can halve again on its own.
                 if requestedPixelSize == self.maxPixelSize {
                     self.ledger.insert(owned, for: cacheKey, indexedBy: key)
                 }
@@ -744,7 +751,7 @@ package struct ImageSourceKey: Hashable {
         return .owned(owned, ImageCacheKey(
             source: request.url, pixelWidth: frame.width, pixelHeight: frame.height,
             configurationID: key.configurationID
-        ), requestedPixelSize: side)
+        ), requestedPixelSize: decoded.decodedPixelSize)
     }
 
     isolated deinit {

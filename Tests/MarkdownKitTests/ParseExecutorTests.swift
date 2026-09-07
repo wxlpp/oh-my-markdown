@@ -68,15 +68,16 @@ actor PausedParseSink: ParseResultSink {
     }
 }
 
-/// Anti-hang guard, not an assertion: the predicate is what the test asserts. The
-/// budget must exceed the longest legitimate stall in the process, and on the iOS
-/// simulator two pre-existing tests run 60-120 seconds while everything else polls
-/// here, so ten seconds expired on a loaded machine and reported a false failure.
+/// Anti-hang guard, not an assertion: the predicate is what each test asserts.
+/// The budget must exceed the longest legitimate stall, and the largest measured
+/// one is 121.5 s (the iOS 18 append-budget case on a loaded simulator), so ten
+/// seconds was never a valid liveness bound. Sleeping rather than spinning keeps
+/// a waiting poller from adding to the contention it is waiting out.
 func eventually(isolation: isolated (any Actor)? = #isolation, _ predicate: () async -> Bool) async -> Bool {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(120))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(180))
     while await !predicate() {
         if ContinuousClock.now >= deadline { return false }
-        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(1))
     }
     return true
 }

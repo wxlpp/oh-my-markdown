@@ -108,11 +108,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     package func resolvedResources(for model: RenderDisplayModel, configuration: RenderConfigurationSnapshot) -> ResolvedResourceSnapshot {
         guard !self.isDismantled else { return ResolvedResourceSnapshot(values: [:]) }
         var values: [ResourceID: ResolvedPlatformResource] = [:]
-        var shown: Set<URL> = []
-        for resource in model.resourceValues {
-            if case .image(_, let source, _) = resource, let url = URL(string: source) { shown.insert(url) }
-        }
-        self.driver().resourceTaskOwner.images.retainOnly(shown)
         for resource in model.resourceValues {
             switch resource {
             case .image(let id, let source, _):
@@ -648,8 +643,9 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         guard !self.isDismantled else { return }
         self._materializationCount += 1
         let snapshotID = UUID()
+        let images = self.driver().resourceTaskOwner.images
         let resources = self.resolvedResources(for: model, configuration: configuration)
-        let transaction = self.driver().resourceTaskOwner.images.ledger.prepareSnapshotReplacement(
+        let transaction = images.ledger.prepareSnapshotReplacement(
             session: self.sessionID, oldSnapshotID: self.currentSnapshot?.id, newSnapshotID: snapshotID,
             owners: resources.owners
         )
@@ -663,7 +659,15 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             }
         } catch {
             self.lastRenderError = .preparationFailed
+            return
         }
+        // Only after the new snapshot is installed: a rolled-back attempt must
+        // leave the outgoing snapshot's images resolvable.
+        var shown: Set<URL> = []
+        for resource in model.resourceValues {
+            if case .image(_, let source, _) = resource, let url = URL(string: source) { shown.insert(url) }
+        }
+        images.retainOnly(shown)
     }
 
     private func mathKey(latex: String, display: Bool, configuration: RenderConfigurationSnapshot) -> MathCacheKey? {

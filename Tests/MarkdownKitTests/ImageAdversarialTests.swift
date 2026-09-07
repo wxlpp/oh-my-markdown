@@ -595,4 +595,49 @@ struct ImageAdversarialTests {
         residency.ledger.handleMemoryPressure()
         #expect(await settle(clock) { residency.ledger.isAtBaseline })
     }
+
+    /// The guard lives in the coordinator, so it has to be reached through a real
+    /// downsized resolution, not by calling `insert` with a smaller key by hand.
+    @Test func aDownsizedResolutionIsDisplayedButNeverPublishedToTheProcessCache() async throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
+        let png = try encodedPNG(width: 64, height: 64)
+        let first = FixtureImageLoader(data: png)
+        let second = FixtureImageLoader(data: png)
+        // A 64 px thumbnail costs 16384 bytes and a 32 px one 4096, so the full
+        // extent is refused and the single smaller retry is what succeeds.
+        let residency = isolatedImageResidency(hardLimit: 8192, cacheLimit: 8192, maxPixelSize: 64)
+        let identity = MarkdownConfigurationID.semantic(namespace: "adversarial.downsized", version: 1)
+        let source = "![alt](https://images.test/downsized.png)"
+
+        let view = imageTestView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency,
+            clock: clock, executor: executor
+        )
+        view.remoteImages = MarkdownRemoteImageConfiguration(loader: first, configurationID: identity)
+        view.blocks = MarkdownDocument(parsing: source).blocks
+        #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
+        #expect(await first.calls == 1)
+        let backingID = try #require(view.currentSnapshot?.resourceOwners.first as? ImageOwnerLease).backingID
+        // It really was downsized, and the session displays it.
+        #expect(residency.ledger.accountedBytes == 4096)
+        // Session resolution owner plus snapshot publication owner, and no cache owner.
+        #expect(residency.ledger.ownerCount(backingID) == 2)
+        #expect(residency.ledger.cacheCount == 0)
+
+        // A second session with the same shared identity must not receive it.
+        let other = imageTestView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency,
+            clock: clock, executor: executor
+        )
+        other.remoteImages = MarkdownRemoteImageConfiguration(loader: second, configurationID: identity)
+        other.blocks = MarkdownDocument(parsing: source).blocks
+        #expect(await settle(clock) { (other.imageCoordinator?.settledResolutionCount ?? 0) == 1 })
+        #expect(await second.calls == 1)
+
+        view.dismantleRenderSession()
+        other.dismantleRenderSession()
+        residency.ledger.handleMemoryPressure()
+        #expect(await settle(clock) { residency.ledger.isAtBaseline })
+    }
 }

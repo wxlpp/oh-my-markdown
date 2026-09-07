@@ -6,9 +6,17 @@ import MarkdownRenderKit
 package struct DecodedImage {
     package let backingID: UUID
     package let backing: ImmutableCGImageBacking
-    package init(backingID: UUID = UUID(), backing: ImmutableCGImageBacking) {
+    /// Extent that actually produced this backing. The decoder halves it on a
+    /// reconciliation rejection, so the caller must read it here rather than
+    /// assume the extent it asked for.
+    package let decodedPixelSize: Int
+    package init(
+        backingID: UUID = UUID(), backing: ImmutableCGImageBacking,
+        decodedPixelSize: Int = ImageDecoder.maxOutputSide
+    ) {
         self.backingID = backingID
         self.backing = backing
+        self.decodedPixelSize = decodedPixelSize
     }
 }
 
@@ -48,11 +56,18 @@ package enum ImageDecoder {
 
     /// Conservative decoded-pixel reservation for the frames this decoder retains.
     /// Only frame 0 is retained today; the sum keeps the formula correct if that grows.
+    ///
+    /// Row alignment is not symmetric under a width/height swap, and an EXIF
+    /// orientation makes ImageIO return the transposed extent, so this reserves the
+    /// larger of the two orientations. Reconciliation can then only shrink,
+    /// whichever way the frame comes back.
     package static func reservationBytes(for metadata: MarkdownImageMetadata, maxPixelSize: Int) -> Int? {
         guard let extent = thumbnailExtent(width: metadata.pixelWidth, height: metadata.pixelHeight, maxPixelSize: maxPixelSize),
-              let bytes = pixelCost(width: extent.width, height: extent.height), bytes <= self.perImageByteLimit
+              let upright = pixelCost(width: extent.width, height: extent.height),
+              let transposed = pixelCost(width: extent.height, height: extent.width)
         else { return nil }
-        return bytes
+        let bytes = max(upright, transposed)
+        return bytes <= self.perImageByteLimit ? bytes : nil
     }
 
     /// Downsamples straight out of ImageIO. The full-resolution image is never
@@ -88,8 +103,10 @@ package enum ImageDecoder {
         while true {
             try Task.checkCancellation()
             let backing = try self.thumbnail(encoded, side: side)
-            guard let reconcile else { return DecodedImage(backing: backing) }
-            if await reconcile(backing.accountedPixelBytes) { return DecodedImage(backing: backing) }
+            guard let reconcile else { return DecodedImage(backing: backing, decodedPixelSize: side) }
+            if await reconcile(backing.accountedPixelBytes) {
+                return DecodedImage(backing: backing, decodedPixelSize: side)
+            }
             attempts += 1
             guard attempts == 1, side > 1 else { throw ImageDecodeFailure.budgetDeferred }
             side = max(1, side / 2)

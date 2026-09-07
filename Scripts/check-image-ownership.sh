@@ -2,6 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source_root="${1:-Sources}"
+if [[ ! -d "$source_root" ]]; then
+    echo "FAIL: source root does not exist: $source_root" >&2
+    exit 1
+fi
 
 # Enumerating forbidden spellings does not work: a regex that pins how code looks
 # is defeated by rewriting it (aliases, `.init`, `[T]` vs `Array<T>`, a conformance
@@ -23,15 +27,21 @@ MarkdownRenderKit/ResolvedResource.swift
 "
 # <api regex>;<comma-separated files allowed to name it>. Empty means nowhere.
 decode_apis="
-CGImageSourceCreateThumbnailAtIndex;MarkdownPlatformView/ImageDecoder.swift
-CGImageSourceCreateImageAtIndex;MarkdownRenderKit/RenderedImage.swift
-CGImageSourceCreate(?:WithData|Incremental);MarkdownPlatformView/ImageDecoder.swift,MarkdownPlatformView/ValidatedImageFactory.swift,MarkdownRenderKit/RenderedImage.swift
+CGImageSourceCreateThumbnail;MarkdownPlatformView/ImageDecoder.swift
+CGImageSourceCreateImage;MarkdownRenderKit/RenderedImage.swift
+CGImageSourceCreateWith;MarkdownPlatformView/ImageDecoder.swift,MarkdownPlatformView/ValidatedImageFactory.swift,MarkdownRenderKit/RenderedImage.swift
+CGImageSourceCreateIncremental;MarkdownPlatformView/ValidatedImageFactory.swift
 CGDataProvider;MarkdownRenderKit/ResolvedResource.swift
+CGAnimateImageData;
 NSBitmapImageRep;
+NSPDFImageRep;
+NSEPSImageRep;
+NSCIImageRep;
 CIImage;
 CIContext;
 UIGraphicsImageRenderer;
 UIGraphicsBeginImageContext;
+UIGraphicsGetImageFromCurrentImageContext;
 "
 # Only these may turn a CGImage into a platform image.
 cgimage_files="MarkdownRenderKit/RenderMaterializer.swift MarkdownRenderKit/RenderedImage.swift"
@@ -57,16 +67,25 @@ while IFS= read -r -d '' file; do
         my $relative = $ENV{RELATIVE};
         open(my $handle, "<", $file) or exit 1;
         my $text = do { local $/; <$handle> };
-        my %platform_files = map { $_ => 1 } split /\s+/, $ENV{PLATFORM_FILES};
-        my %cgimage_files = map { $_ => 1 } split /\s+/, $ENV{CGIMAGE_FILES};
-        my %owners = map { $_ => 1 } split /\s+/, $ENV{OWNERS};
+        my %platform_files = map { $_ => 1 } grep { length } split /\s+/, $ENV{PLATFORM_FILES};
+        my %cgimage_files = map { $_ => 1 } grep { length } split /\s+/, $ENV{CGIMAGE_FILES};
+        my %owners = map { $_ => 1 } grep { length } split /\s+/, $ENV{OWNERS};
         my $platform = qr/(?:UIImage|NSImage|PlatformImage)/;
+        # Every failure prints the symbol, its line and the inventory it broke, so
+        # the reader never has to go and measure anything to know what to do.
+        my $line = sub { my $upto = substr($text, 0, $-[0]); 1 + ($upto =~ tr/\n//) };
+        my $fail = sub { print STDERR "  $relative:$_[0]: $_[1]\n"; exit 1 };
 
         # The retention bridge is gone; every image owner is a residency lease.
-        exit 1 if $text =~ /\bLegacyResourceOwner\b/s;
+        if ($text =~ /\bLegacyResourceOwner\b/s) {
+            $fail->($line->(), "names LegacyResourceOwner, which no longer exists");
+        }
 
         # Naming a platform image type is confined to the audited inventory.
-        exit 1 if $text =~ /\b$platform\b/s && !$platform_files{$relative};
+        if ($text =~ /\b($platform)\b/s && !$platform_files{$relative}) {
+            my $count = scalar keys %platform_files;
+            $fail->($line->(), "names `$1`, but the platform-image inventory has $count files and this is not one of them");
+        }
 
         # Each decoding API is confined to the files that may name it.
         for my $rule (split /\n/, $ENV{DECODE_APIS}) {
@@ -74,25 +93,47 @@ while IFS= read -r -d '' file; do
             my ($api, $allowed) = split /;/, $rule, 2;
             $allowed = "" unless defined $allowed;
             my %ok = map { $_ => 1 } grep { length } split /,/, $allowed;
-            exit 1 if $text =~ /\b(?:$api)\b/s && !$ok{$relative};
+            # Prefix match: a suffixed sibling is the same capability.
+            next unless $text =~ /\b($api\w*)\b/s;
+            next if $ok{$relative};
+            my $where = %ok ? join(", ", sort keys %ok) : "no file";
+            $fail->($line->(), "names `$1`, allowed only in: $where");
         }
 
         # Bytes, files and Core Image never become a platform image.
-        exit 1 if $text =~ /\b$platform\s*(?:\.\s*init\s*)?\(\s*(?:data|ciImage|contentsOf|contentsOfFile)\s*:/s;
-        # Only the audited converters wrap an immutable CGImage.
-        exit 1 if $text =~ /\b$platform\s*(?:\.\s*init\s*)?\(\s*cgImage\s*:/s && !$cgimage_files{$relative};
-        # No *second* name for a platform image type; re-exporting the same name is fine.
-        while ($text =~ /\btypealias\s+(\w+)\s*=\s*(?:\w+\s*\.\s*)?$platform\b/gs) {
-            exit 1 unless $1 =~ /\A(?:UIImage|NSImage|PlatformImage)\z/;
+        if ($text =~ /\b($platform\s*(?:\.\s*init\s*)?\(\s*(?:data|ciImage|contentsOf|contentsOfFile)\s*:)/s) {
+            $fail->($line->(), "builds a platform image from bytes or a file: `$1`");
         }
-        # Residency owners are an inventory: the conformance may sit anywhere in an
-        # inheritance clause and may span lines.
-        while ($text =~ /\b(?:class|struct|enum|actor|protocol|extension)\s+(\w+)\s*:[^{]*?\b(?:ResourceResidencyOwner|RenderedResourceOwning)\b/gs) {
-            exit 1 unless $owners{$1};
+        # Only the audited converters wrap an immutable CGImage.
+        if ($text =~ /\b($platform\s*(?:\.\s*init\s*)?\(\s*cgImage\s*:)/s && !$cgimage_files{$relative}) {
+            $fail->($line->(), "wraps a CGImage: `$1`, allowed only in: " . join(", ", sort keys %cgimage_files));
+        }
+        # No *second* name for a platform image type or a residency protocol;
+        # re-exporting the same name is fine. Aliasing defeats every rule above.
+        while ($text =~ /\btypealias\s+(\w+)\s*=\s*(?:\w+\s*\.\s*)?($platform|ResourceResidencyOwner|RenderedResourceOwning)\b/gs) {
+            my ($alias, $target) = ($1, $2);
+            # A platform image may keep its own names across modules; anything else
+            # is a second name that routes around every rule above.
+            next if $target !~ /\A(?:UIImage|NSImage|PlatformImage)\z/ ? 0
+                : $alias =~ /\A(?:UIImage|NSImage|PlatformImage)\z/;
+            $fail->($line->(), "gives `$target` a second name `$alias`");
+        }
+        # Residency owners are an inventory. Comments are stripped first so a brace
+        # inside one cannot end an inheritance clause early, and an optional generic
+        # clause may sit between the declared name and the colon.
+        my $declarations = $text;
+        1 while $declarations =~ s{/\*(?:(?!/\*|\*/).)*\*/}{ }gs;
+        $declarations =~ s{//[^\n]*}{ }g;
+        while ($declarations =~ /\b(?:class|struct|enum|actor|protocol|extension)\s+(\w+)\s*(?:<[^>]*>)?\s*:[^{]*?\b(?:ResourceResidencyOwner|RenderedResourceOwning)\b/gs) {
+            next if $owners{$1};
+            my $upto = substr($declarations, 0, $-[0]);
+            my $at = 1 + ($upto =~ tr/\n//);
+            print STDERR "  $relative:$at: declares `$1` as a residency owner; the inventory is: " . join(", ", sort keys %owners) . "\n";
+            exit 1;
         }
         exit 0;
     ' "$file"; then
-        echo "FAIL: unowned or unbounded image handling: $file" >&2
+        echo "FAIL: unowned or unbounded image handling (reason above)" >&2
         exit 1
     fi
 done < <(rg --files --hidden --no-ignore -0 -g '*.swift' "$source_root")

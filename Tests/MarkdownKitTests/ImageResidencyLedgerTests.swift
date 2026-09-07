@@ -94,7 +94,10 @@ struct ImageResidencyLedgerTests {
             session: session, oldSnapshotID: nil, newSnapshotID: firstSnapshot, images: [first]
         ))
         var oldOwners: [any ResourceResidencyOwner] = []
-        old.commit { _, owners in oldOwners = owners }
+        old.commit { handOver, owners in
+            oldOwners = owners
+            handOver(owners)
+        }
         let new = try #require(ledger.prepareSnapshotReplacement(
             session: session, oldSnapshotID: firstSnapshot, newSnapshotID: UUID(), images: [second]
         ))
@@ -262,6 +265,35 @@ struct ImageResidencyLedgerTests {
         #expect(ledger.ownerCount(backingID) == 1)
         #expect(retained.count == 1)
         retained.removeAll()
+        #expect(ledger.isAtBaseline)
+    }
+
+    @Test func commitThatNeverHandsOverReleasesTheOwnersOnBothPaths() throws {
+        enum Failure: Error { case materialization }
+        let ledger = ImageResidencyLedger(hardLimit: 1024, cacheLimit: 512)
+
+        // Success without a hand-over: nothing retained them, so they go back.
+        let first = try #require(ledger.reserveDecodedPixelBytes(256)?.promote(self.decoded()))
+        let firstID = first.backing.backingID
+        let succeeding = try #require(ledger.prepareSnapshotReplacement(images: [first]))
+        succeeding.commit { _, _ in }
+        #expect(ledger.ownerCount(firstID) == 0)
+
+        // Handing over the wrong objects is not a hand-over, so a throw still
+        // rolls back. Under the earlier `{ _ in handedOver = true }` this leaked.
+        let second = try #require(ledger.reserveDecodedPixelBytes(256)?.promote(self.decoded()))
+        let secondID = second.backing.backingID
+        let decoy = try #require(ledger.reserveDecodedPixelBytes(256)?.promote(self.decoded()))
+        let throwing = try #require(ledger.prepareSnapshotReplacement(images: [second]))
+        #expect(ledger.ownerCount(secondID) == 1)
+        do {
+            try throwing.commit { handOver, _ in
+                handOver([decoy.inFlightOwner])
+                throw Failure.materialization
+            }
+        } catch Failure.materialization {}
+        #expect(ledger.ownerCount(secondID) == 0)
+        decoy.inFlightOwner.release()
         #expect(ledger.isAtBaseline)
     }
 }
