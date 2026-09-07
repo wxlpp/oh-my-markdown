@@ -440,10 +440,14 @@ package final class RenderSessionResourceTaskOwner {
 @MainActor
 package final class MarkdownRenderSessionDriver: RenderSessionDriving {
     package let resourceTaskOwner: RenderSessionResourceTaskOwner
-    package private(set) var linkConfiguration = MarkdownLinkConfiguration.webOnly(handler: PlatformMarkdownLinkHandler.shared)
+    package private(set) var linkConfiguration = MarkdownLinkConfiguration.platformDefault
     /// Bumped by every install, identical identities included. The render
     /// generation cannot serve here: it also moves on width and style changes,
     /// which would silently void a tap during a rotation or a window resize.
+    ///
+    /// SwiftUI forwards on every body evaluation, so an evaluation landing inside
+    /// a decision voids that tap. Fail-closed and narrow: the decision takes 30 µs
+    /// at the median, 197 µs at the worst of 200 samples.
     package private(set) var linkConfigurationRevision: UInt64 = 0
     private let session: MarkdownRenderSession
     private let continuation: AsyncStream<RenderSessionEvent>.Continuation

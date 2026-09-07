@@ -840,6 +840,9 @@ public final class MarkdownEditorTextView: NSView, NSTextViewDelegate {
         self.textView.owner = self
         self.textView.delegate = self
         self.textView.drawsBackground = false
+        // Don't enable rich text: a `.link` run in the storage would let this view
+        // open URLs itself, and this is the one file check-link-activation.sh
+        // exempts from the text-view inventory.
         self.textView.isRichText = false
         self.textView.isHorizontallyResizable = false
         self.textView.isVerticallyResizable = true

@@ -525,7 +525,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     public var onResourceError: MarkdownResourceErrorHandler?
 
     /// Web-only policy and the platform opener until a host replaces them.
-    public var linkConfiguration: MarkdownLinkConfiguration = .webOnly(handler: PlatformMarkdownLinkHandler.shared) {
+    public var linkConfiguration: MarkdownLinkConfiguration = .platformDefault {
         didSet {
             // Always forwarded: the driver decides what counts as a replacement.
             // Suppressing this on equal identities would leave a superseded

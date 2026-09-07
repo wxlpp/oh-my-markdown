@@ -21,7 +21,8 @@ import AppKit
 }
 
 /// Blocks inside the pure decision so a test can replace the configuration while
-/// the evaluation is in flight. Runs off the main actor, so blocking is safe.
+/// the evaluation is in flight. This is what the protocol tells hosts not to do;
+/// it is confined to this suite, which needs the window held open deliberately.
 struct GatedLinkPolicy: MarkdownLinkPolicy {
     let gate = DispatchSemaphore(value: 0)
     let entered = DispatchSemaphore(value: 0)
@@ -161,6 +162,52 @@ struct MarkdownLinkPolicyTests {
         }
         #expect(stale.opened.isEmpty)
         #expect(current.opened.isEmpty)
+    }
+
+    /// The same requirement as `tighteningAStatefulPolicyReachesTheDriverAndIsEnforced`,
+    /// one layer up. Every documented entry point is the modifier, so a guard in
+    /// the representable that suppresses propagation on equal identities keeps the
+    /// old policy deciding no matter what the driver and the view do.
+    @Test @MainActor func tighteningAStatefulPolicyThroughTheModifierIsEnforced() async throws {
+        let handler = RecordingLinkHandler()
+        func content(allowing hosts: Set<String>) -> some View {
+            MarkdownText("[a](https://evil.test/x)")
+                .markdownLinkPolicy(AllowListPolicy(hosts: hosts), handler: handler)
+        }
+        #if canImport(UIKit)
+        let host = UIHostingController(rootView: content(allowing: ["evil.test", "good.test"]))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        host.view.layoutIfNeeded()
+        #else
+        let host = NSHostingView(rootView: content(allowing: ["evil.test", "good.test"]))
+        host.frame = CGRect(x: 0, y: 0, width: 320, height: 200)
+        host.layoutSubtreeIfNeeded()
+        #endif
+        let label = try #require(await settleForLabel(in: host))
+        #expect(await eventually { label.currentSnapshot != nil })
+
+        // What a host actually writes: the allow list is view state, so tightening
+        // it re-evaluates the body with the same policy type and the same handler.
+        host.rootView = content(allowing: ["good.test"])
+        #if canImport(UIKit)
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        #else
+        host.needsLayout = true
+        host.layoutSubtreeIfNeeded()
+        #endif
+        let driver = try #require(label.sessionDriver)
+        #expect(await eventually { (driver.linkConfiguration.policy as? AllowListPolicy)?.hosts == ["good.test"] })
+
+        #expect(label.activateLink(at: 0))
+        for _ in 0 ..< 300 {
+            await Task.yield()
+        }
+        #expect(handler.opened.isEmpty, "the revoked host was opened through the modifier")
+        withExtendedLifetime(host) {}
     }
 
     @Test @MainActor func replacementBumpsTheConfigurationGenerationOnTheRealDriver() async throws {

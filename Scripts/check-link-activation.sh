@@ -14,10 +14,11 @@ handler="MarkdownPlatformView/MarkdownLinkPolicy.swift"
 # The Markdown *editor* is a genuine text-view subclass showing raw source, not
 # rendered links, so the text-view names are inventoried there rather than banned.
 editor="MarkdownPlatformView/MarkdownEditorTextView.swift"
-# `Link` collides with swift-markdown's `Markup.Link` in exactly one file. That
-# file is inventoried, so the name can be matched unconditionally everywhere
-# else: anchoring on `import SwiftUI` instead would break on `internal import`,
-# `public import` and attributed forms, which this package already uses.
+# `Link` and `Text` collide with swift-markdown's `Markup.Link`/`Markup.Text` in
+# exactly one file. That file is inventoried, so the names can be matched
+# unconditionally everywhere else: anchoring on `import SwiftUI` instead would
+# break on `internal import`, `public import` and attributed forms, which this
+# package already uses.
 markup="MarkdownCore/DocumentParser.swift"
 for required in "$handler" "$editor" "$markup"; do
     if [[ ! -f "$source_root/$required" ]]; then
@@ -26,9 +27,14 @@ for required in "$handler" "$editor" "$markup"; do
     fi
 done
 
-openers='\b(?:UIApplication|NSWorkspace|LSApplicationWorkspace|LSOpen\w*|SFSafariViewController|ASWebAuthenticationSession|WKWebView|UIWindowScene|UIScene|OpenURLAction|openURL)\b'
-text_views='\b(?:UITextView|NSTextView)\b'
-link_view='\bLink\b'
+openers='\b(?:UIApplication|NSWorkspace|LSApplicationWorkspace|LSOpen\w*|SFSafariViewController|SFAuthenticationSession|ASWebAuthenticationSession|WKWebView|UIWindowScene|UIScene|OpenURLAction|openURL|UIDocumentInteractionController|UIActivityViewController|NSSharingService\w*|NSTask|Process|posix_spawn\w*|execv\w*)\b'
+# A text view opens a `.link` run by itself. `NSTextField` is the same mechanism
+# reached under another name: it vends an `NSTextView` as its field editor.
+text_views='\b(?:UITextView|NSTextView|NSTextField)\b'
+# SwiftUI renders a `.link` run in an AttributedString through the environment's
+# OpenURLAction, with no opener name anywhere in the source. Confining the views
+# that can render one is the only lever this instrument has on that family.
+swiftui_views='\b(?:Link|Text)\b'
 
 count=0
 while IFS= read -r -d '' file; do
@@ -40,7 +46,7 @@ while IFS= read -r -d '' file; do
     # opener pattern already matches the declaration itself.
     patterns=(-e "$openers")
     [[ "$relative" == "$editor" ]] || patterns+=(-e "$text_views")
-    [[ "$relative" == "$markup" ]] || patterns+=(-e "$link_view")
+    [[ "$relative" == "$markup" ]] || patterns+=(-e "$swiftui_views")
 
     # Ordered blanking, strings before comments, newlines preserved: prose may
     # name these types, code may not, and line numbers stay real. The limit of

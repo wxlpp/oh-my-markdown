@@ -99,7 +99,6 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
         var lastImageReplacementID: UUID?
-        var lastLinkIdentity: LinkIdentity?
     }
 
     let source: MarkdownStreamingSource
@@ -133,11 +132,10 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
         uiView.onResourceError = self.resourceErrorHandler
-        let linkIdentity = self.linkConfiguration.map { LinkIdentity(policyID: $0.policyID, handlerID: $0.handlerID) }
-        if let link = self.linkConfiguration, context.coordinator.lastLinkIdentity != linkIdentity {
-            uiView.linkConfiguration = link
-            context.coordinator.lastLinkIdentity = linkIdentity
-        }
+        // Always forwarded, like the view's own didSet: identity is derived from
+        // the policy's type, so a host that tightens a stateful policy produces an
+        // equal identity. Suppressing here would leave the old policy deciding.
+        if let link = self.linkConfiguration { uiView.linkConfiguration = link }
         if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
             uiView.remoteImages = self.remoteImages
             context.coordinator.lastImageReplacementID = self.remoteImages.replacementID
@@ -195,7 +193,6 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
         var lastImageReplacementID: UUID?
-        var lastLinkIdentity: LinkIdentity?
     }
 
     let source: MarkdownStreamingSource
@@ -225,11 +222,10 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
         nsView.onResourceError = self.resourceErrorHandler
-        let linkIdentity = self.linkConfiguration.map { LinkIdentity(policyID: $0.policyID, handlerID: $0.handlerID) }
-        if let link = self.linkConfiguration, context.coordinator.lastLinkIdentity != linkIdentity {
-            nsView.linkConfiguration = link
-            context.coordinator.lastLinkIdentity = linkIdentity
-        }
+        // Always forwarded, like the view's own didSet: identity is derived from
+        // the policy's type, so a host that tightens a stateful policy produces an
+        // equal identity. Suppressing here would leave the old policy deciding.
+        if let link = self.linkConfiguration { nsView.linkConfiguration = link }
         if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
             nsView.remoteImages = self.remoteImages
             context.coordinator.lastImageReplacementID = self.remoteImages.replacementID

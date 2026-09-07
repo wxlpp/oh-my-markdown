@@ -24,9 +24,10 @@ extension View {
     /// HTTP/HTTPS through the platform opener; a custom scheme needs **both** a
     /// policy that permits it and a handler that knows how to open it.
     /// Identities are derived from the policy's type and the handler's object
-    /// identity, so rebuilding the body does not read as a replacement. A
-    /// value-type policy whose behaviour depends on its stored properties needs
-    /// `markdownLinkConfiguration(_:)` with an explicit ID instead.
+    /// identity, so rebuilding the body does not read as a replacement. The
+    /// policy itself is forwarded on every update regardless, so a policy whose
+    /// decisions depend on its stored properties takes effect as soon as the
+    /// body carrying the new value is evaluated.
     public func markdownLinkPolicy(
         _ policy: any MarkdownLinkPolicy, handler: any MarkdownLinkHandler = PlatformMarkdownLinkHandler.shared
     ) -> some View {
@@ -37,11 +38,4 @@ extension View {
     public func markdownLinkConfiguration(_ configuration: MarkdownLinkConfiguration) -> some View {
         environment(\.markdownLinkConfiguration, configuration)
     }
-}
-
-/// Both identities compared as one value, so the update guard cannot drift by
-/// checking only half of what identifies a link configuration.
-struct LinkIdentity: Equatable {
-    let policyID: MarkdownConfigurationID
-    let handlerID: MarkdownConfigurationID
 }

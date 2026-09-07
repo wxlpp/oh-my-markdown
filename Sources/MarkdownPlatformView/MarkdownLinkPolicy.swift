@@ -32,7 +32,12 @@ public enum MarkdownLinkDisposition: Sendable, Equatable {
 }
 
 /// Pure and `Sendable`: it decides, it never opens anything and never touches
-/// platform state. Activation belongs to the `@MainActor` handler.
+/// platform state.
+///
+/// The decision runs on the cooperative pool, which is as wide as the core count
+/// and is shared with the rest of the app. Do not block in it and do not perform
+/// I/O: a policy that waits on a lock, a file, or the network holds a pool thread
+/// for that whole time, and a handful of taps can stall unrelated async work. Activation belongs to the `@MainActor` handler.
 public protocol MarkdownLinkPolicy: Sendable {
     func disposition(for request: MarkdownLinkRequest) -> MarkdownLinkDisposition
 }
@@ -97,7 +102,6 @@ public struct MarkdownLinkConfiguration {
     package let handler: any MarkdownLinkHandler
     public let policyID: MarkdownConfigurationID
     public let handlerID: MarkdownConfigurationID
-    package let replacementID = UUID()
 
     public init(
         policy: any MarkdownLinkPolicy,
@@ -114,9 +118,13 @@ public struct MarkdownLinkConfiguration {
     /// Identities derived from what a SwiftUI body can actually keep stable: the
     /// policy's concrete type and the handler's object identity. A body rebuilt
     /// every frame therefore installs the same configuration rather than a
-    /// replacement. A value-type policy whose behaviour depends on its stored
-    /// properties must be installed with an explicit ID instead, because two such
-    /// instances share a type and would look identical here.
+    /// replacement.
+    ///
+    /// Two instances of one stateful policy type are identical here on purpose:
+    /// the identity decides only whether an install is a replacement worth a
+    /// generation bump, never whether the policy reaches the driver. The address
+    /// is safe as a handler key because the configuration holding that handler is
+    /// alive at every comparison, so the address cannot have been recycled.
     public static func derived(
         policy: any MarkdownLinkPolicy, handler: any MarkdownLinkHandler
     ) -> Self {
@@ -126,10 +134,20 @@ public struct MarkdownLinkConfiguration {
                 ? WebOnlyMarkdownLinkPolicy.identity
                 : .semantic(namespace: "link-policy-type:\(String(reflecting: type(of: policy)))", version: 1),
             handlerID: .semantic(
-                namespace: "link-handler-object:\(UInt(bitPattern: ObjectIdentifier(handler).hashValue))", version: 1
+                namespace: "link-handler-object:\(UInt(bitPattern: ObjectIdentifier(handler)))", version: 1
             )
         )
     }
+
+    /// What a view and its driver both start from. A single value, not a factory
+    /// call each: `webOnly` mints a fresh handler identity per call, which would
+    /// leave the two disagreeing about the installed handler until the first
+    /// explicit install.
+    public static let platformDefault = Self(
+        policy: WebOnlyMarkdownLinkPolicy.default, handler: PlatformMarkdownLinkHandler.shared,
+        policyID: WebOnlyMarkdownLinkPolicy.identity,
+        handlerID: .semantic(namespace: "link-handler-platform-default", version: 1)
+    )
 
     /// The built-in policy keeps its deterministic identity; the handler stays
     /// uniquely identified unless the caller opts into semantic sharing.
