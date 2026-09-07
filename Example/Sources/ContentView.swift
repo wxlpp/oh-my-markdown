@@ -100,8 +100,8 @@ private struct RenderTab: View {
     // @State 把实例托管给 SwiftUI 的状态机，跨 struct 重建保持身份稳定，
     // 让 isSameMathRenderer / isSameSVGBlockRenderer 守卫真正生效。
     // Copilot PR #5 R4 #2 & suppressed #3.
-    @State private var mathRenderer = MathJaxRenderer()
-    @State private var svgBlockRenderer = SwiftDrawSVGBlockRenderer()
+    @State private var mathRenderer = MathRendererConfiguration(renderer: MathJaxRenderer())
+    @State private var svgBlockRenderer = SVGRendererConfiguration(renderer: SwiftDrawSVGBlockRenderer())
 }
 
 // MARK: - EditorTab
@@ -219,8 +219,8 @@ private struct StreamTab: View {
     @State private var streamSource = MarkdownStreamingSource()
     // @State 跨 View 重建保持 renderer 身份稳定，避免反复 setRenderer 翻转
     // coordinator generation；与 RenderTab 同款（Copilot PR #5 R4 #2 & suppressed #3）。
-    @State private var mathRenderer = MathJaxRenderer()
-    @State private var svgBlockRenderer = SwiftDrawSVGBlockRenderer()
+    @State private var mathRenderer = MathRendererConfiguration(renderer: MathJaxRenderer())
+    @State private var svgBlockRenderer = SVGRendererConfiguration(renderer: SwiftDrawSVGBlockRenderer())
     @State private var isRunning = false
     @State private var hasOutput = false
     @State private var taskHandle: Task<Void, Never>?

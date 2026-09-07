@@ -53,14 +53,14 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     final class Coordinator {
         var lastSource = ""
         var lastStyle: RenderStyle?
-        var lastMathRenderer: (any MathRendering)?
-        var lastSVGBlockRenderer: (any SVGBlockRendering)?
+        var lastMathRenderer: MathRendererConfiguration?
+        var lastSVGBlockRenderer: SVGRendererConfiguration?
     }
 
     let source: String
     let style: RenderStyle
-    let mathRenderer: (any MathRendering)?
-    let svgBlockRenderer: (any SVGBlockRendering)?
+    let mathRenderer: MathRendererConfiguration?
+    let svgBlockRenderer: SVGRendererConfiguration?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -122,14 +122,14 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     final class Coordinator {
         var lastSource = ""
         var lastStyle: RenderStyle?
-        var lastMathRenderer: (any MathRendering)?
-        var lastSVGBlockRenderer: (any SVGBlockRendering)?
+        var lastMathRenderer: MathRendererConfiguration?
+        var lastSVGBlockRenderer: SVGRendererConfiguration?
     }
 
     let source: String
     let style: RenderStyle
-    let mathRenderer: (any MathRendering)?
-    let svgBlockRenderer: (any SVGBlockRendering)?
+    let mathRenderer: MathRendererConfiguration?
+    let svgBlockRenderer: SVGRendererConfiguration?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()

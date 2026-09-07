@@ -9,12 +9,13 @@ import AppKit
 #endif
 
 @Suite("PlaceholderMode-aware rendering")
+@MainActor
 struct PlaceholderModeRendererTests {
     // MARK: SVG miss 分支按 mode 区分
 
     @Test func svgStaticMissEmitsTransparentAttachmentWithMarker() {
         let svg = #"<svg viewBox="0 0 480 320"></svg>"#
-        let renderer = AttributedStringRenderer(
+        let renderer = MaterializationFixture(
             style: .default, availableWidth: 600, placeholderMode: .static
         )
         let block = BlockNode.codeBlock(language: "svg", body: svg)
@@ -47,7 +48,7 @@ struct PlaceholderModeRendererTests {
     @Test func svgStaticMissUsesAvailableWidthWhenViewBoxExceedsIt() {
         // viewBox 比 availableWidth 大 → fit-width 收紧到 availableWidth
         let svg = #"<svg viewBox="0 0 1200 600"></svg>"#
-        let renderer = AttributedStringRenderer(
+        let renderer = MaterializationFixture(
             style: .default, availableWidth: 400, placeholderMode: .static
         )
         let block = BlockNode.codeBlock(language: "svg", body: svg)
@@ -68,7 +69,7 @@ struct PlaceholderModeRendererTests {
 
     @Test func svgStreamingMissEmitsHighlightedSourceWithMarker() {
         let svg = #"<svg viewBox="0 0 480 320"></svg>"#
-        let renderer = AttributedStringRenderer(
+        let renderer = MaterializationFixture(
             style: .default, availableWidth: 600, placeholderMode: .streaming
         )
         let block = BlockNode.codeBlock(language: "svg", body: svg)
@@ -95,7 +96,7 @@ struct PlaceholderModeRendererTests {
 
     @Test func svgStaticMissFallsBackTo60PercentAspectWhenNoViewBox() {
         let svg = "<svg></svg>"
-        let renderer = AttributedStringRenderer(
+        let renderer = MaterializationFixture(
             style: .default, availableWidth: 600, placeholderMode: .static
         )
         let block = BlockNode.codeBlock(language: "svg", body: svg)
@@ -121,7 +122,7 @@ struct PlaceholderModeRendererTests {
         #elseif canImport(AppKit)
         style.bodyFont = .systemFont(ofSize: 17)
         #endif
-        let renderer = AttributedStringRenderer(
+        let renderer = MaterializationFixture(
             style: style, availableWidth: 600, placeholderMode: .static
         )
         let block = BlockNode.mathBlock(latex: "x = \\frac{a}{b}")
@@ -146,22 +147,19 @@ struct PlaceholderModeRendererTests {
 
     @Test func svgCacheHitIdenticalAcrossModes() {
         let svg = #"<svg viewBox="0 0 480 320"></svg>"#
-        let key = SVGBlockCacheKey(svg: svg, availableWidth: 600, rasterScale: 2, rendererGeneration: 0)
+        let key = SVGBlockCacheKey(svg: svg, availableWidth: 600, rasterScale: 2, configurationID: .semantic(namespace: "fixture", version: 0))
         // 造一个 dummy glyph
         #if canImport(UIKit)
         let dummyImage = UIGraphicsImageRenderer(size: CGSize(width: 100, height: 50)).image { _ in }
         #elseif canImport(AppKit)
         let dummyImage = NSImage(size: CGSize(width: 100, height: 50))
         #endif
-        let glyph = SVGBlockGlyph(image: dummyImage)
 
         for mode in [PlaceholderMode.static, .streaming] {
-            var renderer = AttributedStringRenderer(
+            var renderer = MaterializationFixture(
                 style: .default, availableWidth: 600, placeholderMode: mode
             )
-            renderer.svgRasterScale = 2
-            renderer.svgRendererGeneration = 0
-            renderer.svgBlockCache[key] = glyph
+            renderer.svg[key.svg] = dummyImage
             let block = BlockNode.codeBlock(language: "svg", body: svg)
             let result = renderer.renderBlock(block)
 
@@ -188,7 +186,7 @@ struct PlaceholderModeRendererTests {
         let availableWidth: CGFloat = 600
 
         // 1) Static-miss 路径
-        let missRenderer = AttributedStringRenderer(
+        let missRenderer = MaterializationFixture(
             style: .default, availableWidth: availableWidth, placeholderMode: .static
         )
         let missResult = missRenderer.renderBlock(BlockNode.codeBlock(language: "svg", body: svg))
@@ -209,14 +207,12 @@ struct PlaceholderModeRendererTests {
         let stub = NSImage(size: nativeTargetSize)
         #endif
         let key = SVGBlockCacheKey(
-            svg: svg, availableWidth: availableWidth, rasterScale: 1, rendererGeneration: 0
+            svg: svg, availableWidth: availableWidth, rasterScale: 1, configurationID: .semantic(namespace: "fixture", version: 0)
         )
-        var hitRenderer = AttributedStringRenderer(
+        var hitRenderer = MaterializationFixture(
             style: .default, availableWidth: availableWidth, placeholderMode: .static
         )
-        hitRenderer.svgRasterScale = 1
-        hitRenderer.svgRendererGeneration = 0
-        hitRenderer.svgBlockCache[key] = SVGBlockGlyph(image: stub)
+        hitRenderer.svg[key.svg] = stub
         let hitResult = hitRenderer.renderBlock(BlockNode.codeBlock(language: "svg", body: svg))
         var hitBounds = CGRect.zero
         hitResult.enumerateAttribute(
@@ -253,22 +249,19 @@ struct PlaceholderModeRendererTests {
             pointSize: MathMetrics.effectivePointSize(textPointSize: 17, mathScale: style.mathScale),
             colorHex: MathMetrics.colorHex(style.mathColorOverride ?? style.textColor),
             rasterScale: 1,
-            rendererGeneration: 0
+            configurationID: .semantic(namespace: "fixture", version: 0)
         )
         #if canImport(UIKit)
         let dummyImage = UIGraphicsImageRenderer(size: CGSize(width: 80, height: 32)).image { _ in }
         #elseif canImport(AppKit)
         let dummyImage = NSImage(size: CGSize(width: 80, height: 32))
         #endif
-        let glyph = MathRenderedGlyph(image: dummyImage, baselineOffsetEx: 0)
 
         for mode in [PlaceholderMode.static, .streaming] {
-            var renderer = AttributedStringRenderer(
+            var renderer = MaterializationFixture(
                 style: style, availableWidth: 600, placeholderMode: mode
             )
-            renderer.mathRasterScale = 1
-            renderer.mathRendererGeneration = 0
-            renderer.mathCache[key] = glyph
+            renderer.math[key.latex] = (dummyImage, 0)
             let block = BlockNode.mathBlock(latex: latex)
             let result = renderer.renderBlock(block)
 
@@ -289,7 +282,7 @@ struct PlaceholderModeRendererTests {
     @Test func defaultModeIsStreaming() {
         let svg = #"<svg viewBox="0 0 480 320"></svg>"#
         // 不传 placeholderMode → 默认应 .streaming（向后兼容）
-        let renderer = AttributedStringRenderer(style: .default, availableWidth: 600)
+        let renderer = MaterializationFixture(style: .default, availableWidth: 600)
         let block = BlockNode.codeBlock(language: "svg", body: svg)
         let result = renderer.renderBlock(block)
 

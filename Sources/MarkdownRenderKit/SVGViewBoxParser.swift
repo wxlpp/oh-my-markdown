@@ -6,7 +6,7 @@ import AppKit
 #endif
 
 /// 在 SVG 字符串首 4KB 内提取 `<svg ... viewBox="x y w h" ...>` 的原生尺寸 / 高宽比。
-/// 调用方在 AttributedStringRenderer 的 static-miss 分支用 `parseSize` 给透明占位
+/// RenderMaterializer 的 static-miss 分支用 `parseSize` 给透明占位
 /// attachment 算尺寸（与 SwiftDraw fit-without-upscale 公式对齐避免 layout shift），
 /// `parseAspect` 为兼容 / aspect-only 场景保留。失败一律返回 nil。
 ///

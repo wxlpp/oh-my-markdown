@@ -8,11 +8,11 @@ import MarkdownRenderKit
 ///
 /// Single source of truth for ```svg renderer identity, shared by both
 /// representables to prevent two private copies from drifting apart.
-func isSameSVGBlockRenderer(_ a: (any SVGBlockRendering)?, _ b: (any SVGBlockRendering)?) -> Bool {
+func isSameSVGBlockRenderer(_ a: SVGRendererConfiguration?, _ b: SVGRendererConfiguration?) -> Bool {
     switch (a, b) {
     case (nil, nil): true
     // SVGBlockRendering 约束 AnyObject，`===` 直接比较类实例身份、无装箱。
-    case (let x?, let y?): x === y
+    case (let x?, let y?): x.configurationID == y.configurationID
     default: false
     }
 }

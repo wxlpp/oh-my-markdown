@@ -23,6 +23,7 @@ import AppKit
 /// 若有人让任一入口偏离 `heightCore` / 改 TextKit 配置使两路不再逐字节
 /// 相等，本守卫立即 RED。
 @Suite("TableMeasurement laid-out vs built-stack height equivalence (PR #4 R3 #1)")
+@MainActor
 struct TableMeasurementLaidOutEquivalenceTests {
     /// 复刻 `TableContentView` init 的 TextKit 2 栈配置，laid out 后回传
     /// 其 layoutManager 给 `height(usingLaidOut:)`（入口 B）。
@@ -45,14 +46,14 @@ struct TableMeasurementLaidOutEquivalenceTests {
     private func renderedTable(_ source: String) throws -> (NSAttributedString, CGFloat) {
         let document = MarkdownDocument(parsing: source)
         let tableBlock = try #require(document.blocks.first)
-        let probe = AttributedStringRenderer(style: .default, availableWidth: 180)
+        let probe = MaterializationFixture(style: .default, availableWidth: 180)
         let rendered = probe.render(document.blocks)
         let naturalWidth = try #require(
             rendered.attribute(.markdownTableNaturalWidth, at: 0, effectiveRange: nil) as? CGFloat
         )
         // Overlay-side full (non-overflow) table string at natural width —
         // exactly what `TableContentView` lays out.
-        let overlayRenderer = AttributedStringRenderer(style: .default, availableWidth: naturalWidth)
+        let overlayRenderer = MaterializationFixture(style: .default, availableWidth: naturalWidth)
         return (overlayRenderer.renderBlock(tableBlock), naturalWidth)
     }
 

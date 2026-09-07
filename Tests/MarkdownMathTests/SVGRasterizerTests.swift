@@ -11,6 +11,7 @@ import AppKit
 #endif
 
 @Suite("SVGRasterizer")
+@MainActor
 struct SVGRasterizerUnitTests {
     private let sample = """
     <svg xmlns="http://www.w3.org/2000/svg" width="2.5ex" height="1.2ex" \
@@ -35,16 +36,16 @@ struct SVGRasterizerUnitTests {
         let glyph = try SVGRasterizer.rasterize(
             svg: self.sample, hex: "#000000", pointSize: 16, scale: 2
         )
-        #expect(glyph.image.size.width > 1)
+        #expect(glyph.image.pointSize.width > 1)
         #expect(glyph.baselineOffsetEx == -0.25)
         let glyph1x = try SVGRasterizer.rasterize(
             svg: self.sample, hex: "#000000", pointSize: 16, scale: 1
         )
-        #expect(abs(glyph.image.size.height - glyph1x.image.size.height) < 0.5)
+        #expect(abs(glyph.image.pointSize.height - glyph1x.image.pointSize.height) < 0.5)
         let glyphBig = try SVGRasterizer.rasterize(
             svg: self.sample, hex: "#000000", pointSize: 32, scale: 2
         )
-        #expect(glyphBig.image.size.height > glyph.image.size.height)
+        #expect(glyphBig.image.pointSize.height > glyph.image.pointSize.height)
     }
 
     @Test("正的 vertical-align 也能解析")
@@ -58,7 +59,7 @@ struct SVGRasterizerUnitTests {
         let s = ##"<svg width=".5ex" height=".5ex" viewBox="0 -10 20 20" style="vertical-align: 0ex;"><rect x="0" y="0" width="10" height="10" fill="#000000"/></svg>"##
         // 不应 .parseFailed（Fix C 的前导点正则使 .5ex→.5px，SwiftDraw 可解析）
         let glyph = try SVGRasterizer.rasterize(svg: s, hex: "#000000", pointSize: 16, scale: 1)
-        #expect(glyph.image.size.width > 0)
+        #expect(glyph.image.pointSize.width > 0)
     }
 
     /// Bug 2 pixel regression: 8-digit hex (#RRGGBBAA) is misread by SwiftDraw as a
@@ -77,7 +78,7 @@ struct SVGRasterizerUnitTests {
         let glyph = try SVGRasterizer.rasterize(svg: svgSource, hex: hex, pointSize: 16, scale: 2)
 
         // Extract center pixel from the rasterized image.
-        let image = glyph.image
+        let image = try glyph.image.materialize()
         #if canImport(UIKit)
         guard let cgImage = image.cgImage else {
             Issue.record("No CGImage from UIImage"); return

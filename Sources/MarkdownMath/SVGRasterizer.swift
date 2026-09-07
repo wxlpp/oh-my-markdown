@@ -8,9 +8,9 @@ import UIKit
 import AppKit
 #endif
 
-enum SVGRasterizerError: Error { case parseFailed, rasterizeFailed }
+enum SVGRasterizerError: Error { case parseFailed, invalidDimensions, rasterizeFailed }
 
-// SVG 字符串 → 颜色注入 → ex 归一化 → SwiftDraw 光栅化 → MathRenderedGlyph。
+// SVG 字符串 → 颜色注入 → ex 归一化 → SwiftDraw 光栅化 → RenderedMath。
 //
 // **输入契约**：仅支持 MathJax 默认 inline SVG 格式——根 `<svg>` 带数值
 // `width="<num>ex"` 属性和 `viewBox`。Container/SVG-tag 模式（根 `width="100%"`、
@@ -86,7 +86,7 @@ enum SVGRasterizer {
         hex: String,
         pointSize: CGFloat,
         scale: CGFloat
-    ) throws -> MathRenderedGlyph {
+    ) throws -> RenderedMath {
         // ex→px 归一化只为喂 SwiftDraw 解析；高度/基线仍读原始 svg 的 ex 值。
         let colored = self.normalizeUnits(self.injectColor(into: svg, hex: hex))
         guard let data = colored.data(using: .utf8),
@@ -99,30 +99,31 @@ enum SVGRasterizer {
         let aspect = drawing.size.height > 0 ? drawing.size.width / drawing.size.height : 1
         let targetPointSize = CGSize(width: heightPoints * aspect, height: heightPoints)
 
-        // SwiftDraw 的 rasterize API 按平台拆分，签名/标签/返回类型均不同：
-        // - UIKit  `UIImage+SVG.swift`:  func rasterize(size: CGSize, scale: CGFloat = 0) -> UIImage
-        // - AppKit `NSImage+SVG.swift`:  func rasterize(with size: CGSize? = nil, scale: CGFloat = 0) -> NSImage
-        // 必须按平台选用正确的参数标签，否则 iOS SDK 下（只有 UIKit 重载）编译失败：
-        //   error: incorrect argument label in call (have 'with:scale:', expected 'size:scale:')
-        //
-        // 点尺寸契约（image.size 必须是「点」）：
-        // - UIKit：rasterize(size:scale:) → sized(size).rasterize(scale:)；内部
-        //   makeBounds(size:scale:1) 用固定 scale 1（点空间），UIGraphicsImageRendererFormat.scale
-        //   单独编码栅格密度，UIGraphicsImageRenderer(size:) 即点尺寸 → 返回 UIImage.size
-        //   天然等于 targetPointSize（点），无需修正（与 Task 13 结论一致）。
-        // - AppKit：rasterize(with:scale:) 把返回 NSImage.size 设为 size×scale（像素），
-        //   须显式改回点尺寸以满足点尺寸契约；Retina 清晰度由 AppKit 按设备 rect
-        //   矢量重画保证，scale: 在 macOS 路径实为冗余（仅影响被覆盖的中间 .size）。
-        #if canImport(UIKit)
-        let image = drawing.rasterize(size: targetPointSize, scale: scale)
-        #elseif canImport(AppKit)
-        let image = drawing.rasterize(with: targetPointSize, scale: scale)
-        image.size = targetPointSize
-        #endif
+        let image = try rasterImage(drawing, pointSize: targetPointSize, scale: scale)
+        return RenderedMath(image: image, baselineOffsetEx: self.parseVerticalAlignEx(svg))
+    }
 
-        guard image.size.width > 1, image.size.height > 1 else {
-            throw SVGRasterizerError.rasterizeFailed
+    /// Draw into privately allocated Core Graphics storage; no platform image escapes.
+    static func rasterImage(_ drawing: SwiftDraw.SVG, pointSize: CGSize, scale: CGFloat) throws -> RenderedImage {
+        let density = scale.isFinite && scale > 0 ? scale : 1
+        let width = ceil(pointSize.width * density)
+        let height = ceil(pointSize.height * density)
+        guard width.isFinite, height.isFinite, width > 1, height > 1, width <= 4096, height <= 4096 else {
+            throw SVGRasterizerError.invalidDimensions
         }
-        return MathRenderedGlyph(image: image, baselineOffsetEx: self.parseVerticalAlignEx(svg))
+        guard let context = CGContext(
+            data: nil,
+            width: Int(width),
+            height: Int(height),
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { throw SVGRasterizerError.rasterizeFailed }
+        context.translateBy(x: 0, y: height)
+        context.scaleBy(x: width / pointSize.width, y: -height / pointSize.height)
+        context.draw(drawing, in: CGRect(origin: .zero, size: pointSize))
+        guard let image = context.makeImage() else { throw SVGRasterizerError.rasterizeFailed }
+        return try RenderedImage(cgImage: image, pointSize: pointSize)
     }
 }

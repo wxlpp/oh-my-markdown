@@ -157,10 +157,12 @@ import MarkdownKit
 import MarkdownMath
 
 MarkdownText("Euler: $e^{i\\pi}+1=0$")
-    .mathRenderer(MathJaxRenderer())
+    .mathRenderer(MathRendererConfiguration(renderer: MathJaxRenderer()))
 ```
 
 Notes:
+
+Custom renderer wrappers are unique by default; only an explicit semantic configuration ID opts them into sharing completed results (never in-flight tasks).
 
 - Without `.mathRenderer(_:)`, math is gracefully degraded and shown as its raw LaTeX text.
 - `MarkdownEditor` only token-highlights the math delimiters; it does not render formulas.
@@ -169,7 +171,7 @@ Notes:
 ## 📖 Public Modules
 
 - `MarkdownCore` - Markdown IR and parser output (`MarkdownDocument`, `BlockNode`, `InlineNode`)
-- `MarkdownRenderKit` - `AttributedStringRenderer`, `RenderStyle`, fenced code syntax highlighting, source editor highlighting
+- `MarkdownRenderKit` - `RenderPreparer`, `RenderSnapshot`, `RenderStyle`, fenced code syntax highlighting, source editor highlighting
 - `MarkdownPlatformView` - `MarkdownLabelView`, `MarkdownEditorTextView`, editor commands and platform hosts
 - `MarkdownKit` - SwiftUI `MarkdownText`, `MarkdownEditor`, plus the lower layers via re-export
 - `MarkdownMath` - optional MathJax (JavaScriptCore) + SwiftDraw implementation of the `MathRendering` protocol for LaTeX math

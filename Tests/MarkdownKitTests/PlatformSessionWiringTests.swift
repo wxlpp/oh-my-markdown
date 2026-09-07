@@ -157,6 +157,7 @@ struct PlatformSessionWiringTests {
         #expect(view.imageRequests.isEmpty)
         view.dismantleRenderSession()
         #expect(overlay == nil)
+        overlay = nil
     }
 
     @Test func currentImageFailureIsRecordedWithoutPublishingOrRetryLoop() async throws {
@@ -198,7 +199,7 @@ struct PlatformSessionWiringTests {
 
     private final class MissingMathRenderer: MathRendering {
         let calls = RenderSideEffectProbe()
-        func render(latex: String, display: Bool, pointSize: CGFloat, scale: CGFloat, color: PlatformColor) async -> MathRenderOutcome {
+        func render(latex: String, display: Bool, pointSize: CGFloat, scale: CGFloat, colorHex: String) async -> MathRenderOutcome {
             self.calls.record()
             return .failed
         }
@@ -246,7 +247,7 @@ struct PlatformSessionWiringTests {
         let renderer = PausedSVGRenderer()
         var view: MarkdownLabelView? = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         let weakView = WeakLifetime(view)
-        view?.svgBlockRenderer = renderer
+        view?.svgBlockRenderer = SVGRendererConfiguration(renderer: renderer)
         view?.setMarkdown("```svg\n<svg viewBox=\"0 0 20 10\"/>\n```")
         #expect(await eventually { renderer.clock.sleepingCount == 1 })
         view?.dismantleRenderSession()
@@ -259,9 +260,9 @@ struct PlatformSessionWiringTests {
     @Test func rendererChangesEmitExactlyOnceInMutationOrder() {
         let driver = RecordingSessionDriver()
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400), driver: driver)
-        view.mathRenderer = MissingMathRenderer()
+        view.mathRenderer = MathRendererConfiguration(renderer: MissingMathRenderer())
         view.setMarkdown("one")
-        view.svgBlockRenderer = MissingSVGRenderer()
+        view.svgBlockRenderer = SVGRendererConfiguration(renderer: MissingSVGRenderer())
         view.appendMarkdown(" two")
         view.mathRenderer = nil
         view.svgBlockRenderer = nil
@@ -276,8 +277,8 @@ struct PlatformSessionWiringTests {
         var style = view.renderStyle
         style.bodyFont = .systemFont(ofSize: 16)
         view.renderStyle = style
-        view.mathRenderer = math
-        view.svgBlockRenderer = svg
+        view.mathRenderer = MathRendererConfiguration(renderer: math)
+        view.svgBlockRenderer = SVGRendererConfiguration(renderer: svg)
         view.setMarkdown("![alt](file:///markdownkit-missing-parity-fixture.png) $x$\n\n$$\ny=2\n$$\n\n```svg\n<svg viewBox=\"0 0 200 100\"/>\n```")
         #expect(await eventually { math.calls.count == 2 && svg.calls.count == 1 })
         let snapshot = try #require(view.currentSnapshot)

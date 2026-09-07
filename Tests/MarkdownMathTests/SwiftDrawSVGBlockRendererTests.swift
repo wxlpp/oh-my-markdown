@@ -20,8 +20,8 @@ struct SwiftDrawSVGBlockRendererTests {
             #expect(Bool(false), "expected .rendered")
             return
         }
-        #expect(abs(g.image.size.width - 100) <= 0.5)
-        #expect(abs(g.image.size.height - 50) <= 0.5)
+        #expect(abs(g.image.pointSize.width - 100) <= 0.5)
+        #expect(abs(g.image.pointSize.height - 50) <= 0.5)
     }
 
     @Test("availableWidth ≥ 原生宽 → 不放大，保持原生尺寸")
@@ -30,8 +30,8 @@ struct SwiftDrawSVGBlockRendererTests {
         guard case .rendered(let g) = await r.render(svg: Self.valid, availableWidth: 999, scale: 1) else {
             #expect(Bool(false)); return
         }
-        #expect(abs(g.image.size.width - 200) <= 0.5)
-        #expect(abs(g.image.size.height - 100) <= 0.5)
+        #expect(abs(g.image.pointSize.width - 200) <= 0.5)
+        #expect(abs(g.image.pointSize.height - 100) <= 0.5)
     }
 
     @Test("非法 svg → .failed")

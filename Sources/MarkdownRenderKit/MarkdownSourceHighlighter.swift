@@ -14,7 +14,11 @@ import AppKit
 /// This highlighter intentionally styles the source string itself instead of reusing the
 /// rich read-only renderer. It keeps the editor model plain-text-first while still sharing
 /// fonts, colors, and fenced code block syntax coloring with the rest of the package.
-public struct MarkdownSourceHighlighter: Sendable {
+@MainActor
+public struct MarkdownSourceHighlighter {
+    private let configuration: RenderConfigurationSnapshot
+    private var syntaxSpans: [SyntaxHighlightKey: [SyntaxHighlightSpan]] = [:]
+    private let style: RenderStyle
     private struct CodeBlockMatch {
         let fullRange: NSRange
         let openingFenceRange: NSRange
@@ -32,11 +36,29 @@ public struct MarkdownSourceHighlighter: Sendable {
     }
 
     public init(style: RenderStyle = .default) {
-        self.style = style
+        self.init(configuration: MarkdownRenderConfiguration(style: style).snapshot(generation: 0))
     }
 
-    public var style: RenderStyle
+    public init(configuration: RenderConfigurationSnapshot) {
+        self.configuration = configuration
+        self.style = RenderMaterializer(configuration: configuration).resolvedStyle()
+    }
 
+    /// Identifies fenced code to prefetch with SyntaxHighlightCache outside MainActor.
+    public func syntaxRequests(for source: String) -> [SyntaxHighlightKey] {
+        self.codeBlockMatches(in: source).map {
+            SyntaxHighlightKey(code: (source as NSString).substring(with: $0.bodyRange), language: $0.language)
+        }
+    }
+
+    /// Applies prefetched spans to this exact source while preserving synchronous editor attributes.
+    public func highlight(_ source: String, syntaxSpans: [SyntaxHighlightKey: [SyntaxHighlightSpan]]) -> NSAttributedString {
+        var prepared = self
+        prepared.syntaxSpans = syntaxSpans
+        return prepared.highlight(source)
+    }
+
+    /// Applies base Markdown attributes; fenced token colors require prefetched spans.
     public func highlight(_ source: String) -> NSAttributedString {
         let text = source as NSString
         let fullRange = NSRange(location: 0, length: text.length)
@@ -195,7 +217,7 @@ public struct MarkdownSourceHighlighter: Sendable {
         let body = (source as NSString).substring(with: bodyRange)
         let highlighted = SyntaxHighlighter.highlight(
             body,
-            language: match.language,
+            spans: self.syntaxSpans[SyntaxHighlightKey(code: body, language: match.language)] ?? [],
             font: self.style.codeFont,
             defaultColor: self.style.codeTextColor
         )

@@ -7,7 +7,7 @@ package actor MarkdownRenderSession: ParseResultSink {
     package nonisolated let registry: RenderSessionSinkRegistry
     private nonisolated let token = ParseSessionToken()
     private let executor: ParseExecutor
-    private let clock: any RenderSessionClock
+    package nonisolated let clock: any RenderSessionClock
     private var availableWidth: Double
     private var placeholderMode: PlaceholderMode
     private let prepareInput: RenderSessionPreparation
@@ -177,7 +177,7 @@ package actor MarkdownRenderSession: ParseResultSink {
 
     @concurrent package static func prepare(_ input: RenderInput) async throws -> RenderDisplayModel {
         try Task.checkCancellation()
-        return try RenderPreparer(configuration: input.configuration).prepare(input)
+        return try await RenderPreparer(configuration: input.configuration).prepare(input).preparingSyntax()
     }
 
     private func publishPrepared(
@@ -221,11 +221,37 @@ package protocol RenderSessionDriving: AnyObject {
     var resourceTaskOwner: RenderSessionResourceTaskOwner { get }
 }
 
-/// Owns compatibility wrapper work until the resource coordinators are replaced.
-/// Cancelling a wrapper does not claim cancellation of legacy glyph producers.
+/// Owns all resource work and the single coalesced layout/publication clock task.
 @MainActor
 package final class RenderSessionResourceTaskOwner {
+    package let math: MathLoadCoordinator
+    package let svg: SVGBlockLoadCoordinator
+    private let clock: any RenderSessionClock
+    private var debounceTask: Task<Void, Never>?
+    private var deferredActions: [String: @MainActor () -> Void] = [:]
     private var tasks: [UUID: Task<Void, Never>] = [:]
+    package init(cache: RenderedResourceCache = .shared, clock: any RenderSessionClock = ContinuousRenderSessionClock()) {
+        self.math = MathLoadCoordinator(cache: cache)
+        self.svg = SVGBlockLoadCoordinator(cache: cache)
+        self.clock = clock
+    }
+
+    package func deferAction(key: String, _ action: @escaping @MainActor () -> Void) {
+        self.deferredActions[key] = action
+        guard self.debounceTask == nil else { return }
+        let clock = self.clock
+        self.debounceTask = Task { [weak self, clock] in
+            do { try await clock.sleep(for: .milliseconds(33)) } catch { return }
+            guard !Task.isCancelled, let self else { return }
+            self.debounceTask = nil
+            let actions = self.deferredActions.values
+            self.deferredActions.removeAll()
+            for action in actions {
+                action()
+            }
+        }
+    }
+
     package var count: Int {
         self.tasks.count
     }
@@ -243,6 +269,11 @@ package final class RenderSessionResourceTaskOwner {
     }
 
     package func cancelAll() {
+        self.math.cancelAll()
+        self.svg.cancelAll()
+        self.debounceTask?.cancel()
+        self.debounceTask = nil
+        self.deferredActions.removeAll()
         for task in self.tasks.values {
             task.cancel()
         }
@@ -250,6 +281,9 @@ package final class RenderSessionResourceTaskOwner {
     }
 
     isolated deinit {
+        math.cancelAll()
+        svg.cancelAll()
+        debounceTask?.cancel()
         for task in tasks.values {
             task.cancel()
         }
@@ -258,7 +292,7 @@ package final class RenderSessionResourceTaskOwner {
 
 @MainActor
 package final class MarkdownRenderSessionDriver: RenderSessionDriving {
-    package let resourceTaskOwner = RenderSessionResourceTaskOwner()
+    package let resourceTaskOwner: RenderSessionResourceTaskOwner
     private let session: MarkdownRenderSession
     private let continuation: AsyncStream<RenderSessionEvent>.Continuation
     private let pump: Task<Void, Never>
@@ -268,6 +302,7 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
     private var dismantled = false
 
     package init(session: MarkdownRenderSession) {
+        self.resourceTaskOwner = RenderSessionResourceTaskOwner(clock: session.clock)
         self.session = session
         let (stream, continuation) = AsyncStream<RenderSessionEvent>.makeStream()
         self.continuation = continuation
@@ -282,6 +317,7 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
 
     package func send(_ mutation: RenderSessionMutation) {
         guard !self.dismantled else { return }
+        self.resourceTaskOwner.cancelAll()
         self.sequence += 1
         switch mutation {
         case .setSource, .setDocument:

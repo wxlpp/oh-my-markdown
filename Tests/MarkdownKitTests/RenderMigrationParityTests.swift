@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MarkdownCore
 @testable import MarkdownPlatformView
@@ -10,38 +11,36 @@ import UIKit
 import AppKit
 #endif
 
-/// The legacy renderer remains an independent oracle until both platform gates pass.
-/// Literal output assertions also catch omissions shared by both implementations.
+/// Frozen Task 4B output preserves independent attribute/layout expectations.
+/// Literal assertions keep individual contracts readable alongside the JSON baseline.
 @MainActor
 struct RenderMigrationParityTests {
-    @Test func overflowOverlayRetainsFullAttributedTableAndMeasuredGeometry() throws {
+    @Test func overflowOverlayRetainsFullAttributedTableAndMeasuredGeometry() async throws {
         let source = "before\n\n| **Bold** | [Link](https://example.com/table) |\n| :--- | ---: |\n| *italic* | `code` |\n\nafter"
-        let pair = try self.render(source, width: 120)
+        let pair = try await self.render(source, width: 120)
         let overlay = try #require(pair.snapshot.tableOverlays[1])
         #expect(pair.snapshot.attributedString.string == "before\n\u{00A0}\nafter")
         #expect(pair.snapshot.blockStarts == [0, 7, 9])
         #expect(overlay.attributedString.string == "\tBold\tLink\n\titalic\tcode")
         var style = RenderStyle.default
         style.bodyFont = .systemFont(ofSize: 16)
-        let block = try #require(MarkdownDocument(parsing: source).blocks.dropFirst().first)
-        let oracle = AttributedStringRenderer(style: style, availableWidth: overlay.naturalWidth).renderBlock(block)
-        #expect(self.normalized(overlay.attributedString).isEqual(to: self.normalized(oracle)))
+        try self.assertGolden(overlay.attributedString, model: pair.snapshot.displayModel, width: overlay.naturalWidth)
         #expect(overlay.naturalWidth >= 172)
-        #expect(overlay.height == TableMeasurement.height(of: oracle, naturalWidth: overlay.naturalWidth))
+        #expect(overlay.height == TableMeasurement.height(of: overlay.attributedString, naturalWidth: overlay.naturalWidth))
         let paragraph = try #require(pair.snapshot.attributedString.attribute(.paragraphStyle, at: 7, effectiveRange: nil) as? NSParagraphStyle)
         #expect(paragraph.minimumLineHeight == overlay.height)
         let link = (overlay.attributedString.string as NSString).range(of: "Link")
         #expect(overlay.attributedString.attribute(.link, at: link.location, effectiveRange: nil) as? URL == URL(string: "https://example.com/table"))
     }
 
-    @Test func overflowOverlayOwnsCellResourcesBeyondMainPlaceholder() throws {
+    @Test func overflowOverlayOwnsCellResourcesBeyondMainPlaceholder() async throws {
         let source = "| Photo | Math |\n|---|---|\n| ![alt](image.png) | $x$ |"
         var style = RenderStyle.default
         style.bodyFont = .systemFont(ofSize: 16)
         let configuration = style.snapshot(generation: 1)
         let document = MarkdownDocument(parsing: source)
         let input = RenderInput(document: document, source: source, availableWidth: 120, configuration: configuration, placeholderMode: .static)
-        let model = try RenderPreparer(configuration: configuration).prepare(input)
+        let model = try await RenderPreparer(configuration: configuration).prepare(input).preparingSyntax()
         let context = try #require(CGContext(data: nil, width: 40, height: 20, bitsPerComponent: 8, bytesPerRow: 160, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         let materializer = RenderMaterializer(configuration: configuration)
         let cgImage = try #require(context.makeImage())
@@ -56,7 +55,7 @@ struct RenderMigrationParityTests {
             for resource in model.resources {
                 switch resource {
                 case .image(let id, _, _): values[id] = .image(image, owner: owner)
-                case .math(let id, _, _): values[id] = .math(image: image, baselineOffset: -3, owner: owner)
+                case .math(let id, _, _): values[id] = .math(owner: RenderedResourceRecord(image: image, baselineOffset: -3).acquireLease())
                 case .svg: break
                 }
             }
@@ -67,11 +66,7 @@ struct RenderMigrationParityTests {
             let overlay = try #require(snapshot?.tableOverlays[0])
             #expect(snapshot?.attributedString.string == "\u{00A0}")
             #expect(overlay.attributedString.string == "\tPhoto\tMath\n\t\u{FFFC}\t\u{FFFC}")
-            var legacy = AttributedStringRenderer(style: style, availableWidth: overlay.naturalWidth, placeholderMode: .static)
-            legacy.imageCache["image.png"] = image
-            legacy.mathCache[MathCacheKey(latex: "x", display: false, pointSize: 16, colorHex: MathMetrics.colorHex(style.textColor), rasterScale: 1, rendererGeneration: 0)] = MathRenderedGlyph(image: image, baselineOffsetEx: -0.375)
-            let table = try #require(document.blocks.first)
-            #expect(self.normalized(overlay.attributedString).isEqual(to: self.normalized(legacy.renderBlock(table))))
+            try self.assertGolden(overlay.attributedString, model: #require(snapshot?.displayModel), width: overlay.naturalWidth)
             var bounds: [CGRect] = []
             overlay.attributedString.enumerateAttribute(.attachment, in: NSRange(location: 0, length: overlay.attributedString.length)) { value, _, _ in
                 if let attachment = value as? NSTextAttachment { bounds.append(attachment.bounds) }
@@ -84,19 +79,16 @@ struct RenderMigrationParityTests {
     }
 
     @Test(arguments: ["hello", "newest"])
-    func singleParagraphHasNoSyntheticTerminalNewline(source: String) throws {
-        let pair = try self.render(source, width: 320)
-        #expect(pair.legacy.string == source)
+    func singleParagraphHasNoSyntheticTerminalNewline(source: String) async throws {
+        let pair = try await self.render(source, width: 320)
         #expect(pair.snapshot.attributedString.string == source)
-        #expect(!pair.legacy.string.hasSuffix("\n"))
         try self.assertParity(pair, width: 320)
     }
 
     @Test(arguments: [120.0, 640.0])
-    func inlineTraitsLinksCodeAndBlockSeparators(width: Double) throws {
+    func inlineTraitsLinksCodeAndBlockSeparators(width: Double) async throws {
         let source = "# Heading\n\n*italic* **bold** ~~gone~~ [label](https://example.com/path?q=1) `let x`"
-        let pair = try render(source, width: width)
-        #expect(pair.legacy.string == "Heading\nitalic bold gone label let x")
+        let pair = try await render(source, width: width)
         #expect(pair.snapshot.attributedString.string == "Heading\nitalic bold gone label let x")
         try self.assertParity(pair, width: width)
         let text = pair.snapshot.attributedString
@@ -109,29 +101,26 @@ struct RenderMigrationParityTests {
     }
 
     @Test(arguments: [120.0, 640.0])
-    func quotesNestedAndTaskListsPreserveMarkersAndIndents(width: Double) throws {
+    func quotesNestedAndTaskListsPreserveMarkersAndIndents(width: Double) async throws {
         let source = "> outer\n>\n> > inner `code`\n\n3. first\n4. second\n\n- [x] done\n- [ ] pending\n  - child"
-        let pair = try render(source, width: width)
+        let pair = try await render(source, width: width)
         let expected = "outer\ninner code\n3.\tfirst\n4.\tsecond\n•\t☑ done\n•\t☐ pending\n•\tchild"
-        #expect(pair.legacy.string == expected)
         #expect(pair.snapshot.attributedString.string == expected)
         try self.assertParity(pair, width: width)
     }
 
     @Test(arguments: [120.0, 640.0])
-    func fencedCodeHTMLAndThematicBreak(width: Double) throws {
+    func fencedCodeHTMLAndThematicBreak(width: Double) async throws {
         let source = "```swift\nlet answer = 42\n```\n\n---\n\n<div>raw</div>"
-        let pair = try render(source, width: width)
-        #expect(pair.legacy.string == "let answer = 42\n\u{00A0}\n<div>raw</div>\n")
-        #expect(pair.snapshot.attributedString.string == pair.legacy.string)
+        let pair = try await render(source, width: width)
+        #expect(pair.snapshot.attributedString.string == "let answer = 42\n\u{00A0}\n<div>raw</div>\n")
         try self.assertParity(pair, width: width)
     }
 
     @Test(arguments: [120.0, 640.0])
-    func alignedTableMeasuresOverflowAndTabStops(width: Double) throws {
-        let pair = try render("| Left | Center | Right |\n| :--- | :---: | ---: |\n| a | b | c |", width: width)
+    func alignedTableMeasuresOverflowAndTabStops(width: Double) async throws {
+        let pair = try await render("| Left | Center | Right |\n| :--- | :---: | ---: |\n| a | b | c |", width: width)
         let expected = width == 120 ? "\u{00A0}" : "\tLeft\tCenter\tRight\n\ta\tb\tc"
-        #expect(pair.legacy.string == expected)
         #expect(pair.snapshot.attributedString.string == expected)
         try self.assertParity(pair, width: width)
         let text = pair.snapshot.attributedString
@@ -147,11 +136,10 @@ struct RenderMigrationParityTests {
     }
 
     @Test(arguments: [PlaceholderMode.static, .streaming])
-    func missingResourcesPreserveReadableFallbacksAndStaticGeometry(mode: PlaceholderMode) throws {
+    func missingResourcesPreserveReadableFallbacksAndStaticGeometry(mode: PlaceholderMode) async throws {
         let source = "![alt](missing.png) $x$\n\n$$\ny=2\n$$\n\n```svg\n<svg viewBox=\"0 0 200 100\"/>\n```"
-        let pair = try render(source, width: 120, mode: mode)
+        let pair = try await render(source, width: 120, mode: mode)
         let expected = mode == .static ? "🖼 alt x\n\u{FFFC}\n\u{FFFC}" : "🖼 alt x\ny=2\n<svg viewBox=\"0 0 200 100\"/>"
-        #expect(pair.legacy.string == expected)
         #expect(pair.snapshot.attributedString.string == expected)
         try self.assertParity(pair, width: 120)
         if mode == .static {
@@ -164,14 +152,13 @@ struct RenderMigrationParityTests {
     }
 
     private struct Pair {
-        let legacy: NSAttributedString
         let snapshot: RenderSnapshot
     }
 
     @Test
-    func sourceCopyAndProgrammaticFallbackUseMaterializedUTF16Offsets() throws {
+    func sourceCopyAndProgrammaticFallbackUseMaterializedUTF16Offsets() async throws {
         let source = "**A😀**\n\n| x | y |\n|---|---|\n| a | b |\n\nlast"
-        let pair = try render(source, width: 120, mode: .static)
+        let pair = try await render(source, width: 120, mode: .static)
         let model = pair.snapshot.displayModel
         #expect(pair.snapshot.attributedString.string == "A😀\n\u{00A0}\nlast")
         #expect(pair.snapshot.blockStarts == [0, 4, 6])
@@ -187,19 +174,19 @@ struct RenderMigrationParityTests {
     }
 
     @Test
-    func mathBackfillWithoutSourceRangesKeepsLegacyCopyFallback() throws {
+    func mathBackfillWithoutSourceRangesKeepsLegacyCopyFallback() async throws {
         let source = "**A😀**\n\n$$\nx\n$$\n\nlast"
-        let pair = try render(source, width: 120, mode: .static)
+        let pair = try await render(source, width: 120, mode: .static)
         let blocks = try #require(pair.snapshot.displayModel.preparedBlocks)
         #expect(blocks[1].sourceRange == nil)
         #expect(pair.snapshot.blockStarts == [0, 4, 6])
-        for text in [pair.legacy, pair.snapshot.attributedString] {
+        for text in [pair.snapshot.attributedString] {
             #expect(markdownSourceForRenderedSelection(renderedRange: NSRange(location: 1, length: 4), renderedPlainText: text.string, blockStarts: [0, 4, 6], parsedBlocks: blocks, renderedLength: text.length, originalSource: source) == "😀\n\u{FFFC}")
         }
     }
 
     @Test
-    func customFontsColorsAndParagraphTokensRoundTrip() throws {
+    func customFontsColorsAndParagraphTokensRoundTrip() async throws {
         var style = RenderStyle.default
         style.bodyFont = .systemFont(ofSize: 19, weight: .medium)
         style.codeFont = .monospacedSystemFont(ofSize: 17, weight: .bold)
@@ -228,10 +215,10 @@ struct RenderMigrationParityTests {
         let configuration = style.snapshot(generation: 1)
         let input = RenderInput(document: document, source: source, availableWidth: 640, configuration: configuration, placeholderMode: .streaming)
         let materializer = RenderMaterializer(configuration: configuration)
-        let model = try RenderPreparer(configuration: configuration).prepare(input)
+        let model = try await RenderPreparer(configuration: configuration).prepare(input).preparingSyntax()
         let snapshot = materializer.materialize(model, resources: .init(values: [:]))
         #expect(snapshot.attributedString.string == "One\nTwo\nThree\nFour\nFive\nSix\nbody italic bold link inline x\nquote\ncode")
-        try self.assertParity(Pair(legacy: AttributedStringRenderer(style: style, availableWidth: 640).render(document.blocks), snapshot: snapshot), width: 640)
+        try self.assertParity(Pair(snapshot: snapshot), width: 640)
         let restored = materializer.resolvedStyle().snapshot(generation: 1)
         #expect(restored.colors == configuration.colors)
         #expect(restored.typography.pointSizes == configuration.typography.pointSizes)
@@ -241,7 +228,7 @@ struct RenderMigrationParityTests {
     }
 
     @Test
-    func resolvedImageMathSVGKeepGeometryScaleBaselineAndOwners() throws {
+    func resolvedImageMathSVGKeepGeometryScaleBaselineAndOwners() async throws {
         let source = "![alt](image.png) $x$\n\n```svg\n<svg viewBox=\"0 0 120 60\"/>\n```"
         var style = RenderStyle.default
         style.bodyFont = .systemFont(ofSize: 16)
@@ -249,7 +236,7 @@ struct RenderMigrationParityTests {
         let configuration = style.snapshot(generation: 8)
         let document = MarkdownDocument(parsing: source)
         let input = RenderInput(document: document, source: source, availableWidth: 120, configuration: configuration, placeholderMode: .static)
-        let model = try RenderPreparer(configuration: configuration).prepare(input)
+        let model = try await RenderPreparer(configuration: configuration).prepare(input).preparingSyntax()
         let materializer = RenderMaterializer(configuration: configuration)
         func image(width: Int, height: Int, scale: Double = 1) throws -> PlatformImage {
             let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
@@ -259,14 +246,6 @@ struct RenderMigrationParityTests {
         let photo = try image(width: 400, height: 200, scale: 2)
         let math = try image(width: 30, height: 10)
         let svg = try image(width: 120, height: 60)
-        var legacy = AttributedStringRenderer(style: style, availableWidth: 120, placeholderMode: .static)
-        legacy.imageCache["image.png"] = photo
-        legacy.mathCache[MathCacheKey(latex: "x", display: false, pointSize: 24, colorHex: MathMetrics.colorHex(style.textColor), rasterScale: 2, rendererGeneration: 7)] = MathRenderedGlyph(image: math, baselineOffsetEx: -0.25)
-        legacy.mathRasterScale = 2
-        legacy.mathRendererGeneration = 7
-        legacy.svgBlockCache[SVGBlockCacheKey(svg: "<svg viewBox=\"0 0 120 60\"/>\n", availableWidth: 120, rasterScale: 2, rendererGeneration: 7)] = SVGBlockGlyph(image: svg)
-        legacy.svgRasterScale = 2
-        legacy.svgRendererGeneration = 7
         weak var observed: LegacyResourceOwner?
         var snapshot: RenderSnapshot?
         do {
@@ -276,8 +255,8 @@ struct RenderMigrationParityTests {
             for resource in model.resources {
                 switch resource {
                 case .image(let id, _, _): values[id] = .image(photo, owner: owner)
-                case .math(let id, _, _): values[id] = .math(image: math, baselineOffset: -3, owner: owner)
-                case .svg(let id, _): values[id] = .svg(svg, owner: owner)
+                case .math(let id, _, _): values[id] = .math(owner: RenderedResourceRecord(image: math, baselineOffset: -3).acquireLease())
+                case .svg(let id, _): values[id] = .svg(owner: RenderedResourceRecord(image: svg, baselineOffset: 0).acquireLease())
                 }
             }
             snapshot = materializer.materialize(model, resources: .init(values: values))
@@ -286,7 +265,7 @@ struct RenderMigrationParityTests {
         do {
             let value = try #require(snapshot)
             #expect(value.attributedString.string == "\u{FFFC} \u{FFFC}\n\u{FFFC}")
-            try self.assertParity(Pair(legacy: legacy.render(document.blocks), snapshot: value), width: 120)
+            try self.assertParity(Pair(snapshot: value), width: 120)
             var bounds: [CGRect] = []
             value.attributedString.enumerateAttribute(.attachment, in: NSRange(location: 0, length: value.attributedString.length)) { attachment, _, _ in
                 if let attachment = attachment as? NSTextAttachment { bounds.append(attachment.bounds) }
@@ -297,28 +276,41 @@ struct RenderMigrationParityTests {
         #expect(observed == nil)
     }
 
-    private func render(_ source: String, width: Double, mode: PlaceholderMode = .streaming) throws -> Pair {
+    private func render(_ source: String, width: Double, mode: PlaceholderMode = .streaming) async throws -> Pair {
         let document = MarkdownDocument(parsing: source)
         var style = RenderStyle.default
         style.bodyFont = .systemFont(ofSize: 16)
         let configuration = style.snapshot(generation: 1)
         let input = RenderInput(document: document, source: source, availableWidth: width, configuration: configuration, placeholderMode: mode)
-        let model = try RenderPreparer(configuration: configuration).prepare(input)
-        return Pair(legacy: AttributedStringRenderer(style: style, availableWidth: width, placeholderMode: mode).render(document.blocks), snapshot: RenderMaterializer(configuration: configuration).materialize(model, resources: .init(values: [:])))
+        let model = try await RenderPreparer(configuration: configuration).prepare(input).preparingSyntax()
+        return Pair(snapshot: RenderMaterializer(configuration: configuration).materialize(model, resources: .init(values: [:])))
     }
 
     private func assertParity(_ pair: Pair, width: Double) throws {
-        let actual = self.normalized(pair.snapshot.attributedString)
-        let expected = self.normalized(pair.legacy)
-        #expect(actual.isEqual(to: expected))
-        let actualFrames = self.layout(pair.snapshot.attributedString, width: width)
-        let expectedFrames = self.layout(pair.legacy, width: width)
+        try self.assertGolden(pair.snapshot.attributedString, model: pair.snapshot.displayModel, width: width)
+    }
+
+    private func assertGolden(_ text: NSAttributedString, model: RenderDisplayModel, width: Double) throws {
+        let identity = "\(model.source ?? "")|\(width)|\(model.placeholderMode)"
+        let name = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        #if canImport(UIKit)
+        let platform = "ios"
+        #else
+        let platform = "macos"
+        #endif
+        let url = try #require(Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "RenderGolden/\(platform)"))
+        let expected = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        #expect(expected["base"] as? String == "96c6bad422bb38f989f7595c4e2e3574ac50761d")
+        #expect(expected["identity"] as? String == identity)
+        #expect(expected["string"] as? String == text.string)
+        #expect(expected["attributes"] as? [[String: String]] == canonicalAttributes(text))
+        let expectedFrames = try #require(expected["frames"] as? [[Double]])
+        let actualFrames = self.layout(text, width: width).map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] }
         #expect(actualFrames.count == expectedFrames.count)
         for (actual, expected) in zip(actualFrames, expectedFrames) {
-            #expect(abs(actual.minX - expected.minX) < 0.000001)
-            #expect(abs(actual.minY - expected.minY) < 0.000001)
-            #expect(abs(actual.width - expected.width) < 0.000001)
-            #expect(abs(actual.height - expected.height) < 0.000001)
+            for (actualValue, expectedValue) in zip(actual, expected) {
+                #expect(abs(actualValue - expectedValue) < 0.000001)
+            }
         }
     }
 
@@ -363,4 +355,49 @@ struct RenderMigrationParityTests {
         }
         return frames
     }
+}
+
+@MainActor
+func canonicalAttributes(_ text: NSAttributedString) -> [[String: String]] {
+    func number(_ value: CGFloat) -> String {
+        String(format: "%.6f", Double(value))
+    }
+    var rows: [[String: String]] = []
+    text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, range, _ in
+        var row = ["range": "\(range.location):\(range.length)"]
+        for (key, value) in attributes {
+            let encoded: String
+            if let font = value as? PlatformFont {
+                #if canImport(UIKit)
+                let fontName = font.fontDescriptor.postscriptName
+                #else
+                let fontName = font.fontDescriptor.postscriptName ?? font.fontName
+                #endif
+                encoded = "\(fontName)|\(number(font.pointSize))"
+            } else if let color = value as? PlatformColor {
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                #if canImport(UIKit)
+                color.resolvedColor(with: .current).getRed(&r, green: &g, blue: &b, alpha: &a)
+                #else
+                color.usingColorSpace(.sRGB)!.getRed(&r, green: &g, blue: &b, alpha: &a)
+                #endif
+                encoded = [r, g, b, a].map(number).joined(separator: ",")
+            } else if let paragraph = value as? NSParagraphStyle {
+                encoded = [paragraph.lineSpacing, paragraph.paragraphSpacing, paragraph.paragraphSpacingBefore,
+                           paragraph.headIndent, paragraph.firstLineHeadIndent, paragraph.tailIndent,
+                           paragraph.minimumLineHeight, paragraph.maximumLineHeight, paragraph.defaultTabInterval]
+                    .map(number).joined(separator: ",") + "|\(paragraph.alignment.rawValue)|" +
+                    paragraph.tabStops.map { "\($0.alignment.rawValue):\(number($0.location))" }.joined(separator: ",")
+            } else if let attachment = value as? NSTextAttachment {
+                let size = attachment.image?.size ?? .zero
+                encoded = [attachment.bounds.minX, attachment.bounds.minY, attachment.bounds.width, attachment.bounds.height, size.width, size.height].map(number).joined(separator: ",")
+            } else if let values = value as? [CGFloat] {
+                encoded = values.map(number).joined(separator: ",")
+            } else if let url = value as? URL { encoded = url.absoluteString }
+            else { encoded = String(describing: value) }
+            row[key.rawValue] = encoded
+        }
+        rows.append(row)
+    }
+    return rows
 }

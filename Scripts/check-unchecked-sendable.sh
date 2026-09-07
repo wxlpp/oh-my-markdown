@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+matches="$(rg -n '@unchecked Sendable' Sources || test "$?" -eq 1)"
+expected='^Sources/MarkdownRenderKit/ResolvedResource.swift:[0-9]+:package struct ImmutableCGImageBacking: @unchecked Sendable \{$'
+if [[ "$(printf '%s\n' "$matches" | wc -l | tr -d ' ')" != 1 ]] || ! printf '%s\n' "$matches" | rg -q "$expected"; then
+    printf 'FAIL: production unchecked Sendable inventory changed\n%s\n' "$matches" >&2
+    exit 1
+fi
+if rg -n 'LegacyResourceOwner' Sources | rg -v '^Sources/MarkdownRenderKit/ResolvedResource.swift:[0-9]+:package final class LegacyResourceOwner: ResourceResidencyOwner \{$|^Sources/MarkdownPlatformView/MarkdownLabelView\+(iOS|macOS).swift:[0-9]+: +values\[id\] = \.image\(image, owner: LegacyResourceOwner\(retaining: image\)\)$'; then
+    printf 'FAIL: LegacyResourceOwner is allowed only for remote images\n' >&2
+    exit 1
+fi
+echo 'PASS: only ImmutableCGImageBacking is unchecked; legacy owners are image-only'

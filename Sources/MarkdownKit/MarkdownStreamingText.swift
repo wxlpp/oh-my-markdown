@@ -90,14 +90,14 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         var listenerID: UUID?
         var currentSource: MarkdownStreamingSource?
         var lastStyle: RenderStyle?
-        var lastMathRenderer: (any MathRendering)?
-        var lastSVGBlockRenderer: (any SVGBlockRendering)?
+        var lastMathRenderer: MathRendererConfiguration?
+        var lastSVGBlockRenderer: SVGRendererConfiguration?
     }
 
     let source: MarkdownStreamingSource
     let style: RenderStyle
-    let mathRenderer: (any MathRendering)?
-    let svgBlockRenderer: (any SVGBlockRendering)?
+    let mathRenderer: MathRendererConfiguration?
+    let svgBlockRenderer: SVGRendererConfiguration?
 
     static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
         uiView.dismantleRenderSession()
@@ -171,14 +171,14 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         var listenerID: UUID?
         var currentSource: MarkdownStreamingSource?
         var lastStyle: RenderStyle?
-        var lastMathRenderer: (any MathRendering)?
-        var lastSVGBlockRenderer: (any SVGBlockRendering)?
+        var lastMathRenderer: MathRendererConfiguration?
+        var lastSVGBlockRenderer: SVGRendererConfiguration?
     }
 
     let source: MarkdownStreamingSource
     let style: RenderStyle
-    let mathRenderer: (any MathRendering)?
-    let svgBlockRenderer: (any SVGBlockRendering)?
+    let mathRenderer: MathRendererConfiguration?
+    let svgBlockRenderer: SVGRendererConfiguration?
 
     static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
         nsView.dismantleRenderSession()

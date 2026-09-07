@@ -2,7 +2,7 @@ import MarkdownRenderKit
 import SwiftUI
 
 extension EnvironmentValues {
-    @Entry public var markdownMathRenderer: (any MathRendering)?
+    @Entry public var markdownMathRenderer: MathRendererConfiguration?
 }
 
 extension View {
@@ -11,7 +11,7 @@ extension View {
     /// 无需为开关 math 而 branch 视图树。
     ///
     /// Pass `nil` to disable math at runtime without branching the view tree.
-    public func mathRenderer(_ renderer: (any MathRendering)?) -> some View {
+    public func mathRenderer(_ renderer: MathRendererConfiguration?) -> some View {
         environment(\.markdownMathRenderer, renderer)
     }
 }

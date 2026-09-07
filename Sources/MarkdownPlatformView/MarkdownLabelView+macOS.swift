@@ -1,6 +1,7 @@
 import Foundation
 import MarkdownCore
 import MarkdownRenderKit
+import Observation
 
 #if canImport(AppKit)
 import AppKit
@@ -8,13 +9,26 @@ import AppKit
 // MARK: - MarkdownLabelView (macOS)
 
 @MainActor
-public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionResourceProviding {
+public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionResourceProviding, Observable {
     override public func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         self.rasterScaleDidChange(to: window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1)
     }
 
-    package private(set) var currentSnapshot: RenderSnapshot?
+    private let snapshotRegistrar = ObservationRegistrar()
+    private var snapshotStorage: RenderSnapshot?
+    package private(set) var currentSnapshot: RenderSnapshot? {
+        get {
+            self.snapshotRegistrar.access(self, keyPath: \.currentSnapshot)
+            return self.snapshotStorage
+        }
+        set {
+            self.snapshotRegistrar.withMutation(of: self, keyPath: \.currentSnapshot) {
+                self.snapshotStorage = newValue
+            }
+        }
+    }
+
     package private(set) var currentCommitToken: RenderCommitToken?
     package private(set) var lastRenderError: RenderSessionError?
     private let sessionRegistry = RenderSessionSinkRegistry()
@@ -23,8 +37,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     package private(set) var sessionDriver: (any RenderSessionDriving)?
     private var isDismantled = false
     private var requestedWidth: CGFloat = 1
-    private var mathRendererUpdateTask: Task<Void, Never>?
-    private var svgRendererUpdateTask: Task<Void, Never>?
     private var displayScale: CGFloat = 1
     private var renderedBlocks: [BlockNode] = []
 
@@ -49,10 +61,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     package func rasterScaleDidChange(to scale: CGFloat) {
         guard !self.isDismantled, scale.isFinite, scale > 0, scale != self.displayScale else { return }
         self.displayScale = scale
-        self._mathRasterScale = scale
-        self._svgRasterScale = scale
-        self._mathCache.removeAll()
-        self._svgBlockCache.removeAll()
         self.updateContent()
     }
 
@@ -100,15 +108,14 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
                     values[id] = .image(image, owner: LegacyResourceOwner(retaining: image))
                 }
             case .math(let id, let latex, let display):
-                let pt = MathMetrics.effectivePointSize(textPointSize: configuration.typography.pointSizes[.body] ?? 16, mathScale: configuration.mathScale)
-                let key = MathCacheKey(latex: latex, display: display, pointSize: pt, colorHex: MathMetrics.colorHex(self.renderStyle.mathColorOverride ?? self.renderStyle.textColor), rasterScale: self._mathRasterScale, rendererGeneration: self._mathRendererGeneration)
-                if let glyph = _mathCache[key] {
-                    values[id] = .math(image: glyph.image, baselineOffset: glyph.baselineOffsetEx * pt * 0.5, owner: LegacyResourceOwner(retaining: glyph as AnyObject))
+                if let key = self.mathKey(latex: latex, display: display, configuration: configuration),
+                   let lease = self.driver().resourceTaskOwner.math.publication(for: key) {
+                    values[id] = .math(owner: lease)
                 }
             case .svg(let id, let source):
-                let key = SVGBlockCacheKey(svg: source, availableWidth: model.availableWidth, rasterScale: self._svgRasterScale, rendererGeneration: self._svgBlockRendererGeneration)
-                if let glyph = _svgBlockCache[key] {
-                    values[id] = .svg(glyph.image, owner: LegacyResourceOwner(retaining: glyph as AnyObject))
+                if let key = self.svgKey(source: source, width: model.availableWidth),
+                   let lease = self.driver().resourceTaskOwner.svg.publication(for: key) {
+                    values[id] = .svg(owner: lease)
                 }
             }
         }
@@ -128,12 +135,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self.parsedBlocks = []
         self.renderedBlocks = []
         self.lastParsedSource = ""
-        self.mathRendererUpdateTask?.cancel()
-        self.svgRendererUpdateTask?.cancel()
-        self.mathRendererUpdateTask = nil
-        self.svgRendererUpdateTask = nil
-        self._heightUpdateTask?.cancel()
-        self._heightUpdateTask = nil
         self._tableOverlays.values.forEach { $0.scroll.removeFromSuperview() }
         self._tableOverlays.removeAll()
         self.sessionDriver?.send(.dismantle)
@@ -141,8 +142,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self.sessionDriver = nil
         self._imageCache.removeAll()
         self.imageRequests.removeAll()
-        self._mathCache.removeAll()
-        self._svgBlockCache.removeAll()
         withExtendedLifetime(previousSnapshot) {}
     }
 
@@ -452,7 +451,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     /// Last measured intrinsic height — gates invalidateIntrinsicContentSize() calls.
     private var _lastHeight: CGFloat = 0
     /// Coalesces expensive TextKit height queries during streaming updates.
-    private var _heightUpdateTask: Task<Void, Never>?
     /// Test-only monotonic counter incremented as the *first line* of
     /// `scheduleDeferredHeightUpdate()` itself, so "counter++" and "that primitive
     /// was actually invoked" are one indivisible semantic — there is no decoupled
@@ -473,54 +471,19 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         return data
     }
 
-    /// Platform-agnostic async math render coordinator (dedup/三态/代际).
-    /// View-private by default to keep test isolation (each MarkdownLabelView
-    /// 自带独立 coordinator，避免不同 test 的 setRenderer 互相清 cache)。需要
-    /// 跨 view 共享 cache 的调用方可显式注入 `MathLoadCoordinator.shared`。
-    private let _mathCoordinator = MathLoadCoordinator()
-    /// MainActor compatibility cache; published attachments retain their own owners.
-    private var _mathCache: [MathCacheKey: MathRenderedGlyph] = [:]
-    private var _mathRasterScale: CGFloat = 1
-    private var _mathRendererGeneration: Int = 0
-    /// Injected math renderer; swapping it bumps the coordinator's generation.
-    public var mathRenderer: (any MathRendering)? {
+    /// Install a stable wrapper to preserve its completed-cache identity.
+    public var mathRenderer: MathRendererConfiguration? {
         didSet {
-            guard !self.isDismantled, oldValue !== self.mathRenderer else { return }
-            self._mathCache.removeAll()
-            let coordinator = self._mathCoordinator
-            let renderer = self.mathRenderer
-            let previousUpdate = self.mathRendererUpdateTask
-            self.mathRendererUpdateTask = self.driver().resourceTaskOwner.start {
-                await previousUpdate?.value
-                guard !Task.isCancelled else { return }
-                await coordinator.setRenderer(renderer)
-            }
+            guard !self.isDismantled, oldValue?.configurationID != self.mathRenderer?.configurationID else { return }
+            self.driver().resourceTaskOwner.math.configure(self.mathRenderer)
             self.updateContent()
         }
     }
 
-    /// Platform-agnostic async ```svg block render coordinator (dedup/三态/代际).
-    /// View-private by default to keep test isolation (each MarkdownLabelView
-    /// 自带独立 coordinator，避免不同 test 的 setRenderer 互相清 cache)。需要
-    /// 跨 view 共享 cache 的调用方可显式注入 `SVGBlockLoadCoordinator.shared`。
-    private let _svgBlockCoordinator = SVGBlockLoadCoordinator()
-    /// MainActor compatibility cache for SVG glyphs.
-    private var _svgBlockCache: [SVGBlockCacheKey: SVGBlockGlyph] = [:]
-    private var _svgRasterScale: CGFloat = 1
-    private var _svgBlockRendererGeneration: Int = 0
-    /// Injected ```svg block renderer; swapping it bumps the coordinator's generation.
-    public var svgBlockRenderer: (any SVGBlockRendering)? {
+    public var svgBlockRenderer: SVGRendererConfiguration? {
         didSet {
-            guard !self.isDismantled, oldValue !== self.svgBlockRenderer else { return }
-            self._svgBlockCache.removeAll()
-            let coordinator = self._svgBlockCoordinator
-            let renderer = self.svgBlockRenderer
-            let previousUpdate = self.svgRendererUpdateTask
-            self.svgRendererUpdateTask = self.driver().resourceTaskOwner.start {
-                await previousUpdate?.value
-                guard !Task.isCancelled else { return }
-                await coordinator.setRenderer(renderer)
-            }
+            guard !self.isDismantled, oldValue?.configurationID != self.svgBlockRenderer?.configurationID else { return }
+            self.driver().resourceTaskOwner.svg.configure(self.svgBlockRenderer)
             self.updateContent()
         }
     }
@@ -567,8 +530,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             self.sessionDriver?.send(.replaceWidth(w))
         }
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-        self._heightUpdateTask?.cancel()
-        self._heightUpdateTask = nil
         self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
         invalidateIntrinsicContentSize()
         needsDisplay = true
@@ -587,21 +548,12 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         // Counter is bumped here, at the primitive's entry, so it is indivisible
         // from "scheduleDeferredHeightUpdate() was actually invoked" (see decl).
         self._deferredHeightScheduleCount += 1
-        guard self._heightUpdateTask == nil else {
-            return
-        }
-        self._heightUpdateTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 33_000_000)
-            } catch {
-                return
-            }
+        self.driver().resourceTaskOwner.deferAction(key: "height") { [weak self] in
             self?.updateMeasuredHeightIfNeeded()
         }
     }
 
     private func updateMeasuredHeightIfNeeded() {
-        self._heightUpdateTask = nil
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         let newHeight = ceil(layoutManager.usageBoundsForTextContainer.height)
         if abs(newHeight - self._lastHeight) > 0.5 {
@@ -665,166 +617,70 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self.imageRequests[request] = .failed
     }
 
-    // MARK: Math loading
+    // MARK: Rendered resources
+
+    private func refreshResolvedResources() {
+        guard let snapshot = self.currentSnapshot, let token = self.currentCommitToken else { return }
+        let configuration = self.configurationSnapshot()
+        let resources = self.resolvedResources(for: snapshot.displayModel, configuration: configuration)
+        let replacement = RenderMaterializer(configuration: configuration).materialize(snapshot.displayModel, resources: resources)
+        self.replaceSnapshot(replacement, token: token)
+    }
+
+    private func mathKey(latex: String, display: Bool, configuration: RenderConfigurationSnapshot) -> MathCacheKey? {
+        guard let renderer = self.mathRenderer else { return nil }
+        let pointSize = MathMetrics.effectivePointSize(textPointSize: configuration.typography.pointSizes[.body] ?? 16, mathScale: configuration.mathScale)
+        return MathCacheKey(
+            latex: latex,
+            display: display,
+            pointSize: pointSize,
+            colorHex: MathMetrics.colorHex(self.renderStyle.mathColorOverride ?? self.renderStyle.textColor),
+            rasterScale: self.displayScale,
+            configurationID: renderer.configurationID
+        )
+    }
+
+    private func svgKey(source: String, width: Double) -> SVGBlockCacheKey? {
+        guard let renderer = self.svgBlockRenderer else { return nil }
+        return SVGBlockCacheKey(svg: source, availableWidth: width, rasterScale: self.displayScale, configurationID: renderer.configurationID)
+    }
 
     private func triggerMathLoads(in range: NSRange, string: NSAttributedString? = nil) {
-        guard self.mathRenderer != nil, let str = string ?? contentStorage.attributedString else {
-            return
-        }
-        let safe = range.clamped(to: str.length)
-        guard safe.length > 0 else {
-            return
-        }
-        let scale = self.displayScale
-        // 同步枚举收集原始请求（latex/display/color/pt），代际相关的 key 构造
-        // 推迟到下面那个唯一的 Task 内一次性完成（generation 受 actor 隔离）。
-        var raw: [(latex: String, display: Bool, color: PlatformColor, pt: CGFloat)] = []
-        str.enumerateAttribute(.markdownMathSource, in: safe) { value, _, _ in
-            guard
-                let payload = value as? String,
-                let sep = payload.firstIndex(of: "\u{1F}") else {
-                return
-            }
-            let display = payload[payload.startIndex] == "1"
-            let latex = String(payload[payload.index(after: sep)...])
-            let color = self.renderStyle.mathColorOverride ?? self.renderStyle.textColor
-            let pt = MathMetrics.effectivePointSize(
-                textPointSize: self.renderStyle.bodyFont.pointSize,
-                mathScale: self.renderStyle.mathScale
-            )
-            raw.append((latex: latex, display: display, color: color, pt: pt))
-        }
-        guard !raw.isEmpty else {
-            return
-        }
-        guard let token = currentCommitToken else { return }
+        guard let str = string ?? contentStorage.attributedString, let token = self.currentCommitToken else { return }
         let registry = self.sessionRegistry
-        let coordinator = self._mathCoordinator
-        let rendererUpdate = self.mathRendererUpdateTask
-        self.driver().resourceTaskOwner.start {
-            await rendererUpdate?.value
-            guard !Task.isCancelled else { return }
-            let gen = await coordinator.generation
-            guard !Task.isCancelled else { return }
-            let requests: [(
-                key: MathCacheKey,
-                latex: String,
-                display: Bool,
-                color: PlatformColor,
-                pt: CGFloat
-            )] = raw.map {
-                let key = MathCacheKey(
-                    latex: $0.latex, display: $0.display, pointSize: $0.pt,
-                    colorHex: MathMetrics.colorHex($0.color),
-                    rasterScale: scale, rendererGeneration: gen
-                )
-                return (
-                    key: key,
-                    latex: $0.latex,
-                    display: $0.display,
-                    color: $0.color,
-                    pt: $0.pt
-                )
-            }
-            // 先派发全部渲染（去重由 coordinator 负责）。
-            for r in requests {
-                guard !Task.isCancelled else { return }
-                await coordinator.loadIfNeeded(
-                    key: r.key, latex: r.latex, display: r.display,
-                    pointSize: r.pt, scale: scale, color: r.color
-                )
-            }
-            // 仅 await 各自 key 的在途任务，收集解析出的字形。
-            var resolved: [(key: MathCacheKey, glyph: MathRenderedGlyph)] = []
-            for r in requests {
-                guard !Task.isCancelled else { return }
-                if let glyph = await coordinator.awaitGlyph(for: r.key) {
-                    resolved.append((key: r.key, glyph: glyph))
+        let owner = self.driver().resourceTaskOwner
+        let configuration = self.configurationSnapshot()
+        str.enumerateAttribute(.markdownMathSource, in: range.clamped(to: str.length)) { value, _, _ in
+            guard let payload = value as? String, let separator = payload.firstIndex(of: "\u{1F}"),
+                  let key = self.mathKey(latex: String(payload[payload.index(after: separator)...]), display: payload.first == "1", configuration: configuration) else { return }
+            owner.math.load(key, isCurrent: {
+                registry.withAuthorizedSink(for: token) { _ in }
+            }, completed: { [weak owner] in
+                owner?.deferAction(key: "resources") {
+                    registry.withAuthorizedSink(for: token) { sink in
+                        (sink as? MarkdownLabelView)?.refreshResolvedResources()
+                    }
                 }
-            }
-            guard !Task.isCancelled, !resolved.isEmpty else {
-                return
-            }
-            // 一次性合并回写并仅触发一次 updateContent（镜像图片加载纪律）。
-            registry.withAuthorizedSink(for: token) { sink in
-                guard let view = sink as? MarkdownLabelView else { return }
-                view._mathRasterScale = scale
-                view._mathRendererGeneration = gen
-                for entry in resolved {
-                    view._mathCache[entry.key] = entry.glyph
-                }
-                view.updateContent()
-            }
+            })
         }
     }
 
-    // MARK: SVG block loading
-
     private func triggerSVGBlockLoads(in range: NSRange, string: NSAttributedString? = nil) {
-        guard self.svgBlockRenderer != nil, let str = string ?? contentStorage.attributedString else {
-            return
-        }
-        let safe = range.clamped(to: str.length)
-        guard safe.length > 0 else {
-            return
-        }
-        let scale = self.displayScale
-        // Resource keys use the exact width captured by the installed snapshot.
-        let availableWidth = self.currentSnapshot?.displayModel.availableWidth ?? self.requestedWidth
-        // 同步枚举收集 svg 源串。代际相关的 key 构造推迟到下面唯一的 Task 内一次性
-        // 完成（generation 受 actor 隔离），与 triggerMathLoads 同形。
-        // 注：enumerateAttribute 对相同 value 的 .markdownSVGBlockSource 合并成单次
-        // 回调（Foundation 文档：returns the maximum range over which the value applies），
-        // 故每个 svg block 自然只产一项，无需 Set 去重（详见 SVGBlockRenderTests
-        // missEnumerationCoalescesSameValue —— Copilot PR #5 R3 #2/#3 假设不成立）。
-        var svgs: [String] = []
-        str.enumerateAttribute(.markdownSVGBlockSource, in: safe) { value, _, _ in
-            guard let payload = value as? String else { return }
-            svgs.append(payload)
-        }
-        guard !svgs.isEmpty else {
-            return
-        }
-        guard let token = currentCommitToken else { return }
+        guard let str = string ?? contentStorage.attributedString, let token = self.currentCommitToken else { return }
         let registry = self.sessionRegistry
-        let coordinator = self._svgBlockCoordinator
-        let rendererUpdate = self.svgRendererUpdateTask
-        self.driver().resourceTaskOwner.start {
-            await rendererUpdate?.value
-            guard !Task.isCancelled else { return }
-            let gen = await coordinator.generation
-            guard !Task.isCancelled else { return }
-            let requests: [(key: SVGBlockCacheKey, svg: String)] = svgs.map { svg in
-                (key: SVGBlockCacheKey(
-                    svg: svg, availableWidth: availableWidth,
-                    rasterScale: scale, rendererGeneration: gen
-                ), svg: svg)
-            }
-            for r in requests {
-                guard !Task.isCancelled else { return }
-                await coordinator.loadIfNeeded(
-                    key: r.key, svg: r.svg, availableWidth: availableWidth, scale: scale
-                )
-            }
-            var resolved: [(key: SVGBlockCacheKey, glyph: SVGBlockGlyph)] = []
-            for r in requests {
-                guard !Task.isCancelled else { return }
-                if let glyph = await coordinator.awaitGlyph(for: r.key) {
-                    resolved.append((key: r.key, glyph: glyph))
+        let owner = self.driver().resourceTaskOwner
+        let width = self.currentSnapshot?.displayModel.availableWidth ?? self.requestedWidth
+        str.enumerateAttribute(.markdownSVGBlockSource, in: range.clamped(to: str.length)) { value, _, _ in
+            guard let source = value as? String, let key = self.svgKey(source: source, width: width) else { return }
+            owner.svg.load(key, isCurrent: {
+                registry.withAuthorizedSink(for: token) { _ in }
+            }, completed: { [weak owner] in
+                owner?.deferAction(key: "resources") {
+                    registry.withAuthorizedSink(for: token) { sink in
+                        (sink as? MarkdownLabelView)?.refreshResolvedResources()
+                    }
                 }
-            }
-            guard !Task.isCancelled, !resolved.isEmpty else {
-                return
-            }
-            registry.withAuthorizedSink(for: token) { sink in
-                guard let view = sink as? MarkdownLabelView else { return }
-                view._svgRasterScale = scale
-                view._svgBlockRendererGeneration = gen
-                for entry in resolved {
-                    view._svgBlockCache[entry.key] = entry.glyph
-                }
-                view.updateContent()
-            }
+            })
         }
     }
 

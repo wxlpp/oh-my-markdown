@@ -3,6 +3,7 @@ import MarkdownRenderKit
 import Testing
 
 @Suite("Math rendering types")
+@MainActor
 struct MathRenderingTypeTests {
     @Test("有效字号 = 文本字号 × mathScale，单点计算")
     func effectivePointSize() {
@@ -27,7 +28,7 @@ struct MathRenderingTypeTests {
             pointSize: 16,
             colorHex: "#000",
             rasterScale: 2,
-            rendererGeneration: 1
+            configurationID: .semantic(namespace: "fixture", version: 1)
         )
         #expect(base == MathCacheKey(
             latex: "x",
@@ -35,7 +36,7 @@ struct MathRenderingTypeTests {
             pointSize: 16,
             colorHex: "#000",
             rasterScale: 2,
-            rendererGeneration: 1
+            configurationID: .semantic(namespace: "fixture", version: 1)
         ))
         #expect(base != MathCacheKey(
             latex: "x",
@@ -43,7 +44,7 @@ struct MathRenderingTypeTests {
             pointSize: 24,
             colorHex: "#000",
             rasterScale: 2,
-            rendererGeneration: 1
+            configurationID: .semantic(namespace: "fixture", version: 1)
         ))
         #expect(base != MathCacheKey(
             latex: "x",
@@ -51,7 +52,7 @@ struct MathRenderingTypeTests {
             pointSize: 16,
             colorHex: "#000",
             rasterScale: 2,
-            rendererGeneration: 2
+            configurationID: .semantic(namespace: "fixture", version: 2)
         ))
         #expect(base != MathCacheKey(
             latex: "y",
@@ -59,7 +60,7 @@ struct MathRenderingTypeTests {
             pointSize: 16,
             colorHex: "#000",
             rasterScale: 2,
-            rendererGeneration: 1
+            configurationID: .semantic(namespace: "fixture", version: 1)
         ))
         #expect(base != MathCacheKey(
             latex: "x",
@@ -67,7 +68,7 @@ struct MathRenderingTypeTests {
             pointSize: 16,
             colorHex: "#000",
             rasterScale: 2,
-            rendererGeneration: 1
+            configurationID: .semantic(namespace: "fixture", version: 1)
         ))
         #expect(base != MathCacheKey(
             latex: "x",
@@ -75,7 +76,7 @@ struct MathRenderingTypeTests {
             pointSize: 16,
             colorHex: "#111",
             rasterScale: 2,
-            rendererGeneration: 1
+            configurationID: .semantic(namespace: "fixture", version: 1)
         ))
         #expect(base != MathCacheKey(
             latex: "x",
@@ -83,7 +84,7 @@ struct MathRenderingTypeTests {
             pointSize: 16,
             colorHex: "#000",
             rasterScale: 3,
-            rendererGeneration: 1
+            configurationID: .semantic(namespace: "fixture", version: 1)
         ))
     }
 }
@@ -91,10 +92,11 @@ struct MathRenderingTypeTests {
 import MarkdownCore
 
 @Suite("Math attributed rendering")
+@MainActor
 struct MathAttributedRenderingTests {
     @Test("未命中缓存 → 占位文本带 markdownMathSource 属性")
     func placeholderWhenMiss() {
-        let r = AttributedStringRenderer(style: .default)
+        let r = MaterializationFixture(style: .default)
         let s = r.render([.paragraph([.text("a "), .math(latex: "x^2")])])
         var found = false
         s.enumerateAttribute(.markdownMathSource, in: NSRange(location: 0, length: s.length)) { v, _, _ in
@@ -109,7 +111,7 @@ struct MathAttributedRenderingTests {
     /// The fix is to pass-through the sign directly: y = baselineOffsetEx * exToPoints.
     @Test("负 baselineOffsetEx → bounds.origin.y 为负（公式下沉，符号不反置）")
     func baselineSignPassthrough() {
-        var r = AttributedStringRenderer(style: .default)
+        var r = MaterializationFixture(style: .default)
         let img = makePixel()
         let effectivePt = MathMetrics.effectivePointSize(
             textPointSize: RenderStyle.default.bodyFont.pointSize,
@@ -121,10 +123,10 @@ struct MathAttributedRenderingTests {
             colorHex: MathMetrics.colorHex(
                 RenderStyle.default.mathColorOverride ?? RenderStyle.default.textColor
             ),
-            rasterScale: 1, rendererGeneration: 0
+            rasterScale: 1, configurationID: .semantic(namespace: "fixture", version: 0)
         )
         // Negative baselineOffsetEx mirrors real MathJax output (e.g. "x" → -0.025 ex)
-        r.mathCache[key] = MathRenderedGlyph(image: img, baselineOffsetEx: -0.5)
+        r.math[key.latex] = (img, -0.5 * key.pointSize * 0.5)
         let s = r.render([.paragraph([.math(latex: "x")])])
         var capturedAttachment: NSTextAttachment?
         s.enumerateAttribute(.attachment, in: NSRange(location: 0, length: s.length)) { v, _, _ in
@@ -147,7 +149,7 @@ struct MathAttributedRenderingTests {
 
     @Test("命中缓存 → NSTextAttachment，基线按 baselineOffsetEx 下移")
     func attachmentWhenHit() {
-        var r = AttributedStringRenderer(style: .default)
+        var r = MaterializationFixture(style: .default)
         let img = makePixel()
         // Derive the key's pointSize/colorHex from the actual `.default` style via the
         // same public formula the renderer uses, instead of hardcoding 16. On the macOS
@@ -164,9 +166,9 @@ struct MathAttributedRenderingTests {
             colorHex: MathMetrics.colorHex(
                 RenderStyle.default.mathColorOverride ?? RenderStyle.default.textColor
             ),
-            rasterScale: 1, rendererGeneration: 0
+            rasterScale: 1, configurationID: .semantic(namespace: "fixture", version: 0)
         )
-        r.mathCache[key] = MathRenderedGlyph(image: img, baselineOffsetEx: 0.5)
+        r.math[key.latex] = (img, 0.5 * key.pointSize * 0.5)
         let s = r.render([.paragraph([.math(latex: "x^2")])])
         var hasAttachment = false
         var capturedAttachment: NSTextAttachment?
@@ -202,6 +204,7 @@ private func makePixel() -> PlatformImage {
 #endif
 
 @Suite("RenderStyle math fields")
+@MainActor
 struct RenderStyleMathTests {
     @Test("默认值：mathScale=1，mathColorOverride=nil，mathTokenColor 非空")
     func defaults() {
@@ -216,6 +219,7 @@ import MarkdownKit
 import SwiftUI
 
 @Suite("SwiftUI math renderer env")
+@MainActor
 struct MathRendererEnvTests {
     @Test("环境值默认 nil，设置后可取回")
     func envValue() {
@@ -228,12 +232,12 @@ struct MathRendererEnvTests {
                 display: Bool,
                 pointSize: CGFloat,
                 scale: CGFloat,
-                color: PlatformColor
+                colorHex: String
             ) async -> MathRenderOutcome {
                 .failed
             }
         }
-        env.markdownMathRenderer = Dummy()
+        env.markdownMathRenderer = MathRendererConfiguration(renderer: Dummy())
         #expect(env.markdownMathRenderer != nil)
     }
 }

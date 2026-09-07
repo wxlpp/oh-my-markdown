@@ -2,7 +2,7 @@ import MarkdownRenderKit
 import SwiftUI
 
 extension EnvironmentValues {
-    @Entry public var markdownSVGBlockRenderer: (any SVGBlockRendering)?
+    @Entry public var markdownSVGBlockRenderer: SVGRendererConfiguration?
 }
 
 extension View {
@@ -12,7 +12,7 @@ extension View {
     ///
     /// Pass `nil` to disable ```svg rendering at runtime without branching
     /// the view tree.
-    public func svgRenderer(_ renderer: (any SVGBlockRendering)?) -> some View {
+    public func svgRenderer(_ renderer: SVGRendererConfiguration?) -> some View {
         environment(\.markdownSVGBlockRenderer, renderer)
     }
 }

@@ -25,7 +25,7 @@ struct MathRendererModifierOptionalTests {
             display: Bool,
             pointSize: CGFloat,
             scale: CGFloat,
-            color: PlatformColor
+            colorHex: String
         ) async -> MathRenderOutcome {
             .failed
         }
@@ -34,7 +34,7 @@ struct MathRendererModifierOptionalTests {
     @MainActor
     @Test("传具体 renderer：编译通过且 env round-trip 保留该实例（不回归）")
     func concreteRendererCompilesAndRoundTrips() {
-        let renderer = Dummy()
+        let renderer = MathRendererConfiguration(renderer: Dummy())
         // 编译期守卫：既有「传具体 renderer」调用点必须保持源码兼容。
         _ = Text("$x$").mathRenderer(renderer)
 
@@ -43,7 +43,7 @@ struct MathRendererModifierOptionalTests {
         var env = EnvironmentValues()
         env.markdownMathRenderer = renderer
         #expect(env.markdownMathRenderer != nil)
-        #expect(env.markdownMathRenderer === renderer)
+        #expect(env.markdownMathRenderer?.configurationID == renderer.configurationID)
     }
 
     @MainActor
@@ -56,7 +56,7 @@ struct MathRendererModifierOptionalTests {
         // 语义守卫：modifier 把 nil 原样写入可选 env → math 禁用。
         // git-反证（备选）：modifier 内部把 nil 换成默认非 nil → 此断言 RED。
         var env = EnvironmentValues()
-        env.markdownMathRenderer = Dummy() // 先放一个，确认 nil 真能清除
+        env.markdownMathRenderer = MathRendererConfiguration(renderer: Dummy()) // 先放一个，确认 nil 真能清除
         env.markdownMathRenderer = nil
         #expect(env.markdownMathRenderer == nil)
     }

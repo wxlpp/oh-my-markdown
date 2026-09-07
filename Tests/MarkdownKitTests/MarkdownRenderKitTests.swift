@@ -5,6 +5,7 @@ import Testing
 // MARK: - MarkdownRenderKitTests
 
 @Suite("MarkdownRenderKit")
+@MainActor
 struct MarkdownRenderKitTests {
     @Test("Incremental editor highlighting expands fenced code blocks")
     func incrementalHighlightRangeExpandsFencedCodeBlock() {
@@ -74,7 +75,7 @@ struct MarkdownRenderKitTests {
     }
 
     @Test("Markdown source highlighting styles headings emphasis links lists and code")
-    func sourceHighlightingCoversEditorTokens() {
+    func sourceHighlightingCoversEditorTokens() async {
         let style = RenderStyle.default
         let source = """
         # Title
@@ -89,7 +90,12 @@ struct MarkdownRenderKitTests {
         ```
         """
 
-        let highlighted = MarkdownSourceHighlighter(style: style).highlight(source)
+        let highlighter = MarkdownSourceHighlighter(style: style)
+        var spans: [SyntaxHighlightKey: [SyntaxHighlightSpan]] = [:]
+        for request in highlighter.syntaxRequests(for: source) {
+            spans[request] = await SyntaxHighlightCache.shared.spans(for: request.code, language: request.language)
+        }
+        let highlighted = highlighter.highlight(source, syntaxSpans: spans)
         let ns = highlighted.string as NSString
 
         let titleIndex = ns.range(of: "Title").location
@@ -131,16 +137,16 @@ struct MarkdownRenderKitTests {
         ) as? PlatformColor
 
         #expect(titleFont?.isEqual(style.h1Font) == true)
-        #expect(quoteColor?.isEqual(style.quoteBarColor) == true)
-        #expect(taskColor?.isEqual(style.linkColor) == true)
+        #expect(quoteColor?.isEqual(fixtureColor(style.quoteBarColor)) == true)
+        #expect(taskColor?.isEqual(fixtureColor(style.linkColor)) == true)
         #expect(orderedFont?.isEqual(style.codeFont) == true)
         #expect(isBold(font: boldFont) == true)
         #expect(isItalic(font: italicFont) == true)
-        #expect(linkColor?.isEqual(style.linkColor) == true)
+        #expect(linkColor?.isEqual(fixtureColor(style.linkColor)) == true)
         #expect(inlineCodeFont?.isEqual(style.codeFont) == true)
-        #expect(inlineCodeBackground?.isEqual(style.inlineCodeBgColor) == true)
+        #expect(inlineCodeBackground?.isEqual(fixtureColor(style.inlineCodeBgColor)) == true)
         #expect(fencedCodeFont?.isEqual(style.codeFont) == true)
-        #expect(fencedCodeColor?.isEqual(style.codeTextColor) == false)
+        #expect(fencedCodeColor?.isEqual(fixtureColor(style.codeTextColor)) == false)
     }
 
     @Test("Heading emphasis preserves heading size while applying traits")
@@ -170,7 +176,7 @@ struct MarkdownRenderKitTests {
         | A | B | C |
         """)
 
-        let renderer = AttributedStringRenderer(style: .default, availableWidth: 320)
+        let renderer = MaterializationFixture(style: .default, availableWidth: 320)
         let rendered = renderer.render(document.blocks)
         let paragraph = rendered.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
         let tabStops = paragraph?.tabStops ?? []
@@ -189,7 +195,7 @@ struct MarkdownRenderKitTests {
         | A | B |
         """)
 
-        let renderer = AttributedStringRenderer(style: .default, availableWidth: 320)
+        let renderer = MaterializationFixture(style: .default, availableWidth: 320)
         let rendered = renderer.render(document.blocks)
         let paragraph = rendered.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
         let tabStops = paragraph?.tabStops ?? []
@@ -209,7 +215,7 @@ struct MarkdownRenderKitTests {
         | A | This cell has enough text to require a wider natural table column. |
         """)
 
-        let renderer = AttributedStringRenderer(style: .default, availableWidth: 180)
+        let renderer = MaterializationFixture(style: .default, availableWidth: 180)
         let rendered = renderer.render(document.blocks)
         let widths = try #require(
             rendered
@@ -236,7 +242,7 @@ struct MarkdownRenderKitTests {
         """)
 
         let tableBlock = try #require(document.blocks.first)
-        let renderer = AttributedStringRenderer(style: .default, availableWidth: 180)
+        let renderer = MaterializationFixture(style: .default, availableWidth: 180)
         let rendered = renderer.render(document.blocks)
         let naturalWidth = try #require(
             rendered.attribute(.markdownTableNaturalWidth, at: 0, effectiveRange: nil) as? CGFloat
@@ -270,12 +276,12 @@ struct MarkdownRenderKitTests {
         // `TableMeasurement.height` of the full (non-overflow) table string the
         // platform overlay's `TableContentView` lays out, at the same natural
         // width. We reconstruct that exact input the way the platform layer does
-        // (`AttributedStringRenderer(availableWidth: naturalWidth).renderBlock`),
+        // (`MaterializationFixture(availableWidth: naturalWidth).renderBlock`),
         // so this pins the same arithmetic on the same TextKit 2 layout the
         // overlay uses — no attribute, no platform write-back. If anyone changes
         // `overflowTablePlaceholder` to reserve a height other than
         // `TableMeasurement.height`, this assertion goes red.
-        let overlayRenderer = AttributedStringRenderer(style: .default, availableWidth: naturalWidth)
+        let overlayRenderer = MaterializationFixture(style: .default, availableWidth: naturalWidth)
         let fullTableString = overlayRenderer.renderBlock(tableBlock)
         let constructiveHeight = TableMeasurement.height(
             of: fullTableString,
@@ -291,8 +297,8 @@ struct MarkdownRenderKitTests {
             .image(source: "https://example.com/image.png", alt: "Example"),
         ])
         let cachedImage = makeImage()
-        var renderer = AttributedStringRenderer(style: .default, availableWidth: 320)
-        renderer.imageCache["https://example.com/image.png"] = cachedImage
+        var renderer = MaterializationFixture(style: .default, availableWidth: 320)
+        renderer.images["https://example.com/image.png"] = cachedImage
 
         let rendered = renderer.render([block])
 
@@ -305,8 +311,8 @@ struct MarkdownRenderKitTests {
         let block = BlockNode.paragraph([
             .image(source: "https://example.com/wide.png", alt: "Wide"),
         ])
-        var renderer = AttributedStringRenderer(style: .default, availableWidth: 320)
-        renderer.imageCache["https://example.com/wide.png"] = makeImage(width: 800, height: 400)
+        var renderer = MaterializationFixture(style: .default, availableWidth: 320)
+        renderer.images["https://example.com/wide.png"] = makeImage(width: 800, height: 400)
 
         let rendered = renderer.render([block])
         let attachment = try #require(rendered.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment)

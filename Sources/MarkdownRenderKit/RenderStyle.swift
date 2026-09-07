@@ -12,7 +12,7 @@ import AppKit
 ///
 /// Construct a custom value or use ``RenderStyle/default`` to get a system-
 /// adaptive style that follows Dynamic Type and the current color scheme.
-public struct RenderStyle: @unchecked Sendable {
+public struct RenderStyle {
     // MARK: - Default
 
     public static var `default`: RenderStyle {
@@ -213,7 +213,7 @@ public struct RenderStyle: @unchecked Sendable {
     /// Fixed custom fonts opt out of automatic scaling until Task 11's helper.
     @MainActor
     public func snapshot(generation: UInt64) -> RenderConfigurationSnapshot {
-        snapshot(generation: generation, usesPreferredMetrics: false)
+        self.snapshot(generation: generation, usesPreferredMetrics: false)
     }
 
     @MainActor
@@ -233,37 +233,47 @@ public struct RenderStyle: @unchecked Sendable {
         let typography = TypographyTokens(pointSizes: fonts.mapValues { Double($0.pointSize) }, usesPreferredMetrics: usesPreferredMetrics, fontNames: fonts.mapValues(\.fontName), fontDescriptors: descriptors)
         var additional: [String: ColorToken] = [
             "codeBackground": codeBackgroundColor.rgbaToken,
-            "inlineCode": inlineCodeTextColor.rgbaToken,
-            "inlineCodeBackground": inlineCodeBgColor.rgbaToken,
-            "quote": quoteColor.rgbaToken,
-            "quoteBar": quoteBarColor.rgbaToken,
-            "headingBorder": headingBorderColor.rgbaToken,
-            "mathToken": mathTokenColor.rgbaToken,
+            "inlineCode": self.inlineCodeTextColor.rgbaToken,
+            "inlineCodeBackground": self.inlineCodeBgColor.rgbaToken,
+            "quote": self.quoteColor.rgbaToken,
+            "quoteBar": self.quoteBarColor.rgbaToken,
+            "headingBorder": self.headingBorderColor.rgbaToken,
+            "mathToken": self.mathTokenColor.rgbaToken,
         ]
-        additional["mathOverride"] = mathColorOverride?.rgbaToken
-        let colors = ColorTokens(body: textColor.rgbaToken, secondary: secondaryTextColor.rgbaToken, code: codeTextColor.rgbaToken, link: linkColor.rgbaToken, additional: additional)
+        additional["mathOverride"] = self.mathColorOverride?.rgbaToken
+        let colors = ColorTokens(body: textColor.rgbaToken, secondary: self.secondaryTextColor.rgbaToken, code: self.codeTextColor.rgbaToken, link: self.linkColor.rgbaToken, additional: additional)
         let spacing = SpacingTokens(paragraph: Double(paragraphSpacing), block: Double(paragraphSpacing), codeInsets: 8, quoteIndent: Double(quoteIndent))
-        // The built-in identity includes every normalized token. Length-prefixed
-        // strings avoid ambiguity; sorted roles/keys avoid dictionary order.
-        func field(_ value: String) -> String { "\(value.utf8.count):\(value)" }
-        func color(_ value: ColorToken) -> String { [value.red, value.green, value.blue, value.alpha].map { String($0 == 0 ? 0 : $0) }.joined(separator: ",") }
+        /// The built-in identity includes every normalized token. Length-prefixed
+        /// strings avoid ambiguity; sorted roles/keys avoid dictionary order.
+        func field(_ value: String) -> String {
+            "\(value.utf8.count):\(value)"
+        }
+        func color(_ value: ColorToken) -> String {
+            [value.red, value.green, value.blue, value.alpha].map { String($0 == 0 ? 0 : $0) }.joined(separator: ",")
+        }
         var identity = "preferred:\(usesPreferredMetrics)"
         for role in fonts.keys.sorted(by: { $0.identity < $1.identity }) {
             identity += field(role.identity) + field(typography.fontNames[role]!) + field(String(typography.pointSizes[role]!))
             // Custom descriptor bytes remain preserved above; built-in system
             // descriptors are fully determined by the normalized font name/size.
         }
-        for value in [colors.body, colors.secondary, colors.code, colors.link] { identity += field(color(value)) }
-        for key in additional.keys.sorted() { identity += field(key) + field(color(additional[key]!)) }
-        for value in [spacing.paragraph, spacing.block, spacing.codeInsets, spacing.quoteIndent, Double(mathScale)] { identity += field(String(value == 0 ? 0 : value)) }
+        for value in [colors.body, colors.secondary, colors.code, colors.link] {
+            identity += field(color(value))
+        }
+        for key in additional.keys.sorted() {
+            identity += field(key) + field(color(additional[key]!))
+        }
+        for value in [spacing.paragraph, spacing.block, spacing.codeInsets, spacing.quoteIndent, Double(self.mathScale)] {
+            identity += field(String(value == 0 ? 0 : value))
+        }
         let id = configurationID ?? (usesPreferredMetrics ? .semantic(namespace: "MarkdownKit.default:" + identity, version: 1) : .uniqueInstance())
-        return RenderConfigurationSnapshot(id: id, typography: typography, colors: colors, spacing: spacing, generation: generation, mathScale: Double(mathScale))
+        return RenderConfigurationSnapshot(id: id, typography: typography, colors: colors, spacing: spacing, generation: generation, mathScale: Double(self.mathScale))
     }
 }
 
 @MainActor
-private extension PlatformColor {
-    var rgbaToken: ColorToken {
+extension PlatformColor {
+    fileprivate var rgbaToken: ColorToken {
         var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
         #if canImport(UIKit)
         let resolved = resolvedColor(with: UITraitCollection.current)

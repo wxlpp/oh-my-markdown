@@ -1,105 +1,59 @@
 import Foundation
-
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
 import AppKit
 #endif
 
-// MARK: - SyntaxHighlighter
+/// Semantic token categories independent of platform fonts and colors.
+public enum SyntaxHighlightKind: UInt8, Sendable {
+    case keyword = 1, string, comment, number, type
+}
 
-/// Lightweight regex-based syntax highlighter.
-///
-/// Processes tokens in priority order (strings > comments > numbers > keywords > types)
-/// so higher-priority tokens always win. All colours are adaptive UIColor/NSColor
-/// dynamic providers that resolve at draw time for light/dark mode.
-public enum SyntaxHighlighter {
-    // MARK: - Token kinds
-
-    private enum Kind: UInt8 { case keyword = 1, string = 2, comment = 3, number = 4, type = 5 }
-
-    // MARK: - Token-span cache
-
-    /// Stores pre-computed token spans so the regex pass runs at most once per unique
-    /// (language, code) pair. Evicted automatically on memory pressure.
-    private final class CachedSpans: @unchecked Sendable {
-        init(_ s: ContiguousArray<(range: NSRange, kind: Kind)>) {
-            self.spans = s
-        }
-
-        let spans: ContiguousArray<(range: NSRange, kind: Kind)>
+/// Immutable UTF-16 range and token category for one exact source string.
+public struct SyntaxHighlightSpan: Sendable, Equatable {
+    public let range: NSRange
+    public let kind: SyntaxHighlightKind
+    public init(range: NSRange, kind: SyntaxHighlightKind) {
+        self.range = range
+        self.kind = kind
     }
+}
 
-    private final class KeywordRegexCache: @unchecked Sendable {
-        func regex(for language: String, build: () -> NSRegularExpression?) -> NSRegularExpression? {
-            self.lock.lock()
-            if let cached = storage[language] {
-                self.lock.unlock()
-                return cached
-            }
-            self.lock.unlock()
-
-            guard let created = build() else {
-                return nil
-            }
-
-            self.lock.lock()
-            defer { lock.unlock() }
-            if let cached = storage[language] {
-                return cached
-            }
-            self.storage[language] = created
-            return created
-        }
-
-        private let lock = NSLock()
-        private var storage: [String: NSRegularExpression] = [:]
+/// Exact code and case-normalized language used to look up immutable spans.
+public struct SyntaxHighlightKey: Sendable, Hashable {
+    public let code: String
+    public let language: String?
+    public init(code: String, language: String?) {
+        self.code = code
+        self.language = language?.lowercased()
     }
+}
 
-    // MARK: - Public API
+/// Regex compilation, segmentation and bounded dictionaries never leave this actor.
+public actor SyntaxHighlightCache {
+    public static let shared = SyntaxHighlightCache()
+    private typealias Kind = SyntaxHighlightKind
+    private var cache: [SyntaxHighlightKey: [SyntaxHighlightSpan]] = [:]
+    private var order: [SyntaxHighlightKey] = []
+    private var keywordCache: [String: NSRegularExpression] = [:]
+    private let noTypeNameLangs: Set<String> = ["json", "bash", "sh", "shell", "css", "toml", "yaml", "yml", "mermaid"]
+    public init() {}
 
-    /// Apply syntax colouring to `code` for the given `language`.
-    ///
-    /// - Parameters:
-    ///   - code:         Source code string (trailing newline already stripped).
-    ///   - language:     Fenced code block language identifier, e.g. `"swift"`.
-    ///   - font:         Monospaced font to use for all tokens.
-    ///   - defaultColor: Base foreground colour (adapts to light/dark automatically).
-    /// - Returns: An `NSAttributedString` with per-token `.foregroundColor` set.
-    public static func highlight(
-        _ code: String,
-        language: String?,
-        font: PlatformFont,
-        defaultColor: PlatformColor
-    )
-        -> NSAttributedString {
+    public func spans(for code: String, language: String?) -> [SyntaxHighlightSpan] {
+        let cacheKey = SyntaxHighlightKey(code: code, language: language)
+        if let cached = self.cache[cacheKey] {
+            self.order.removeAll { $0 == cacheKey }
+            self.order.append(cacheKey)
+            return cached
+        }
         let lang = language?.lowercased() ?? ""
-        let nsCode = code as NSString
-        let nsLen = nsCode.length
+        let nsLen = (code as NSString).length
         let fullRange = NSRange(location: 0, length: nsLen)
-
-        // ── Fast path: reuse previously computed token spans ────────────────
-        let cacheKey = "\(lang)\0\(code)" as NSString
-        if let cached = tokenCache.object(forKey: cacheKey) {
-            let result = NSMutableAttributedString(
-                string: code, attributes: [.font: font, .foregroundColor: defaultColor]
-            )
-            for (range, kind) in cached.spans {
-                result.addAttribute(.foregroundColor, value: self.color(for: kind), range: range)
-            }
-            return result
-        }
-
-        // ── Slow path: run regexes, collect spans, cache ────────────────────
-        let result = NSMutableAttributedString(
-            string: code,
-            attributes: [.font: font, .foregroundColor: defaultColor]
-        )
-
         // Flat bitmap — O(1) read/write, no heap allocation per mark.
         // Value = Kind.rawValue of the winning token (0 = unpainted).
         var painted = [UInt8](repeating: 0, count: nsLen)
-        var spans = ContiguousArray<(range: NSRange, kind: Kind)>()
+        var spans: [SyntaxHighlightSpan] = []
 
         /// Mark a range with a token colour, painting only positions not yet claimed by a
         /// higher-priority token. Partially-overlapping matches (e.g. a comment that
@@ -126,8 +80,7 @@ public enum SyntaxHighlighter {
                     for j in s ..< i {
                         painted[j] = kind.rawValue
                     }
-                    spans.append((sub, kind))
-                    result.addAttribute(.foregroundColor, value: self.color(for: kind), range: sub)
+                    spans.append(SyntaxHighlightSpan(range: sub, kind: kind))
                     subStart = nil
                 }
             }
@@ -178,108 +131,33 @@ public enum SyntaxHighlighter {
         }
         // ────────────────────────────────────────────────────────────────────
 
-        self.tokenCache.setObject(CachedSpans(spans), forKey: cacheKey)
-        return result
+        self.cache[cacheKey] = spans
+        self.order.append(cacheKey)
+        if self.order.count > 300 { self.cache[self.order.removeFirst()] = nil }
+        return spans
     }
-
-    private nonisolated(unsafe) static let tokenCache: NSCache<NSString, CachedSpans> = {
-        let c = NSCache<NSString, CachedSpans>()
-        c.countLimit = 300 // ≈ 300 distinct code blocks cached in memory
-        return c
-    }()
-
-    /// Languages where PascalCase type-name highlighting is irrelevant / noisy.
-    private static let noTypeNameLangs: Set = [
-        "json", "bash", "sh", "shell", "css", "toml", "yaml", "yml", "mermaid",
-    ]
-
-    #if canImport(UIKit)
-    /// Xcode-inspired palette
-    private static let colorKeyword = UIColor { t in
-        t.userInterfaceStyle == .dark
-            ? UIColor(red: 0.81, green: 0.56, blue: 0.96, alpha: 1) // #CF8EF4
-            : UIColor(red: 0.61, green: 0.14, blue: 0.58, alpha: 1) // #9B2393
-    }
-
-    private static let colorString = UIColor { t in
-        t.userInterfaceStyle == .dark
-            ? UIColor(red: 0.99, green: 0.42, blue: 0.36, alpha: 1) // #FC6A5D
-            : UIColor(red: 0.77, green: 0.10, blue: 0.09, alpha: 1) // #C41A16
-    }
-
-    private static let colorComment = UIColor { t in
-        t.userInterfaceStyle == .dark
-            ? UIColor(red: 0.42, green: 0.54, blue: 0.38, alpha: 1)
-            : UIColor(red: 0.25, green: 0.43, blue: 0.20, alpha: 1)
-    }
-
-    private static let colorNumber = UIColor { t in
-        t.userInterfaceStyle == .dark
-            ? UIColor(red: 0.82, green: 0.75, blue: 0.41, alpha: 1) // #D0BF69
-            : UIColor(red: 0.11, green: 0.11, blue: 0.73, alpha: 1)
-    }
-
-    private static let colorType = UIColor { t in
-        t.userInterfaceStyle == .dark
-            ? UIColor(red: 0.36, green: 0.85, blue: 1.00, alpha: 1) // #5DD8FF
-            : UIColor(red: 0.22, green: 0.00, blue: 0.63, alpha: 1)
-    }
-
-    #elseif canImport(AppKit)
-    private static let colorKeyword = NSColor(name: nil) { a in
-        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(calibratedRed: 0.81, green: 0.56, blue: 0.96, alpha: 1)
-            : NSColor(calibratedRed: 0.61, green: 0.14, blue: 0.58, alpha: 1)
-    }
-
-    private static let colorString = NSColor(name: nil) { a in
-        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(calibratedRed: 0.99, green: 0.42, blue: 0.36, alpha: 1)
-            : NSColor(calibratedRed: 0.77, green: 0.10, blue: 0.09, alpha: 1)
-    }
-
-    private static let colorComment = NSColor(name: nil) { a in
-        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(calibratedRed: 0.42, green: 0.54, blue: 0.38, alpha: 1)
-            : NSColor(calibratedRed: 0.25, green: 0.43, blue: 0.20, alpha: 1)
-    }
-
-    private static let colorNumber = NSColor(name: nil) { a in
-        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(calibratedRed: 0.82, green: 0.75, blue: 0.41, alpha: 1)
-            : NSColor(calibratedRed: 0.11, green: 0.11, blue: 0.73, alpha: 1)
-    }
-
-    private static let colorType = NSColor(name: nil) { a in
-        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(calibratedRed: 0.36, green: 0.85, blue: 1.00, alpha: 1)
-            : NSColor(calibratedRed: 0.22, green: 0.00, blue: 0.63, alpha: 1)
-    }
-    #endif
 
     // MARK: - Precompiled regexes
 
-    private static let blockCommentRx = rx(#"/\*[\s\S]*?\*/"#, [.dotMatchesLineSeparators])
-    private static let slashCommentRx = rx(#"//[^\r\n]*"#)
-    private static let hashCommentRx = rx(#"#[^\r\n]*"#)
-    private static let tripleDoubleStringRx = rx(#""""[\s\S]*?""""#, [.dotMatchesLineSeparators])
+    private lazy var blockCommentRx = self.rx(#"/\*[\s\S]*?\*/"#, [.dotMatchesLineSeparators])
+    private lazy var slashCommentRx = self.rx(#"//[^\r\n]*"#)
+    private lazy var hashCommentRx = self.rx(#"#[^\r\n]*"#)
+    private lazy var tripleDoubleStringRx = self.rx(#""""[\s\S]*?""""#, [.dotMatchesLineSeparators])
     // Single-line strings: don't allow unescaped newlines so an unclosed quote
     // doesn't eat the rest of the file.
-    private static let doubleStringRx = rx(#""(?:[^"\\\r\n]|\\.)*""#)
-    private static let singleStringRx = rx(#"'(?:[^'\\\r\n]|\\.)*'"#)
+    private lazy var doubleStringRx = self.rx(#""(?:[^"\\\r\n]|\\.)*""#)
+    private lazy var singleStringRx = self.rx(#"'(?:[^'\\\r\n]|\\.)*'"#)
     // Template literals can span lines.
-    private static let templateStringRx = rx(#"`(?:[^`\\]|\\.)*`"#, [.dotMatchesLineSeparators])
-    private static let numberRx = rx(#"\b(0x[\dA-Fa-f]+|0b[01]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b"#)
-    private static let typeNameRx = rx(#"\b[A-Z][A-Za-z0-9_]*\b"#)
+    private lazy var templateStringRx = self.rx(#"`(?:[^`\\]|\\.)*`"#, [.dotMatchesLineSeparators])
+    private lazy var numberRx = self.rx(#"\b(0x[\dA-Fa-f]+|0b[01]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b"#)
+    private lazy var typeNameRx = self.rx(#"\b[A-Z][A-Za-z0-9_]*\b"#)
 
     // MARK: - Keyword regexes (built once per language, then cached)
-
-    private static let keywordCache = KeywordRegexCache()
 
     // MARK: - Keyword tables
 
     // swiftlint:disable line_length
-    private static let keywords: [String: [String]] = [
+    private let keywords: [String: [String]] = [
         "swift": [
             "actor", "any", "as", "associatedtype", "async", "await",
             "break", "case", "catch", "class", "continue", "convenience",
@@ -386,19 +264,7 @@ public enum SyntaxHighlighter {
 
     // swiftlint:enable line_length
 
-    // MARK: - Adaptive colours
-
-    private static func color(for kind: Kind) -> PlatformColor {
-        switch kind {
-        case .keyword: self.colorKeyword
-        case .string: self.colorString
-        case .comment: self.colorComment
-        case .number: self.colorNumber
-        case .type: self.colorType
-        }
-    }
-
-    private static func rx(
+    private func rx(
         _ pattern: String,
         _ opts: NSRegularExpression.Options = []
     )
@@ -407,7 +273,7 @@ public enum SyntaxHighlighter {
         try! NSRegularExpression(pattern: pattern, options: opts)
     }
 
-    private static func lineCommentRxFor(_ lang: String) -> NSRegularExpression {
+    private func lineCommentRxFor(_ lang: String) -> NSRegularExpression {
         switch lang {
         case "bash", "perl", "python", "r", "ruby",
              "sh", "shell", "toml", "yaml", "yml":
@@ -417,12 +283,98 @@ public enum SyntaxHighlighter {
         }
     }
 
-    private static func keywordRx(for lang: String) -> NSRegularExpression? {
-        self.keywordCache.regex(for: lang) {
-            let words = self.keywords[lang] ?? self.keywords["_default"]!
-            return try? NSRegularExpression(
-                pattern: #"\b("# + words.joined(separator: "|") + #")\b"#
-            )
+    private func keywordRx(for lang: String) -> NSRegularExpression? {
+        let normalized = self.keywords[lang] == nil ? "_default" : lang
+        if let cached = self.keywordCache[normalized] { return cached }
+        let words = self.keywords[normalized]!
+        let result = try? NSRegularExpression(pattern: #"\b("# + words.joined(separator: "|") + #")\b"#)
+        self.keywordCache[normalized] = result
+        return result
+    }
+}
+
+/// Applies already prepared spans. Platform fonts and adaptive colors stay on MainActor.
+@MainActor
+public enum SyntaxHighlighter {
+    public static func highlight(_ code: String, spans: [SyntaxHighlightSpan], font: PlatformFont, defaultColor: PlatformColor) -> NSAttributedString {
+        let result = NSMutableAttributedString(string: code, attributes: [.font: font, .foregroundColor: defaultColor])
+        for span in spans where span.range.location >= 0 && NSMaxRange(span.range) <= result.length {
+            result.addAttribute(.foregroundColor, value: self.color(for: span.kind), range: span.range)
+        }
+        return result
+    }
+
+    #if canImport(UIKit)
+    /// Xcode-inspired palette
+    private static let colorKeyword = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.81, green: 0.56, blue: 0.96, alpha: 1) // #CF8EF4
+            : UIColor(red: 0.61, green: 0.14, blue: 0.58, alpha: 1) // #9B2393
+    }
+
+    private static let colorString = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.99, green: 0.42, blue: 0.36, alpha: 1) // #FC6A5D
+            : UIColor(red: 0.77, green: 0.10, blue: 0.09, alpha: 1) // #C41A16
+    }
+
+    private static let colorComment = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.42, green: 0.54, blue: 0.38, alpha: 1)
+            : UIColor(red: 0.25, green: 0.43, blue: 0.20, alpha: 1)
+    }
+
+    private static let colorNumber = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.82, green: 0.75, blue: 0.41, alpha: 1) // #D0BF69
+            : UIColor(red: 0.11, green: 0.11, blue: 0.73, alpha: 1)
+    }
+
+    private static let colorType = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.36, green: 0.85, blue: 1.00, alpha: 1) // #5DD8FF
+            : UIColor(red: 0.22, green: 0.00, blue: 0.63, alpha: 1)
+    }
+
+    #elseif canImport(AppKit)
+    private static let colorKeyword = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.81, green: 0.56, blue: 0.96, alpha: 1)
+            : NSColor(calibratedRed: 0.61, green: 0.14, blue: 0.58, alpha: 1)
+    }
+
+    private static let colorString = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.99, green: 0.42, blue: 0.36, alpha: 1)
+            : NSColor(calibratedRed: 0.77, green: 0.10, blue: 0.09, alpha: 1)
+    }
+
+    private static let colorComment = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.42, green: 0.54, blue: 0.38, alpha: 1)
+            : NSColor(calibratedRed: 0.25, green: 0.43, blue: 0.20, alpha: 1)
+    }
+
+    private static let colorNumber = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.82, green: 0.75, blue: 0.41, alpha: 1)
+            : NSColor(calibratedRed: 0.11, green: 0.11, blue: 0.73, alpha: 1)
+    }
+
+    private static let colorType = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.36, green: 0.85, blue: 1.00, alpha: 1)
+            : NSColor(calibratedRed: 0.22, green: 0.00, blue: 0.63, alpha: 1)
+    }
+    #endif
+
+    private static func color(for kind: SyntaxHighlightKind) -> PlatformColor {
+        switch kind {
+        case .keyword: self.colorKeyword
+        case .string: self.colorString
+        case .comment: self.colorComment
+        case .number: self.colorNumber
+        case .type: self.colorType
         }
     }
 }

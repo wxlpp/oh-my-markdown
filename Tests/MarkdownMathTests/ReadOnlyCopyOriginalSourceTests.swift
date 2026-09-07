@@ -12,7 +12,7 @@ import AppKit
 
 /// Bug 4 — 只读视图选中复制丢公式/图片/表格 的非 GUI 复现 / 回归钉死。
 ///
-/// 根因（Phase 1 取证）：命中态 `AttributedStringRenderer` 把 math / image 渲染成
+/// 根因（Phase 1 取证）：命中态 `MaterializationFixture` 把 math / image 渲染成
 /// 裸 `NSTextAttachment`（latex / url / alt 全丢），表格走纯文本 `\t`；而
 /// `MarkdownLabelView` 的 copy 是自定义实现，只把 `attributedString.string`
 /// 按选区做 `substring` 写进剪贴板 —— attachment 处是 `\u{FFFC}`，
@@ -27,7 +27,7 @@ import AppKit
 /// 读回真实剪贴板，断言拷贝串包含原始 markdown 源。改前必为红（attachment=`￼`、
 /// 表格丢管道、math 占位也无法构成源）。
 @MainActor
-@Suite("Read-only copy yields original markdown source (Bug 4)")
+@Suite("Read-only copy yields original markdown source (Bug 4)", .timeLimit(.minutes(1)))
 struct ReadOnlyCopyOriginalSourceTests {
     private static let markdown = """
     # 标题
@@ -69,32 +69,15 @@ struct ReadOnlyCopyOriginalSourceTests {
         // 注入真实 MathJaxRenderer：math 异步解析后会变成命中态裸 attachment，
         // 这是「copy 丢源」最强的复现条件（占位态也丢，但命中态彻底证明
         // 不能依赖 attributedString.string）。
-        view.mathRenderer = MathJaxRenderer()
-        for _ in 0 ..< 20 {
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 30_000_000)
-        }
-
+        view.mathRenderer = MathRendererConfiguration(renderer: MathJaxRenderer())
+        let gate = ViewSnapshotGate()
         view.setMarkdown(Self.markdown)
-
-        // 等流式 parse 落地（多个块）。
-        var parsed = false
-        for _ in 0 ..< 60 {
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 20_000_000)
-            if view.blocks.count >= 5 { parsed = true; break }
+        await gate.wait(for: view) {
+            view.currentSnapshot?.displayModel.source == Self.markdown
+                && view._renderedMathStateForTesting().mathSourceCount == 0
         }
-        #expect(parsed, "流式 parse 未在超时内完成")
-
-        // 等异步 math 字形回写命中（math attachment 命中态），最大化复现强度。
-        // 条件轮询 + 早退：math 全部解析为 attachment（mathSourceCount == 0）
-        // 即 break，避免固定 ~6s 空等与 CI flaky；超时上界不 fail 测试本身，
-        // 仅退出等待继续后续断言（与原行为一致——原代码也是等满就继续）。
-        for _ in 0 ..< 200 {
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 30_000_000)
-            if view._renderedMathStateForTesting().mathSourceCount == 0 { break }
-        }
+        #expect(view.blocks.count >= 5)
+        #expect(view._renderedMathStateForTesting().attachmentCount >= 2)
 
         let copied = self.selectAllAndCopy(view)
         let objectReplacementCount = copied.count(where: { $0 == "\u{FFFC}" })

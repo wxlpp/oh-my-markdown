@@ -17,6 +17,7 @@ import Testing
 /// 实测得 block count==29、inlineMath==1、blockMath==1、宽表 cols=9 rows=5、
 /// 窄表 cols=3 rows=5；本守卫保留裸 `$` 原文，pandoc 规则下应得同一结构。
 @Suite("Streaming math document integrity (Bug 1)")
+@MainActor
 struct StreamingMathDocumentIntegrityTests {
     /// 与 Example/Sources/ContentView.swift StreamTab 完全一致的源文本。
     /// raw 多行字面量（自定义 `#"""…"""#` 定界符）：LaTeX 反斜杠与裸 `$`
@@ -129,7 +130,7 @@ struct StreamingMathDocumentIntegrityTests {
       - `BlockNode` — 统一的中间表示，与平台无关
         - `.paragraph`, `.heading`, `.codeBlock`, `.table`…
     - **渲染层**
-      - `AttributedStringRenderer` — 值类型，线程安全
+      - `MaterializationFixture` — 值类型，线程安全
         - 接收 `availableWidth`，内联计算 tab stops
         - 溢出表格：文字置透明，写入 `.markdownTableNaturalWidth`
     - **显示层**
@@ -324,6 +325,7 @@ struct StreamingMathDocumentIntegrityTests {
 ///    在尾窗判定下返回 false（旧全篇扫描会 true），即含字面 `$` 文档流式
 ///    不再每 token 全量 = 消除 O(n²)。
 @Suite("Open math delimiter narrowed to reparse tail window (Bug 1 perf)")
+@MainActor
 struct OpenMathDelimiterTailWindowTests {
     /// 守卫 1（correctness）：尾窗内真·未闭合 `$x`，append 一个 `$` 应闭合
     /// 成 math。收窄后该真开界仍被 detect → 强制全量，结果与全量逐块一致。

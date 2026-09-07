@@ -87,7 +87,8 @@ let package = Package(
 
         .testTarget(
             name: "MarkdownKitTests",
-            dependencies: ["MarkdownCore", "MarkdownRenderKit", "MarkdownPlatformView", "MarkdownKit"]
+            dependencies: ["MarkdownCore", "MarkdownRenderKit", "MarkdownPlatformView", "MarkdownKit"],
+            resources: [.copy("Fixtures/RenderGolden")]
         ),
         .testTarget(
             name: "MarkdownMathTests",

@@ -36,61 +36,41 @@ struct StreamingSVGBlockCacheSurvivesRendererRecreationTests {
         return tokens
     }
 
-    private func waitRendererLanded(_: MarkdownLabelView) async {
-        for _ in 0 ..< 25 {
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 30_000_000)
-        }
-    }
-
     private func run(churnWidth: Bool) async -> (heldResolved: Bool, attachTrace: [Int]) {
+        let gate = ViewSnapshotGate()
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 10000))
-        #if canImport(UIKit)
-        view.layoutIfNeeded()
-        #elseif canImport(AppKit)
-        view.layoutSubtreeIfNeeded()
-        #endif
-
-        view.svgBlockRenderer = ChurnSVGRenderer()
-        await self.waitRendererLanded(view)
-
-        let toks = Self.tokenize(Self.svgSource)
-        for (ti, tok) in toks.enumerated() {
-            if ti == 0 { view.setMarkdown(tok) } else { view.appendMarkdown(tok) }
-            if churnWidth, ti % 4 == 0 {
-                let w: CGFloat = (ti % 8 == 0) ? 322 : 318
-                view.frame = CGRect(x: 0, y: 0, width: w, height: 10000)
+        view.svgBlockRenderer = SVGRendererConfiguration(renderer: ChurnSVGRenderer())
+        var source = ""
+        for (index, token) in Self.tokenize(Self.svgSource).enumerated() {
+            source += token
+            if index == 0 { view.setMarkdown(token) } else { view.appendMarkdown(token) }
+            if churnWidth, index % 4 == 0 {
+                view.frame.size.width = index % 8 == 0 ? 322 : 318
             }
-            try? await Task.sleep(nanoseconds: 30_000_000)
+            await gate.wait(for: view) { view.currentSnapshot?.displayModel.source == source }
         }
-
-        var attachTrace: [Int] = []
-        var consecutiveResolved = 0
-        var heldResolved = false
-        var churnToggle = false
-        for step in 0 ..< 320 {
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 18_000_000)
-            if churnWidth, step % 3 == 0 {
-                churnToggle.toggle()
-                let w: CGFloat = churnToggle ? 322 : 318
-                view.frame = CGRect(x: 0, y: 0, width: w, height: 10000)
-                #if canImport(AppKit)
-                view.layoutSubtreeIfNeeded()
-                #endif
-            }
-            let st = view._renderedSVGBlockStateForTesting()
-            if attachTrace.last != st.attachmentCount {
-                attachTrace.append(st.attachmentCount)
-            }
-            if st.markerCount == 0, st.attachmentCount == Self.expectedAttachments {
-                consecutiveResolved += 1
-                if consecutiveResolved >= 8 { heldResolved = true; break }
-            } else {
-                consecutiveResolved = 0
-            }
+        await gate.wait(for: view) {
+            let state = view._renderedSVGBlockStateForTesting()
+            return state.markerCount == 0 && state.attachmentCount == Self.expectedAttachments
         }
-        return (heldResolved: heldResolved, attachTrace: attachTrace)
+        var trace: [Int] = []
+        for step in 0 ..< 8 {
+            let width: CGFloat = churnWidth ? (step % 2 == 0 ? 322 : 318) : 320
+            view.frame.size.width = width
+            #if canImport(UIKit)
+            view.layoutIfNeeded()
+            #else
+            view.layoutSubtreeIfNeeded()
+            #endif
+            await gate.wait(for: view) {
+                guard view.currentSnapshot?.displayModel.availableWidth == width else { return false }
+                let state = view._renderedSVGBlockStateForTesting()
+                return state.markerCount == 0 && state.attachmentCount == Self.expectedAttachments
+            }
+            trace.append(view._renderedSVGBlockStateForTesting().attachmentCount)
+        }
+        view.dismantleRenderSession()
+        return (trace == Array(repeating: Self.expectedAttachments, count: 8), trace)
     }
 
     @Test("流式 + 持续宽度抖动下，已解析 svg 必须稳定熬过反复 renderer 重建")
@@ -115,11 +95,11 @@ private final class ChurnSVGRenderer: SVGBlockRendering, @unchecked Sendable {
     func render(svg _: String, availableWidth _: CGFloat, scale _: CGFloat) async -> SVGBlockOutcome {
         #if canImport(UIKit)
         let img = UIGraphicsImageRenderer(size: .init(width: 60, height: 40)).image { _ in }
-        return .rendered(SVGBlockGlyph(image: img))
+        return .rendered(RenderedSVG(image: encodedTestImage(size: img.size)))
         #elseif canImport(AppKit)
         let img = NSImage(size: .init(width: 60, height: 40))
         img.lockFocus(); img.unlockFocus()
-        return .rendered(SVGBlockGlyph(image: img))
+        return .rendered(RenderedSVG(image: encodedTestImage(size: img.size)))
         #else
         return .failed
         #endif

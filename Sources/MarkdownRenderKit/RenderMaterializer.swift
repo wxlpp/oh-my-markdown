@@ -12,6 +12,7 @@ import AppKit
 @MainActor
 package struct RenderMaterializer {
     private let configuration: RenderConfigurationSnapshot
+    private var syntaxSpans: [SyntaxHighlightKey: [SyntaxHighlightSpan]] = [:]
 
     package init(configuration: RenderConfigurationSnapshot) {
         self.configuration = configuration
@@ -20,7 +21,9 @@ package struct RenderMaterializer {
     package func materialize(_ model: RenderDisplayModel, resources: ResolvedResourceSnapshot)
         -> RenderSnapshot {
         if let content = model.preparedContent {
-            return self.materializePrepared(content, model: model, resources: resources)
+            var prepared = self
+            prepared.syntaxSpans = model.syntaxSpans
+            return prepared.materializePrepared(content, model: model, resources: resources)
         }
         let result = NSMutableAttributedString(string: "")
         var owners: [any ResourceResidencyOwner] = []
@@ -37,13 +40,13 @@ package struct RenderMaterializer {
                 let baseline: Double
                 let owner: any ResourceResidencyOwner
                 switch resource {
-                case .image(let value, let retained), .svg(let value, let retained):
+                case .image(let value, let retained):
                     image = value
                     baseline = 0
                     owner = retained
-                case .math(let value, let offset, let retained):
-                    image = value
-                    baseline = offset
+                case .math(let retained), .svg(let retained):
+                    image = retained.image
+                    baseline = retained.baselineOffset
                     owner = retained
                 }
                 let attachment = NSTextAttachment()
@@ -185,7 +188,7 @@ package struct RenderMaterializer {
         switch run.kind {
         case .text: return NSAttributedString(string: run.text, attributes: attrs)
         case .code(let language):
-            let result = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(run.text, language: language, font: self.font(for: .code), defaultColor: self.preparedColor(.code)))
+            let result = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(run.text, spans: self.syntaxSpans[SyntaxHighlightKey(code: run.text, language: language)] ?? [], font: self.font(for: .code), defaultColor: self.preparedColor(.code)))
             if let para = attrs[.paragraphStyle] { result.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: result.length)) }
             return result
         case .image(let id, let source, let width, let resolves):
@@ -199,7 +202,9 @@ package struct RenderMaterializer {
             return NSAttributedString(string: run.text, attributes: attrs)
         case .math(let id, let latex, let display, let width, let staticPlaceholder, let resolves):
             let para = attrs[.paragraphStyle]
-            if resolves, case .math(let image, let baseline, let owner) = resources.values[id] {
+            if resolves, case .math(let owner) = resources.values[id] {
+                let image = owner.image
+                let baseline = owner.baselineOffset
                 owners.append(owner)
                 return self.attachment(image: image, bounds: CGRect(x: 0, y: baseline, width: image.size.width, height: image.size.height), attributes: display ? [.paragraphStyle: para!] : [:])
             }
@@ -216,14 +221,15 @@ package struct RenderMaterializer {
                 centered.head = inherited.head - 16
                 centered.first = inherited.first - 16
             }
-            if resolves, case .svg(let image, let owner) = resources.values[id] {
+            if resolves, case .svg(let owner) = resources.values[id] {
+                let image = owner.image
                 owners.append(owner)
                 return self.attachment(image: image, bounds: CGRect(origin: .zero, size: image.size), attributes: [.paragraphStyle: self.paragraph(centered)])
             }
             if staticPlaceholder {
                 return self.attachment(image: nil, bounds: CGRect(x: 0, y: 0, width: placeholderWidth, height: placeholderHeight), attributes: [.paragraphStyle: self.paragraph(centered), .markdownSVGBlockSource: source])
             }
-            let result = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(run.text, language: "svg", font: self.font(for: .code), defaultColor: self.preparedColor(.code)))
+            let result = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(run.text, spans: self.syntaxSpans[SyntaxHighlightKey(code: run.text, language: "svg")] ?? [], font: self.font(for: .code), defaultColor: self.preparedColor(.code)))
             result.addAttributes([.paragraphStyle: attrs[.paragraphStyle]!, .markdownSVGBlockSource: source], range: NSRange(location: 0, length: result.length))
             return result
         }

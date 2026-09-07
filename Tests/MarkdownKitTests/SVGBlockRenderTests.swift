@@ -9,14 +9,15 @@ import AppKit
 #endif
 
 @Suite("SVG code-block rendering branch")
+@MainActor
 struct SVGBlockRenderTests {
     private func render(
         _ block: BlockNode,
-        cache: [SVGBlockCacheKey: SVGBlockGlyph] = [:],
+        cache: [SVGBlockCacheKey: PlatformImage] = [:],
         width: CGFloat = 320
     ) -> NSAttributedString {
-        var r = AttributedStringRenderer(style: .default, availableWidth: width)
-        r.svgBlockCache = cache
+        var r = MaterializationFixture(style: .default, availableWidth: width)
+        r.svg = Dictionary(uniqueKeysWithValues: cache.map { ($0.key.svg, $0.value) })
         return r.renderBlock(block)
     }
 
@@ -34,8 +35,8 @@ struct SVGBlockRenderTests {
 
     @Test("cache hit → single centered attachment sized to image, origin.y == 0；paragraphSpacing 与 miss 对齐（无解析跳动）")
     func hitProducesCenteredAttachment() throws {
-        let sized = SVGBlockGlyph(image: makeImage(width: 200, height: 90))
-        let key = SVGBlockCacheKey(svg: "<svg/>", availableWidth: 320, rasterScale: 1, rendererGeneration: 0)
+        let sized = makeImage(width: 200, height: 90)
+        let key = SVGBlockCacheKey(svg: "<svg/>", availableWidth: 320, rasterScale: 1, configurationID: .semantic(namespace: "fixture", version: 0))
         let out = self.render(.codeBlock(language: "svg", body: "<svg/>"), cache: [key: sized])
         var att: NSTextAttachment?
         out.enumerateAttribute(.attachment, in: NSRange(location: 0, length: out.length)) { v, _, _ in
@@ -57,7 +58,7 @@ struct SVGBlockRenderTests {
     func nonSvgUnchanged() {
         let a = self.render(.codeBlock(language: "swift", body: "let x = 1"))
         let b: NSAttributedString = {
-            let r = AttributedStringRenderer(style: .default, availableWidth: 320)
+            let r = MaterializationFixture(style: .default, availableWidth: 320)
             return r.renderBlock(.codeBlock(language: "swift", body: "let x = 1"))
         }()
         #expect(a.isEqual(to: b))

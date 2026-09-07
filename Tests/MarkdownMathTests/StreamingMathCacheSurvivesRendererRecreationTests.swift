@@ -75,78 +75,41 @@ struct StreamingMathCacheSurvivesRendererRecreationTests {
         return tokens
     }
 
-    private func waitRendererLanded(_ view: MarkdownLabelView) async {
-        for _ in 0 ..< 25 {
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 30_000_000)
-        }
-    }
-
-    /// 真实平台流式路径 + 抖动窗口。返回：观测窗口内是否曾**连续 8 个采样**
-    /// 都保持「全部 math 已解析」形态（残留占位=0 且 attachment=expected）—— 即
-    /// 已解析 math 稳定熬过反复的 renderer 重建；以及窗口内 attachment 数轨迹
-    /// （去抖，用于诊断/取证振荡）。`churnWidth` 控制整窗口是否持续抖动宽度。
     private func run(churnWidth: Bool) async -> (heldResolved: Bool, attachTrace: [Int]) {
+        let gate = ViewSnapshotGate()
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 10000))
-        #if canImport(UIKit)
-        view.layoutIfNeeded()
-        #elseif canImport(AppKit)
-        view.layoutSubtreeIfNeeded()
-        #endif
-
-        // 注入真实 MathJaxRenderer，等 didSet 的 setRenderer 异步落地。
-        view.mathRenderer = MathJaxRenderer()
-        await self.waitRendererLanded(view)
-
-        // 1) 流式逐 ~2char token 喂入，token 间间歇抖宽（仅改 frame，让下一次
-        //    自然 layout pass / resetLayout 命中 `_cachedRenderer=nil` 丢弃分支
-        //    —— 忠实复刻 SwiftUI churn，不在 token 循环内同步重入布局，避免与
-        //    挂起 parse 的 applyDocument 竞态、与本根因无关）。
-        let toks = Self.tokenize(Self.shrinkSensitiveSource)
-        for (ti, tok) in toks.enumerated() {
-            if ti == 0 { view.setMarkdown(tok) } else { view.appendMarkdown(tok) }
-            if churnWidth, ti % 4 == 0 {
-                let w: CGFloat = (ti % 8 == 0) ? 322 : 318
-                view.frame = CGRect(x: 0, y: 0, width: w, height: 10000)
+        view.mathRenderer = MathRendererConfiguration(renderer: MathJaxRenderer())
+        var source = ""
+        for (index, token) in Self.tokenize(Self.shrinkSensitiveSource).enumerated() {
+            source += token
+            if index == 0 { view.setMarkdown(token) } else { view.appendMarkdown(token) }
+            if churnWidth, index % 4 == 0 {
+                view.frame.size.width = index % 8 == 0 ? 322 : 318
             }
-            // 节奏延时定长（30ms，与观测窗口 :127 同量级）以消除 CI 不确定性；
-            // 复现竞态靠上面的 width churn（frame 318/322 跨折行点），与此
-            // sleep 时长无关——只去掉随机节奏抖动，不动 churn 逻辑。
-            try? await Task.sleep(nanoseconds: 30_000_000)
+            await gate.wait(for: view) { view.currentSnapshot?.displayModel.source == source }
         }
-
-        // 2) 观测窗口：持续抖宽（每隔几拍改 frame，反复触发 renderer 重建），
-        //    每拍采样 view 真正绘制的 math 状态。要求曾出现「连续 8 个采样都
-        //    是已解析形态」—— buggy 下重建出空 renderer → renderMath 回退占位
-        //    → 形态在占位↔解析间振荡，连续保持达不到；fixed 下 view 持有
-        //    store、重建重播种 → 命中保持。
-        var attachTrace: [Int] = []
-        var consecutiveResolved = 0
-        var heldResolved = false
-        var churnToggle = false
-        for step in 0 ..< 320 {
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 18_000_000)
-            if churnWidth, step % 3 == 0 {
-                churnToggle.toggle()
-                let w: CGFloat = churnToggle ? 322 : 318
-                view.frame = CGRect(x: 0, y: 0, width: w, height: 10000)
-                #if canImport(AppKit)
-                view.layoutSubtreeIfNeeded()
-                #endif
-            }
-            let st = view._renderedMathStateForTesting()
-            if attachTrace.last != st.attachmentCount {
-                attachTrace.append(st.attachmentCount)
-            }
-            if st.mathSourceCount == 0, st.attachmentCount == Self.expectedMathSpans {
-                consecutiveResolved += 1
-                if consecutiveResolved >= 8 { heldResolved = true; break }
-            } else {
-                consecutiveResolved = 0
-            }
+        await gate.wait(for: view) {
+            let state = view._renderedMathStateForTesting()
+            return state.mathSourceCount == 0 && state.attachmentCount == Self.expectedMathSpans
         }
-        return (heldResolved: heldResolved, attachTrace: attachTrace)
+        var trace: [Int] = []
+        for step in 0 ..< 8 {
+            let width: CGFloat = churnWidth ? (step % 2 == 0 ? 322 : 318) : 320
+            view.frame.size.width = width
+            #if canImport(UIKit)
+            view.layoutIfNeeded()
+            #else
+            view.layoutSubtreeIfNeeded()
+            #endif
+            await gate.wait(for: view) {
+                guard view.currentSnapshot?.displayModel.availableWidth == width else { return false }
+                let state = view._renderedMathStateForTesting()
+                return state.mathSourceCount == 0 && state.attachmentCount == Self.expectedMathSpans
+            }
+            trace.append(view._renderedMathStateForTesting().attachmentCount)
+        }
+        view.dismantleRenderSession()
+        return (trace == Array(repeating: Self.expectedMathSpans, count: 8), trace)
     }
 
     @Test("流式 + 持续宽度抖动下，已解析 math 必须稳定熬过反复 renderer 重建")

@@ -1,22 +1,23 @@
 #if UMBRELLA_CLIENT
-  import MarkdownKit
+import MarkdownKit
+import MarkdownMath
 #else
-  import MarkdownRenderKit
+import MarkdownRenderKit
 #endif
 
 func inspect(_ snapshot: RenderSnapshot) async {
-  await Task.detached {
-    #if POSITIVE_ISOLATION
-      await MainActor.run { _ = snapshot.attributedString.length }
-    #else
-      _ = snapshot.attributedString.length
-    #endif
-  }.value
+    await Task.detached {
+        #if POSITIVE_ISOLATION
+        await MainActor.run { _ = snapshot.attributedString.length }
+        #else
+        _ = snapshot.attributedString.length
+        #endif
+    }.value
 }
 
 #if UMBRELLA_CLIENT
-  @MainActor
-  func umbrellaClientSurface() {
+@MainActor
+func umbrellaClientSurface() {
     _ = MarkdownDocument.self
     _ = MarkdownSourceRange.self
     _ = ParsedBlockNode.self
@@ -32,17 +33,21 @@ func inspect(_ snapshot: RenderSnapshot) async {
     _ = PlatformFont.self
     _ = PlatformColor.self
     _ = PlatformImage.self
-    _ = AttributedStringRenderer.self
     _ = TableMeasurement.self
     _ = MarkdownSourceHighlighter.self
     _ = SyntaxHighlighter.self
+    _ = SyntaxHighlightCache.self
+    _ = SyntaxHighlightKind.self
+    _ = SyntaxHighlightSpan.self
+    _ = SyntaxHighlightKey.self
     _ = PlaceholderMode.self
-    _ = MathRenderedGlyph.self
+    _ = RenderedMath.self
+    _ = RenderedImage.self
     _ = MathRenderOutcome.self
     _ = MathCacheKey.self
     _ = MathRendering.self
     _ = MathMetrics.self
-    _ = SVGBlockGlyph.self
+    _ = RenderedSVG.self
     _ = SVGBlockOutcome.self
     _ = SVGBlockCacheKey.self
     _ = SVGBlockRendering.self
@@ -77,11 +82,8 @@ func inspect(_ snapshot: RenderSnapshot) async {
     _ = MarkdownEditorEditResult.self
     _ = MarkdownEditorInputAction.self
     _ = MarkdownEditorCommands.self
-    _ = MathLoadCoordinator.self
-    _ = SVGBlockLoadCoordinator.self
     _ = MarkdownDocument(parsing: "client")
+    _ = MarkdownText("$x$").mathRenderer(MathRendererConfiguration(renderer: MathJaxRenderer()))
     _ = MarkdownRenderConfiguration.default.snapshot(generation: 0)
-    _ = MathLoadCoordinator()
-    _ = SVGBlockLoadCoordinator()
-  }
+}
 #endif

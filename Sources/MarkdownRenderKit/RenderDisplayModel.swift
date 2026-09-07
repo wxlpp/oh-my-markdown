@@ -1,6 +1,42 @@
 import MarkdownCore
 
 public struct RenderDisplayModel: Sendable, Equatable {
+    package var syntaxSpans: [SyntaxHighlightKey: [SyntaxHighlightSpan]] = [:]
+
+    package func preparingSyntax(using cache: SyntaxHighlightCache = .shared) async -> Self {
+        var result = self
+        func keys(_ runs: [PreparedRun]) -> [SyntaxHighlightKey] {
+            runs.compactMap { run in
+                switch run.kind {
+                case .code(let language): SyntaxHighlightKey(code: run.text, language: language)
+                case .svg: SyntaxHighlightKey(code: run.text, language: "svg")
+                default: nil
+                }
+            }
+        }
+        var requests: [SyntaxHighlightKey] = []
+        for piece in self.preparedContent ?? [] {
+            switch piece {
+            case .run(let run): requests += keys([run])
+            case .table(let table):
+                for cell in table.head {
+                    requests += keys(cell)
+                }
+                for row in table.rows {
+                    for cell in row {
+                        requests += keys(cell)
+                    }
+                }
+            case .blockStart: break
+            }
+        }
+        for key in Set(requests) {
+            guard !Task.isCancelled else { return result }
+            result.syntaxSpans[key] = await cache.spans(for: key.code, language: key.language)
+        }
+        return result
+    }
+
     /// Structured, value-only input preserves block nesting and semantics needed
     /// for width-dependent TextKit materialization. No platform object crosses here.
     package let preparedBlocks: [ParsedBlockNode]?

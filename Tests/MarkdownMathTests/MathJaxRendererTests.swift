@@ -12,26 +12,54 @@ import AppKit
 #endif
 
 @Suite("MathJaxRenderer")
+@MainActor
 struct MathJaxRendererTests {
+    @Test func builtInConfigurationsAreStableAndResourceKeysCoverOutputInputs() {
+        let math = MathRendererConfiguration(renderer: MathJaxRenderer())
+        #expect(math.configurationID == MathRendererConfiguration(renderer: MathJaxRenderer()).configurationID)
+        let svg = SVGRendererConfiguration(renderer: SwiftDrawSVGBlockRenderer())
+        #expect(svg.configurationID == SVGRendererConfiguration(renderer: SwiftDrawSVGBlockRenderer()).configurationID)
+        #expect(math.configurationID != svg.configurationID)
+        let base = MathCacheKey(latex: "x", display: false, pointSize: 16, colorHex: "#000000", rasterScale: 2, configurationID: math.configurationID)
+        let variations = [
+            MathCacheKey(latex: "y", display: false, pointSize: 16, colorHex: "#000000", rasterScale: 2, configurationID: math.configurationID),
+            MathCacheKey(latex: "x", display: true, pointSize: 16, colorHex: "#000000", rasterScale: 2, configurationID: math.configurationID),
+            MathCacheKey(latex: "x", display: false, pointSize: 17, colorHex: "#000000", rasterScale: 2, configurationID: math.configurationID),
+            MathCacheKey(latex: "x", display: false, pointSize: 16, colorHex: "#FF0000", rasterScale: 2, configurationID: math.configurationID),
+            MathCacheKey(latex: "x", display: false, pointSize: 16, colorHex: "#000000", rasterScale: 3, configurationID: math.configurationID),
+            MathCacheKey(latex: "x", display: false, pointSize: 16, colorHex: "#000000", rasterScale: 2, configurationID: .uniqueInstance()),
+        ]
+        #expect(variations.allSatisfy { $0 != base })
+        #expect(Set(variations + [base]).count == 7)
+        let svgKeys = [
+            SVGBlockCacheKey(svg: "a", availableWidth: 100, rasterScale: 2, configurationID: svg.configurationID),
+            SVGBlockCacheKey(svg: "b", availableWidth: 100, rasterScale: 2, configurationID: svg.configurationID),
+            SVGBlockCacheKey(svg: "a", availableWidth: 101, rasterScale: 2, configurationID: svg.configurationID),
+            SVGBlockCacheKey(svg: "a", availableWidth: 100, rasterScale: 3, configurationID: svg.configurationID),
+            SVGBlockCacheKey(svg: "a", availableWidth: 100, rasterScale: 2, configurationID: .uniqueInstance()),
+        ]
+        #expect(Set(svgKeys).count == 5)
+    }
+
     @Test("合法公式 → .rendered，尺寸为正")
     func validRenders() async {
         let r = MathJaxRenderer()
-        let out = await r.render(latex: "x^2+1", display: false, pointSize: 16, scale: 2, color: .black)
+        let out = await r.render(latex: "x^2+1", display: false, pointSize: 16, scale: 2, colorHex: "#000000")
         guard case .rendered(let g) = out else { Issue.record("expected .rendered, got \(out)"); return }
-        #expect(g.image.size.width > 1)
+        #expect(g.image.pointSize.width > 1)
     }
 
     @Test("非法公式 → 仍 .rendered（MathJax 错误 SVG 算成功）")
     func invalidStillRenders() async {
         let r = MathJaxRenderer()
-        let out = await r.render(latex: "\\thisCommandDoesNotExist", display: false, pointSize: 16, scale: 2, color: .black)
+        let out = await r.render(latex: "\\thisCommandDoesNotExist", display: false, pointSize: 16, scale: 2, colorHex: "#000000")
         if case .failed = out { Issue.record("LaTeX 语法错误不应是 .failed") }
     }
 
     @Test("取消的 Task → .cancelled，不污染")
     func cancellation() async {
         let r = MathJaxRenderer()
-        let task = Task { await r.render(latex: "\\int_0^1 x", display: true, pointSize: 16, scale: 2, color: .black) }
+        let task = Task { await r.render(latex: "\\int_0^1 x", display: true, pointSize: 16, scale: 2, colorHex: "#000000") }
         task.cancel()
         let out = await task.value
         if case .failed = out { Issue.record("取消不应映射为 .failed") }
@@ -86,7 +114,7 @@ struct MathJaxRendererTests {
     @Test("契约3：真实合法公式经 render 端到端，baseline 合理 + image.size 点尺寸量级")
     func contractEndToEndRasterize() async {
         let r = MathJaxRenderer()
-        let out = await r.render(latex: "x^2+1", display: false, pointSize: 16, scale: 2, color: .black)
+        let out = await r.render(latex: "x^2+1", display: false, pointSize: 16, scale: 2, colorHex: "#000000")
         guard case .rendered(let g) = out else {
             Issue.record("期望 .rendered，实际 \(out)")
             return
@@ -96,28 +124,28 @@ struct MathJaxRendererTests {
         #expect(abs(g.baselineOffsetEx) < 10, "baselineOffsetEx 量级应合理（<10 ex），实际 \(g.baselineOffsetEx)")
         // 点尺寸量级：与 pointSize=16 同数量级，远小于 pixel×scale
         #expect(
-            (1 ... 200).contains(g.image.size.height),
-            "image.size.height 应为点尺寸量级 1...200（pointSize=16），实际 \(g.image.size.height)"
+            (1 ... 200).contains(g.image.pointSize.height),
+            "image.size.height 应为点尺寸量级 1...200（pointSize=16），实际 \(g.image.pointSize.height)"
         )
         #expect(
-            (1 ... 400).contains(g.image.size.width),
-            "image.size.width 应为点尺寸量级，实际 \(g.image.size.width)"
+            (1 ... 400).contains(g.image.pointSize.width),
+            "image.size.width 应为点尺寸量级，实际 \(g.image.pointSize.width)"
         )
     }
 
     @Test("契约4：取消一次后，同一 renderer 新发 render 仍 .rendered（实例不被污染）")
     func contractCancellationDoesNotPoisonInstance() async {
         let r = MathJaxRenderer()
-        let task = Task { await r.render(latex: "\\int_0^1 x", display: true, pointSize: 16, scale: 2, color: .black) }
+        let task = Task { await r.render(latex: "\\int_0^1 x", display: true, pointSize: 16, scale: 2, colorHex: "#000000") }
         task.cancel()
         _ = await task.value
         // 同一实例新发一次（未取消）应正常 .rendered
-        let out = await r.render(latex: "x^2+1", display: false, pointSize: 16, scale: 2, color: .black)
+        let out = await r.render(latex: "x^2+1", display: false, pointSize: 16, scale: 2, colorHex: "#000000")
         guard case .rendered(let g) = out else {
             Issue.record("取消污染了实例：再次 render 期望 .rendered，实际 \(out)")
             return
         }
-        #expect(g.image.size.width > 1)
+        #expect(g.image.pointSize.width > 1)
     }
 
     // MARK: - Task-14 评审 G1：并发回归守卫（消除 Critical C1）
@@ -135,7 +163,7 @@ struct MathJaxRendererTests {
         // 并发 N 个 render（同一实例），每个产物必须对应自己的输入、且都成功
         let results = await withTaskGroup(of: (String, MathRenderOutcome).self) { group in
             for s in inputs {
-                group.addTask { await (s, r.render(latex: s, display: false, pointSize: 16, scale: 2, color: .black)) }
+                group.addTask { await (s, r.render(latex: s, display: false, pointSize: 16, scale: 2, colorHex: "#000000")) }
             }
             var acc: [(String, MathRenderOutcome)] = []
             for await pair in group {
@@ -148,18 +176,18 @@ struct MathJaxRendererTests {
             guard case .rendered(let g) = outcome else {
                 Issue.record("并发 render \(input) 未 .rendered: \(outcome)"); continue
             }
-            #expect(g.image.size.width > 1 && g.image.size.height > 1)
+            #expect(g.image.pointSize.width > 1 && g.image.pointSize.height > 1)
         }
         // 串味检测：用一个对每个输入可区分的代理量——不同公式的渲染尺寸不应全相同
         // （强相关于"是否各自正确转换"；至少断言并发结果集与串行结果集逐一一致）
         for input in inputs {
-            let serial = await r.render(latex: input, display: false, pointSize: 16, scale: 2, color: .black)
+            let serial = await r.render(latex: input, display: false, pointSize: 16, scale: 2, colorHex: "#000000")
             guard case .rendered(let sg) = serial,
                   case .rendered(let cg)? = results.first(where: { $0.0 == input })?.1 else {
                 Issue.record("一致性比对失败: \(input)"); continue
             }
-            #expect(abs(sg.image.size.width - cg.image.size.width) < 1.0)
-            #expect(abs(sg.image.size.height - cg.image.size.height) < 1.0)
+            #expect(abs(sg.image.pointSize.width - cg.image.pointSize.width) < 1.0)
+            #expect(abs(sg.image.pointSize.height - cg.image.pointSize.height) < 1.0)
         }
     }
 
@@ -173,7 +201,7 @@ struct MathJaxRendererTests {
                         "\\alpha+\\beta", "e^{i\\pi}+1=0",
                         "\\begin{matrix}a&b\\\\c&d\\end{matrix}"]
         for f in formulas {
-            let out = await r.render(latex: f, display: false, pointSize: 16, scale: 2, color: .black)
+            let out = await r.render(latex: f, display: false, pointSize: 16, scale: 2, colorHex: "#000000")
             guard case .rendered = out else {
                 Issue.record("核心公式应 .rendered 但得 \(out): \(f)"); continue
             }
@@ -182,11 +210,12 @@ struct MathJaxRendererTests {
 }
 
 @Suite("Math end to end")
+@MainActor
 struct MathEndToEndTests {
     @Test("MarkdownText 管线：解析→未命中占位→真实 renderer→命中出 attachment")
-    func fullPipeline() async {
+    func fullPipeline() async throws {
         let doc = MarkdownDocument(parsing: "Energy: $E=mc^2$\n\n$$\\sum_{i=1}^n i$$")
-        var renderer = AttributedStringRenderer(style: .default)
+        var renderer = MaterializationFixture(style: .default)
         let first = renderer.render(doc.blocks)
         var payloads: [(String, Bool)] = []
         first.enumerateAttribute(.markdownMathSource, in: NSRange(location: 0, length: first.length)) { v, _, _ in
@@ -207,7 +236,7 @@ struct MathEndToEndTests {
                 display: display,
                 pointSize: pt,
                 scale: 2,
-                color: RenderStyle.default.textColor
+                colorHex: MathMetrics.colorHex(RenderStyle.default.textColor)
             )
             guard case .rendered(let g) = out else { Issue.record("\(latex) not rendered"); continue }
             let key = MathCacheKey(
@@ -216,11 +245,9 @@ struct MathEndToEndTests {
                 pointSize: pt,
                 colorHex: MathMetrics.colorHex(RenderStyle.default.textColor),
                 rasterScale: 2,
-                rendererGeneration: 1
+                configurationID: .semantic(namespace: "test", version: 1)
             )
-            renderer.mathRasterScale = 2
-            renderer.mathRendererGeneration = 1
-            renderer.mathCache[key] = g
+            renderer.math[key.latex] = try (g.image.materialize(), g.baselineOffsetEx * pt * 0.5)
         }
         let second = renderer.render(doc.blocks)
         var attachments = 0
@@ -249,57 +276,27 @@ struct MathEndToEndTests {
             display: true,
             pointSize: 16,
             scale: 2,
-            color: .black
+            colorHex: "#000000"
         )
         guard case .rendered(let g) = out else { Issue.record("block display 应 .rendered: \(out)"); return }
-        #expect(g.image.size.width > 1 && g.image.size.height > 1)
-        #expect((1 ... 400).contains(g.image.size.height)) // 点量级，非 pixel×scale
+        #expect(g.image.pointSize.width > 1 && g.image.pointSize.height > 1)
+        #expect((1 ... 400).contains(g.image.pointSize.height)) // 点量级，非 pixel×scale
         #expect(g.baselineOffsetEx <= 0.5) // 块级基线合理（通常 ~0 或负）
     }
 
-    /// G3：setRenderer 切换 + 大量在途 render ——旧在途 Task 不会被 cancel，但其写入的 key 带旧
-    /// generation，永不被新代际查到——本测试验证新代际渲染不被旧在途污染、不崩，而非验证 cancel
-    @Test("G3 coordinator 切 renderer 时新代际渲染不受旧在途影响")
+    @Test("replacement cancels old MathJax work and admits the next configuration")
     func g3SetRendererNewGenerationIsolatesInflight() async {
-        let c = MathLoadCoordinator()
-        await c.setRenderer(MathJaxRenderer())
-        let g1 = await c.generation
-        // 派发若干（可能在途）
-        for i in 0 ..< 6 {
-            _ = await c.loadIfNeeded(
-                key: MathCacheKey(
-                    latex: "x^{\(i)}",
-                    display: false,
-                    pointSize: 16,
-                    colorHex: "#000",
-                    rasterScale: 2,
-                    rendererGeneration: g1
-                ),
-                latex: "x^{\(i)}", display: false, pointSize: 16, scale: 2, color: .black
-            )
-        }
-        // 立刻切 renderer（新代际 + 清缓存/在途）
-        await c.setRenderer(MathJaxRenderer())
-        let g2 = await c.generation
-        #expect(g2 == g1 + 1)
-        // 新代际下重新派发并 await——应能正常 .rendered，不被旧在途污染、不崩
-        let key2 = MathCacheKey(
-            latex: "y^2",
-            display: false,
-            pointSize: 16,
-            colorHex: "#000",
-            rasterScale: 2,
-            rendererGeneration: g2
-        )
-        _ = await c.loadIfNeeded(
-            key: key2,
-            latex: "y^2",
-            display: false,
-            pointSize: 16,
-            scale: 2,
-            color: .black
-        )
-        let glyph = await c.awaitGlyph(for: key2)
-        #expect(glyph != nil)
+        let coordinator = MathLoadCoordinator(cache: RenderedResourceCache())
+        let first = MathRendererConfiguration(renderer: MathJaxRenderer(), configurationID: .uniqueInstance())
+        coordinator.configure(first)
+        let firstKey = MathCacheKey(latex: "x", display: false, pointSize: 16, colorHex: "#000000", rasterScale: 2, configurationID: first.configurationID)
+        let oldTask = coordinator.load(firstKey, isCurrent: { true }, completed: {})
+        let second = MathRendererConfiguration(renderer: MathJaxRenderer(), configurationID: .uniqueInstance())
+        coordinator.configure(second)
+        let nextKey = MathCacheKey(latex: "y^2", display: false, pointSize: 16, colorHex: "#000000", rasterScale: 2, configurationID: second.configurationID)
+        await coordinator.load(nextKey, isCurrent: { true }, completed: {})?.value
+        await oldTask?.value
+        #expect(coordinator.publication(for: firstKey) == nil)
+        #expect(coordinator.publication(for: nextKey) != nil)
     }
 }

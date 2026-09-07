@@ -12,7 +12,10 @@ import AppKit
 /// —— 与 spec §9.1 「math 路径零回归」硬门保持一致）。不注入颜色：svg 代码
 /// 块按作者原样保留配色。仅 fit-width 不放大（视图宽 ≥ 原生宽时保留原生
 /// 尺寸），失败/退化场景统一返回 `.failed`，`Task.isCancelled` 返回 `.cancelled`。
-public final class SwiftDrawSVGBlockRenderer: SVGBlockRendering, @unchecked Sendable {
+public actor SwiftDrawSVGBlockRenderer: SVGBlockRendering, BuiltInRenderedResourceProducer {
+    package nonisolated let builtInConfigurationID: MarkdownConfigurationID = .semantic(
+        namespace: "SwiftDraw0.29.fit-width.no-upscale.rgba8.png.max4096.invalid-scale1", version: 1
+    )
     /// 单维度光栅化**像素**尺寸上限（point × scale）。fit-width 仅约束
     /// 宽度，target 高度由原生纵横比派生 —— 极端 viewBox（如
     /// `0 0 100 1000000`）下高度可膨胀到任意大；同时 Retina scale 会再
@@ -59,19 +62,9 @@ public final class SwiftDrawSVGBlockRenderer: SVGBlockRendering, @unchecked Send
         }
         if Task.isCancelled { return .cancelled }
 
-        // SwiftDraw 平台 rasterize 标签差异：UIKit `rasterize(size:scale:)` 返回的
-        // UIImage.size 天然是点；AppKit `rasterize(with:scale:)` 返回 NSImage.size
-        // 等于 size×scale（像素），须显式回填点尺寸（与 SVGRasterizer 同款契约）。
-        // 注：rasterize 与 guard 必须共用 effectiveScale —— 否则 0/NaN/inf scale
-        // 被 guard 兜底却把恶值喂进 SwiftDraw（Copilot PR #5 R3 #1）。
-        #if canImport(UIKit)
-        let image = drawing.rasterize(size: target, scale: effectiveScale)
-        #elseif canImport(AppKit)
-        let image = drawing.rasterize(with: target, scale: effectiveScale)
-        image.size = target
-        #else
-        return .failed
-        #endif
-        return .rendered(SVGBlockGlyph(image: image))
+        do {
+            let image = try SVGRasterizer.rasterImage(drawing, pointSize: target, scale: effectiveScale)
+            return Task.isCancelled ? .cancelled : .rendered(RenderedSVG(image: image))
+        } catch { return Task.isCancelled ? .cancelled : .transientFailure }
     }
 }

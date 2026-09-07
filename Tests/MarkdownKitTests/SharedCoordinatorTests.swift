@@ -2,95 +2,61 @@ import Foundation
 @testable import MarkdownPlatformView
 @testable import MarkdownRenderKit
 import Testing
-#if canImport(UIKit)
-import UIKit
-#elseif canImport(AppKit)
-import AppKit
-#endif
 
-@Suite("Shared coordinator singletons")
+@MainActor
+@Suite("Completed resource sharing")
 struct SharedCoordinatorTests {
-    @Test func svgSharedSingletonReturnsSameInstance() {
-        let a = SVGBlockLoadCoordinator.shared
-        let b = SVGBlockLoadCoordinator.shared
-        #expect(a === b)
+    @Test func explicitSemanticIdentitySharesCompletedButDefaultWrappersIsolate() async {
+        let cache = RenderedResourceCache()
+        let identity = MarkdownConfigurationID.semantic(namespace: "test.producer", version: 1)
+        let firstProducer = ResourceSVGProducer()
+        let firstConfiguration = SVGRendererConfiguration(renderer: firstProducer, configurationID: identity)
+        let first = SVGBlockLoadCoordinator(cache: cache)
+        first.configure(firstConfiguration)
+        let key = resourceSVGKey(configuration: firstConfiguration)
+        await first.load(key, isCurrent: { true }, completed: {})?.value
+        let publication = first.publication(for: key)
+        let secondProducer = ResourceSVGProducer()
+        let secondConfiguration = SVGRendererConfiguration(renderer: secondProducer, configurationID: identity)
+        let second = SVGBlockLoadCoordinator(cache: cache)
+        second.configure(secondConfiguration)
+        #expect(second.load(resourceSVGKey(configuration: secondConfiguration), isCurrent: { true }, completed: {}) == nil)
+        let shared = second.publication(for: key)
+        #expect(shared?.record === publication?.record)
+        #expect(await secondProducer.calls == 0)
+
+        for configuration in [
+            SVGRendererConfiguration(renderer: secondProducer),
+            SVGRendererConfiguration(renderer: secondProducer),
+            SVGRendererConfiguration(renderer: secondProducer, configurationID: .semantic(namespace: "test.producer", version: 2)),
+        ] {
+            second.configure(configuration)
+            let isolatedKey = resourceSVGKey(configuration: configuration)
+            await second.load(isolatedKey, isCurrent: { true }, completed: {})?.value
+            #expect(second.publication(for: isolatedKey)?.record !== publication?.record)
+        }
+        #expect(await secondProducer.calls == 3)
     }
 
-    @Test func mathSharedSingletonReturnsSameInstance() {
-        let a = MathLoadCoordinator.shared
-        let b = MathLoadCoordinator.shared
-        #expect(a === b)
-    }
-
-    @Test func independentInitInstancesAreNotShared() {
-        let a = SVGBlockLoadCoordinator()
-        let b = SVGBlockLoadCoordinator()
-        #expect(a !== b)
-        #expect(a !== SVGBlockLoadCoordinator.shared)
-    }
-
-    @Test func mathIndependentInitInstancesAreNotShared() {
-        let a = MathLoadCoordinator()
-        let b = MathLoadCoordinator()
-        #expect(a !== b)
-        #expect(a !== MathLoadCoordinator.shared)
-    }
-
-    /// 跨调用 cache 共享幂等：同一 coordinator 实例下，相同 key 第二次 loadIfNeeded
-    /// 必须返回 false（已命中 cache），renderer 不应被再次调用。
-    ///
-    /// 用 init() 独立实例做隔离避免污染 .shared（其它测试共享）。语义等价：
-    /// 「同 coordinator 多次复用」== 「.shared 跨 view 复用」（如果调用方接入 .shared）。
-    /// 钉住的契约：positive cache 命中后 loadIfNeeded 即时返回 false，不入 inFlight、
-    /// 不再次派发 renderer.render。
-    ///
-    /// Cross-call cache idempotence: a second `loadIfNeeded` with the same key on
-    /// the same coordinator must return false (cache hit) and must not re-invoke
-    /// the renderer. Uses an independent `init()` instance to avoid polluting `.shared`.
-    @Test func sameCoordinatorSecondLoadIsCacheHitNoReDispatch() async {
-        let counter = RenderCallCounter()
-        let renderer = CountingSVGRenderer(counter: counter)
-        // 独立实例做隔离测试，不污染 .shared 全局状态
-        let coord = SVGBlockLoadCoordinator()
-        await coord.setRenderer(renderer)
-
-        let key = SVGBlockCacheKey(svg: "<svg/>", availableWidth: 100, rasterScale: 2, rendererGeneration: 0)
-
-        // 1st call: 入 inFlight 派发，返回 true
-        let dispatched1 = await coord.loadIfNeeded(key: key, svg: "<svg/>", availableWidth: 100, scale: 2)
-        #expect(dispatched1)
-        await coord.drain()
-        #expect(await coord.glyph(for: key) != nil, "drain 后应有 glyph 落 cache")
-        #expect(await counter.count == 1, "1st loadIfNeeded 应调 renderer 1 次")
-
-        // 2nd call: positive cache 命中，直接返回 false 不再派发
-        let dispatched2 = await coord.loadIfNeeded(key: key, svg: "<svg/>", availableWidth: 100, scale: 2)
-        #expect(dispatched2 == false, "已 cache 的 key 第二次 loadIfNeeded 必须返回 false")
-        #expect(await counter.count == 1, "cache 命中后 renderer 不应被再次调用")
-    }
-}
-
-private actor RenderCallCounter {
-    var count = 0
-    func inc() {
-        self.count += 1
-    }
-}
-
-private final class CountingSVGRenderer: SVGBlockRendering, @unchecked Sendable {
-    private let counter: RenderCallCounter
-    #if canImport(UIKit)
-    private let stub: PlatformImage = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { _ in }
-    #elseif canImport(AppKit)
-    private let stub: PlatformImage = NSImage(size: CGSize(width: 1, height: 1))
-    #endif
-
-    init(counter: RenderCallCounter) {
-        self.counter = counter
-    }
-
-    func render(svg _: String, availableWidth _: CGFloat, scale _: CGFloat) async -> SVGBlockOutcome {
-        await self.counter.inc()
-        return .rendered(SVGBlockGlyph(image: self.stub))
+    @Test func twoSessionsNeverShareInFlightEvenForEqualSemanticIdentity() async {
+        let gate = ResourceRenderGate()
+        let producer = ResourceMathProducer(gate: gate)
+        let configuration = MathRendererConfiguration(renderer: producer, configurationID: .semantic(namespace: "same.math", version: 1))
+        let cache = RenderedResourceCache()
+        let first = MathLoadCoordinator(cache: cache)
+        let second = MathLoadCoordinator(cache: cache)
+        first.configure(configuration)
+        second.configure(configuration)
+        let key = resourceMathKey(configuration: configuration)
+        let one = first.load(key, isCurrent: { true }, completed: {})
+        let two = second.load(key, isCurrent: { true }, completed: {})
+        await gate.waitForArrivals(2)
+        first.cancelAll()
+        await gate.open()
+        await one?.value
+        await two?.value
+        #expect(await gate.cancellations == 1)
+        #expect(await producer.calls == 2)
+        #expect(second.publication(for: key) != nil)
     }
 }

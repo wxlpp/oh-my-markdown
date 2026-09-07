@@ -1,129 +1,132 @@
-import CoreGraphics
+import Foundation
 @testable import MarkdownPlatformView
-import MarkdownRenderKit
+@testable import MarkdownRenderKit
+import Synchronization
 import Testing
-#if canImport(UIKit)
-import UIKit
-#elseif canImport(AppKit)
-import AppKit
-#endif
 
-/// SVGBlockRendering 约束 AnyObject（与 math 协议一致：唯一生产实现为 final class
-/// SwiftDrawSVGBlockRenderer）。测试替身用 final class，与 MathLoadCoordinatorTests
-/// 的 StubRenderer 同形。
-private final class StubSVGRenderer: SVGBlockRendering, @unchecked Sendable {
-    let outcome: SVGBlockOutcome
-    init(_ o: SVGBlockOutcome) {
-        self.outcome = o
-    }
-
-    func render(svg _: String, availableWidth _: CGFloat, scale _: CGFloat) async -> SVGBlockOutcome {
-        self.outcome
-    }
-}
-
-private func svgKey(_ s: String = "<svg/>", gen: Int = 0) -> SVGBlockCacheKey {
-    SVGBlockCacheKey(svg: s, availableWidth: 100, rasterScale: 1, rendererGeneration: gen)
-}
-
-private func sampleGlyph() -> SVGBlockGlyph {
-    #if canImport(UIKit)
-    return SVGBlockGlyph(image: UIGraphicsImageRenderer(size: .init(width: 10, height: 10)).image { _ in })
-    #elseif canImport(AppKit)
-    let i = NSImage(size: .init(width: 10, height: 10))
-    i.lockFocus(); i.unlockFocus()
-    return SVGBlockGlyph(image: i)
-    #else
-    return SVGBlockGlyph(image: PlatformImage())
-    #endif
-}
-
+@MainActor
 @Suite("SVGBlockLoadCoordinator")
 struct SVGBlockLoadCoordinatorTests {
-    @Test("nil renderer → 不派发")
-    func nilRendererNoDispatch() async {
-        let c = SVGBlockLoadCoordinator()
-        let dispatched = await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
-        )
-        #expect(dispatched == false)
+    @Test func nilRendererNoDispatch() {
+        let configuration = SVGRendererConfiguration(renderer: ResourceSVGProducer())
+        #expect(SVGBlockLoadCoordinator(cache: RenderedResourceCache()).load(resourceSVGKey(configuration: configuration), isCurrent: { true }, completed: {}) == nil)
     }
 
-    @Test(".rendered → 进正缓存，再次不重复派发；awaitGlyph 拿得到")
-    func renderedCachedOnce() async {
-        let c = SVGBlockLoadCoordinator()
-        await c.setRenderer(StubSVGRenderer(.rendered(sampleGlyph())))
-        #expect(await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
-        ) == true)
-        #expect(await c.awaitGlyph(for: svgKey()) != nil)
-        #expect(await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
-        ) == false)
+    @Test func renderedCachedOnce() async {
+        let producer = ResourceSVGProducer()
+        let configuration = SVGRendererConfiguration(renderer: producer)
+        let cache = RenderedResourceCache()
+        let coordinator = SVGBlockLoadCoordinator(cache: cache)
+        coordinator.configure(configuration)
+        let key = resourceSVGKey(configuration: configuration)
+        await coordinator.load(key, isCurrent: { true }, completed: {})?.value
+        let publication = coordinator.publication(for: key)
+        #expect(publication?.image.size.width == 8)
+        #expect(publication?.record.ownerCount == 2)
+        #expect(coordinator.load(key, isCurrent: { true }, completed: {}) == nil)
+        #expect(await producer.calls == 1)
+        let hit = coordinator.publication(for: key)
+        #expect(hit?.record === publication?.record)
+        #expect(hit?.record.ownerCount == 3)
+        hit?.release()
+        publication?.release()
+        #expect(publication?.record.ownerCount == 1)
     }
 
-    @Test(".failed → 负缓存，后续不再派发")
-    func failedNegativeCached() async {
-        let c = SVGBlockLoadCoordinator()
-        await c.setRenderer(StubSVGRenderer(.failed))
-        _ = await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
-        )
-        _ = await c.awaitGlyph(for: svgKey())
-        #expect(await c.isNegativeCached(svgKey()))
-        #expect(await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
-        ) == false)
-        #expect(await c.glyph(for: svgKey()) == nil)
+    @Test func replacementCancelsProducer() async {
+        let gate = ResourceRenderGate()
+        let producer = ResourceSVGProducer(gate: gate)
+        let configuration = SVGRendererConfiguration(renderer: producer)
+        let cache = RenderedResourceCache()
+        let coordinator = SVGBlockLoadCoordinator(cache: cache)
+        coordinator.configure(configuration)
+        let key = resourceSVGKey(configuration: configuration)
+        var publications = 0
+        let task = coordinator.load(key, isCurrent: { true }, completed: { publications += 1 })
+        await gate.waitForArrivals(1)
+        let generation = coordinator.generation
+        coordinator.configure(nil)
+        #expect(coordinator.generation == generation + 1)
+        await gate.open()
+        await task?.value
+        #expect(await gate.cancellations == 1)
+        #expect(publications == 0)
+        #expect(coordinator.publication(for: key) == nil)
+        #expect(cache.isNegative(.svg(key)) == false)
     }
 
-    @Test(".cancelled → 不写任何缓存，可重试")
-    func cancelledRetryable() async {
-        let c = SVGBlockLoadCoordinator()
-        await c.setRenderer(StubSVGRenderer(.cancelled))
-        _ = await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
-        )
-        _ = await c.awaitGlyph(for: svgKey())
-        #expect(await c.isNegativeCached(svgKey()) == false)
-        #expect(await c.glyph(for: svgKey()) == nil)
+    @Test func staleCompletionCannotWriteCacheOrPublish() async {
+        let gate = ResourceRenderGate()
+        let configuration = SVGRendererConfiguration(renderer: ResourceSVGProducer(gate: gate))
+        let cache = RenderedResourceCache()
+        let coordinator = SVGBlockLoadCoordinator(cache: cache)
+        coordinator.configure(configuration)
+        let key = resourceSVGKey(configuration: configuration)
+        let current = Mutex(true)
+        var publications = 0
+        let task = coordinator.load(key, isCurrent: { current.withLock { $0 } }, completed: { publications += 1 })
+        await gate.waitForArrivals(1)
+        current.withLock { $0 = false }
+        await gate.open()
+        await task?.value
+        #expect(coordinator.publication(for: key) == nil)
+        #expect(publications == 0)
     }
 
-    @Test("setRenderer → generation 自增且清正/负/loading 缓存")
-    func setRendererBumpsGeneration() async {
-        let c = SVGBlockLoadCoordinator()
-        await c.setRenderer(StubSVGRenderer(.rendered(sampleGlyph())))
-        let g0 = await c.generation
-        _ = await c.loadIfNeeded(
-            key: svgKey(gen: g0), svg: "<svg/>", availableWidth: 100, scale: 1
-        )
-        _ = await c.awaitGlyph(for: svgKey(gen: g0))
-        #expect(await c.glyph(for: svgKey(gen: g0)) != nil)
-        await c.setRenderer(StubSVGRenderer(.rendered(sampleGlyph())))
-        #expect(await c.generation == g0 + 1)
-        #expect(await c.glyph(for: svgKey(gen: g0)) == nil)
+    @Test func cancellationAndTransientFailureRemainRetryable() async {
+        for outcome in [SVGBlockOutcome.cancelled, .transientFailure] {
+            let producer = ResourceSVGProducer(outcome: outcome)
+            let configuration = SVGRendererConfiguration(renderer: producer)
+            let cache = RenderedResourceCache()
+            let coordinator = SVGBlockLoadCoordinator(cache: cache)
+            coordinator.configure(configuration)
+            let key = resourceSVGKey(configuration: configuration)
+            await coordinator.load(key, isCurrent: { true }, completed: {})?.value
+            await coordinator.load(key, isCurrent: { true }, completed: {})?.value
+            #expect(await producer.calls == 2)
+            #expect(cache.isNegative(.svg(key)) == false)
+        }
     }
 
-    @Test("invalidateForScaleChange 清缓存但不改 generation")
-    func invalidateForScaleClears() async {
-        let c = SVGBlockLoadCoordinator()
-        await c.setRenderer(StubSVGRenderer(.rendered(sampleGlyph())))
-        _ = await c.loadIfNeeded(
-            key: svgKey(), svg: "<svg/>", availableWidth: 100, scale: 1
-        )
-        _ = await c.awaitGlyph(for: svgKey())
-        let g = await c.generation
-        await c.invalidateForScaleChange()
-        #expect(await c.generation == g)
-        #expect(await c.glyph(for: svgKey()) == nil)
+    @Test func negativeCacheIsBoundedLRUAndExpiresAtSixtySeconds() async {
+        let clock = ManualRenderClock()
+        let cache = RenderedResourceCache(clock: clock)
+        let producer = ResourceSVGProducer(outcome: .failed)
+        let configuration = SVGRendererConfiguration(renderer: producer)
+        let coordinator = SVGBlockLoadCoordinator(cache: cache)
+        coordinator.configure(configuration)
+        for index in 0 ..< 128 {
+            await coordinator.load(resourceSVGKey("bad\(index)", configuration: configuration), isCurrent: { true }, completed: {})?.value
+        }
+        let oldest = resourceSVGKey("bad0", configuration: configuration)
+        #expect(cache.isNegative(.svg(oldest)))
+        await coordinator.load(resourceSVGKey("bad128", configuration: configuration), isCurrent: { true }, completed: {})?.value
+        #expect(cache.isNegative(.svg(resourceSVGKey("bad1", configuration: configuration))) == false)
+        #expect(cache.isNegative(.svg(oldest)))
+        clock.advance(by: .seconds(59))
+        #expect(cache.isNegative(.svg(oldest)))
+        clock.advance(by: .seconds(1))
+        #expect(cache.isNegative(.svg(oldest)) == false)
+        await coordinator.load(oldest, isCurrent: { true }, completed: {})?.value
+        #expect(await producer.calls == 130)
     }
 
-    @Test("setRenderer 同实例两次仍各自 bump generation（守卫归 representable 层）")
-    func setRendererNotIdempotent() async {
-        let c = SVGBlockLoadCoordinator()
-        let r = StubSVGRenderer(.failed)
-        await c.setRenderer(r); let g1 = await c.generation
-        await c.setRenderer(r); let g2 = await c.generation
-        #expect(g2 == g1 + 1)
+    @Test func evictionDoesNotReleasePublication() async throws {
+        let configuration = SVGRendererConfiguration(renderer: ResourceSVGProducer())
+        let coordinator = SVGBlockLoadCoordinator(cache: RenderedResourceCache())
+        coordinator.configure(configuration)
+        let first = resourceSVGKey("0", configuration: configuration)
+        await coordinator.load(first, isCurrent: { true }, completed: {})?.value
+        let publication = try #require(coordinator.publication(for: first))
+        for index in 1 ... 256 {
+            let key = resourceSVGKey("\(index)", configuration: configuration)
+            await coordinator.load(key, isCurrent: { true }, completed: {})?.value
+            coordinator.publication(for: key)?.release()
+        }
+        #expect(coordinator.publication(for: first) == nil)
+        #expect(publication.record.ownerCount == 1)
+        #expect(publication.image.size.width == 8)
+        publication.release()
+        #expect(publication.record.ownerCount == 0)
     }
 }
