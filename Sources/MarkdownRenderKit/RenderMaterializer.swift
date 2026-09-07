@@ -12,7 +12,9 @@ import AppKit
 @MainActor
 package struct RenderMaterializer {
     private let configuration: RenderConfigurationSnapshot
-    private var syntaxSpans: [SyntaxHighlightKey: [SyntaxHighlightSpan]] = [:]
+    private var syntaxSpans: [PreparedSyntax] = []
+    private var syntaxIndex = 0
+    private var currentBlockIndex = 0
 
     package init(configuration: RenderConfigurationSnapshot) {
         self.configuration = configuration
@@ -20,10 +22,8 @@ package struct RenderMaterializer {
 
     package func materialize(_ model: RenderDisplayModel, resources: ResolvedResourceSnapshot)
         -> RenderSnapshot {
-        if let content = model.preparedContent {
-            var prepared = self
-            prepared.syntaxSpans = model.syntaxSpans
-            return prepared.materializePrepared(content, model: model, resources: resources)
+        if model.preparedDocument != nil {
+            return self.materializePrepared(model: model, resources: resources)
         }
         let result = NSMutableAttributedString(string: "")
         var owners: [any ResourceResidencyOwner] = []
@@ -112,16 +112,28 @@ package struct RenderMaterializer {
         PlatformColor(red: token.red, green: token.green, blue: token.blue, alpha: token.alpha)
     }
 
-    private func materializePrepared(_ content: [PreparedPiece], model: RenderDisplayModel, resources: ResolvedResourceSnapshot) -> RenderSnapshot {
+    private func materializePrepared(model: RenderDisplayModel, resources: ResolvedResourceSnapshot) -> RenderSnapshot {
         let result = NSMutableAttributedString(string: "")
         var starts: [Int] = []
         var owners: [any ResourceResidencyOwner] = []
         var overlays: [Int: RenderTableOverlay] = [:]
-        for piece in content {
-            switch piece {
-            case .blockStart: starts.append(result.length)
-            case .run(let run): result.append(self.materializeRun(run, resources: resources, owners: &owners))
-            case .table(let table): result.append(self.materializeTable(table, resources: resources, owners: &owners, overlays: &overlays))
+        for (index, bundle) in model.bundles.enumerated() {
+            var prepared = self
+            // Recipes have the same traversal order as their prepared runs.
+            // No source-key hashing/equality is moved into platform assembly.
+            prepared.syntaxSpans = bundle.syntaxSpans
+            prepared.syntaxIndex = 0
+            prepared.currentBlockIndex = index
+            if index > 0 {
+                let separator = PreparedRun(text: "\n", attributes: PreparedAttributes(color: nil, paragraph: PreparedParagraph(lineSpacing: 0)))
+                result.append(prepared.materializeRun(separator, resources: resources, owners: &owners))
+            }
+            for piece in bundle.content {
+                switch piece {
+                case .blockStart: starts.append(result.length)
+                case .run(let run): result.append(prepared.materializeRun(run, resources: resources, owners: &owners))
+                case .table(let table): result.append(prepared.materializeTable(table, resources: resources, owners: &owners, overlays: &overlays))
+                }
             }
         }
         return RenderSnapshot(attributedString: result, displayModel: model, resourceOwners: owners, blockStarts: starts, tableOverlays: overlays)
@@ -183,12 +195,18 @@ package struct RenderMaterializer {
         return result
     }
 
-    private func materializeRun(_ run: PreparedRun, resources: ResolvedResourceSnapshot, owners: inout [any ResourceResidencyOwner]) -> NSAttributedString {
+    private mutating func nextSyntaxSpans() -> [SyntaxHighlightSpan] {
+        defer { self.syntaxIndex += 1 }
+        return self.syntaxIndex < self.syntaxSpans.count ? self.syntaxSpans[self.syntaxIndex].spans : []
+    }
+
+    private mutating func materializeRun(_ run: PreparedRun, resources: ResolvedResourceSnapshot, owners: inout [any ResourceResidencyOwner]) -> NSAttributedString {
         var attrs = self.attributes(run.attributes)
         switch run.kind {
         case .text: return NSAttributedString(string: run.text, attributes: attrs)
-        case .code(let language):
-            let result = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(run.text, spans: self.syntaxSpans[SyntaxHighlightKey(code: run.text, language: language)] ?? [], font: self.font(for: .code), defaultColor: self.preparedColor(.code)))
+        case .code:
+            let spans = self.nextSyntaxSpans()
+            let result = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(run.text, spans: spans, font: self.font(for: .code), defaultColor: self.preparedColor(.code)))
             if let para = attrs[.paragraphStyle] { result.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: result.length)) }
             return result
         case .image(let id, let source, let width, let resolves):
@@ -216,6 +234,7 @@ package struct RenderMaterializer {
             attrs[.markdownMathSource] = payload
             return NSAttributedString(string: run.text, attributes: attrs)
         case .svg(let id, let source, let placeholderWidth, let placeholderHeight, let staticPlaceholder, let resolves):
+            let spans = self.nextSyntaxSpans()
             var centered = PreparedParagraph(lineSpacing: 0, centered: true)
             if let inherited = run.attributes.paragraph {
                 centered.head = inherited.head - 16
@@ -229,7 +248,7 @@ package struct RenderMaterializer {
             if staticPlaceholder {
                 return self.attachment(image: nil, bounds: CGRect(x: 0, y: 0, width: placeholderWidth, height: placeholderHeight), attributes: [.paragraphStyle: self.paragraph(centered), .markdownSVGBlockSource: source])
             }
-            let result = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(run.text, spans: self.syntaxSpans[SyntaxHighlightKey(code: run.text, language: "svg")] ?? [], font: self.font(for: .code), defaultColor: self.preparedColor(.code)))
+            let result = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(run.text, spans: spans, font: self.font(for: .code), defaultColor: self.preparedColor(.code)))
             result.addAttributes([.paragraphStyle: attrs[.paragraphStyle]!, .markdownSVGBlockSource: source], range: NSRange(location: 0, length: result.length))
             return result
         }
@@ -237,7 +256,7 @@ package struct RenderMaterializer {
 
     /// Cell contents and alignment arrive prepared; only font-dependent measurements
     /// and platform paragraph/tab objects are resolved here.
-    private func materializeTable(_ table: PreparedTable, resources: ResolvedResourceSnapshot, owners: inout [any ResourceResidencyOwner], overlays: inout [Int: RenderTableOverlay]) -> NSAttributedString {
+    private mutating func materializeTable(_ table: PreparedTable, resources: ResolvedResourceSnapshot, owners: inout [any ResourceResidencyOwner], overlays: inout [Int: RenderTableOverlay]) -> NSAttributedString {
         guard !table.head.isEmpty else { return NSAttributedString(string: "") }
         let ownerStart = owners.count
         func cell(_ runs: [PreparedRun]) -> NSAttributedString {
@@ -300,8 +319,8 @@ package struct RenderMaterializer {
         }
         if natural > table.width + 0.5 {
             let height = TableMeasurement.height(of: result, naturalWidth: natural)
-            if let index = table.blockIndex {
-                overlays[index] = RenderTableOverlay(attributedString: result, naturalWidth: natural, height: height, style: self.resolvedStyle(), resourceOwners: Array(owners[ownerStart...]))
+            if table.overlayEligible {
+                overlays[self.currentBlockIndex] = RenderTableOverlay(attributedString: result, naturalWidth: natural, height: height, style: self.resolvedStyle(), resourceOwners: Array(owners[ownerStart...]))
             }
             let para = self.paragraph(PreparedParagraph(lineSpacing: 0, head: table.quoteIndent, first: table.quoteIndent, height: height))
             return NSAttributedString(string: "\u{00A0}", attributes: [.font: PlatformFont.systemFont(ofSize: 1), .foregroundColor: PlatformColor.clear, .paragraphStyle: para, .markdownTableSection: 0, .markdownTableColumns: count, .markdownTableColumnWidths: widths, .markdownTableNaturalWidth: natural, .markdownOverflowTablePlaceholder: true])

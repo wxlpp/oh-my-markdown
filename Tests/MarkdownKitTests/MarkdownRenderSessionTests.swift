@@ -214,10 +214,14 @@ final class ManualRenderClock: RenderSessionClock {
         let reused = MarkdownRenderConfiguration.default.snapshot(generation: 99)
         driver.send(.setSource("$x$", reused))
         #expect(await eventually { sink.models.count == 1 })
-        #expect(sink.models[0].runs.first?.resourceID?.rawValue == "1:0:0")
+        let firstLineage = sink.models[0].blocks[0].lineage
+        #expect(sink.models[0].runs.first?.resourceID?.rawValue == "1:\(firstLineage):0")
         driver.send(.replaceConfiguration(reused))
         #expect(await eventually { sink.models.count == 2 })
-        #expect(sink.models[1].runs.first?.resourceID?.rawValue == "2:0:0")
+        let secondLineage = sink.models[1].blocks[0].lineage
+        #expect(secondLineage == firstLineage)
+        #expect(sink.models[1].runs.first?.resourceID?.rawValue == "2:\(secondLineage):0")
+        #expect(sink.models[0].runs.first?.resourceID != sink.models[1].runs.first?.resourceID)
         driver.send(.dismantle)
     }
 

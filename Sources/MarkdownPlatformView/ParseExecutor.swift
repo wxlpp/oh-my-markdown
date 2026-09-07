@@ -49,34 +49,51 @@ package actor ParseResultRegistry {
         await self.publish(result, using: ticket)
     }
 
-    package func publish(_ result: ParseExecutorResult, using ticket: WeakParseResultSink) async {
+    package func publish(_ result: ParseExecutorResult, using ticket: WeakParseResultSink, incremental: IncrementalParseResult? = nil) async {
         let sink = ticket.value
         // An already-promoted message cannot be recalled by unregister. The session's
         // full submission check and synchronous MainActor gate reject its side effects.
         // MarkdownRenderSession.receive is a non-suspending actor command: this
         // temporary promotion never spans parsing, retry, preparation or MainActor.
-        await sink?.receive(result)
+        if let incremental { await sink?.receive(result, incremental: incremental) }
+        else { await sink?.receive(result) }
     }
 }
 
 package actor ParseExecutor {
-    package static let shared = ParseExecutor(
-        maxActive: 2, maxWaitingTokens: 64, parser: { MarkdownDocument(parsing: $0.source) }
-    )
+    package static let shared = ParseExecutor()
 
     private let maxActive: Int
     private let maxWaitingTokens: Int
-    private let parser: SynchronousParser
+    private let parser: @Sendable (ParseJob) -> ParseWorkerOutput
     private let registry = ParseResultRegistry()
     private var states: [ParseSessionToken: ParseTokenState] = [:]
     private var waitingOrder: [ParseSessionToken] = []
     private var activeCount = 0
+    package private(set) var workDiagnostics = ParseExecutorWorkDiagnostics()
 
     package init(maxActive: Int, maxWaitingTokens: Int, parser: @escaping SynchronousParser) {
         precondition(maxActive > 0 && maxActive <= 2 && maxWaitingTokens >= 0 && maxWaitingTokens <= 64)
         self.maxActive = maxActive
         self.maxWaitingTokens = maxWaitingTokens
-        self.parser = parser
+        self.parser = { job in ParseWorkerOutput(job: job, document: parser(job), incremental: nil) }
+    }
+
+    package init(maxActive: Int = 2, maxWaitingTokens: Int = 64, afterCmark: @escaping @Sendable (ParseJob) -> Void = { _ in }) {
+        precondition(maxActive > 0 && maxActive <= 2 && maxWaitingTokens >= 0 && maxWaitingTokens <= 64)
+        self.maxActive = maxActive
+        self.maxWaitingTokens = maxWaitingTokens
+        self.parser = { job in
+            do {
+                var metrics = job.workMetrics
+                var buffer = job.sourceBuffer ?? IncrementalSourceBuffer(recorder: ParseWorkRecorder(attempt: job.attemptRecorder))
+                if job.sourceBuffer == nil { try buffer.append(job.source, metrics: &metrics) }
+                let result = try buffer.parse(previous: job.previousParse, metrics: metrics, afterCmark: { afterCmark(job) })
+                return ParseWorkerOutput(job: job, document: result.document, incremental: result)
+            } catch {
+                return ParseWorkerOutput(job: job, document: nil, incremental: nil)
+            }
+        }
     }
 
     /// Returns without awaiting parsing or storing a submit continuation.
@@ -113,11 +130,14 @@ package actor ParseExecutor {
         token.revoke()
         self.registry.unregister(token)
         switch self.states[token] {
-        case .active(let active, _, _):
+        case .active(let active, let pending, _):
             // Cancellation cannot stop cmark. Keep both handles and the capacity charge
             // until its actual completion, but discard all pending work immediately.
+            active.worker.cancel()
+            if let pending { self.recordWork(pending, orphaned: true) }
             self.states[token] = .active(active, latestPending: nil, tombstoned: true)
-        case .waiting:
+        case .waiting(let job):
+            self.recordWork(job, orphaned: true)
             self.states[token] = nil
             self.waitingOrder.removeAll { $0 == token }
         case nil: break
@@ -130,13 +150,14 @@ package actor ParseExecutor {
 
     private func start(_ job: ParseJob) {
         guard !job.submission.sessionToken.isRevoked else {
+            self.recordWork(job, orphaned: true)
             self.states[job.submission.sessionToken] = nil
             self.registry.unregister(job.submission.sessionToken)
             return
         }
         let parser = parser
         let worker = Task.detached { [parser, job] in
-            ParseWorkerOutput(job: job, document: parser(job))
+            parser(job)
         }
         let monitor = Task { [weak self, worker] in
             let output = await worker.value
@@ -154,6 +175,7 @@ package actor ParseExecutor {
         self.activeCount -= 1
         self.states[token] = nil
         let live = !tombstoned && !token.isRevoked
+        if !live, let pending { self.recordWork(pending, orphaned: true) }
         if live, let pending { self.start(pending) }
         while self.activeCount < self.maxActive, !self.waitingOrder.isEmpty {
             let next = self.waitingOrder.removeFirst()
@@ -162,15 +184,32 @@ package actor ParseExecutor {
         // Remove idle registry state before the first suspension, even if delivery
         // must queue on another actor. A ticket retains only a weak sink reference.
         let delivery = self.registry.delivery(for: token, removing: self.states[token] == nil)
+        self.recordWork(output.job, orphaned: !live || delivery?.value == nil)
         if live, let delivery {
-            await self.registry.publish(.parsed(submission: output.job.submission, document: output.document), using: delivery)
+            if let document = output.document {
+                await self.registry.publish(.parsed(submission: output.job.submission, document: document), using: delivery, incremental: output.incremental)
+            } else {
+                await self.registry.publish(.stale(submission: output.job.submission), using: delivery)
+            }
         }
     }
 
     private func publishStale(_ job: ParseJob) {
-        guard let delivery = registry.delivery(for: job.submission.sessionToken) else { return }
+        let delivery = self.registry.delivery(for: job.submission.sessionToken)
+        self.recordWork(job, orphaned: delivery?.value == nil)
+        guard let delivery else { return }
         Task { [registry, delivery] in
             await registry.publish(.stale(submission: job.submission), using: delivery)
+        }
+    }
+
+    private func recordWork(_ job: ParseJob, orphaned: Bool) {
+        if orphaned {
+            self.workDiagnostics.orphaned.add(job.attemptRecorder.snapshot())
+            self.workDiagnostics.orphanedCount += 1
+        } else {
+            self.workDiagnostics.completed.add(job.attemptRecorder.snapshot())
+            self.workDiagnostics.completedCount += 1
         }
     }
 }

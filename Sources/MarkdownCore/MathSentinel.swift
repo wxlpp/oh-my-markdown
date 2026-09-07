@@ -63,116 +63,236 @@ public enum MathSentinel {
     /// ESC 仅由本类在 S 之后注入；unescape 不依赖此前提——用户文本中孤立的 ESC 原样透传。
     public static func escapeReservedScalar(_ s: String) -> String {
         var out = ""
-        out.reserveCapacity(s.count)
-        for ch in s {
-            if ch == self.sentinel { out.append(self.sentinel); out.append(self.escapeMark) }
-            else { out.append(ch) }
+        out.reserveCapacity(s.utf8.count)
+        for scalar in s.unicodeScalars {
+            out.unicodeScalars.append(scalar)
+            if scalar.value == 0x10FE00 { out.unicodeScalars.append("\u{10FE01}") }
         }
         return out
     }
 
     /// 还原 escapeReservedScalar：S ESC → S。
     public static func unescapeReservedScalar(_ s: String) -> String {
-        var out = ""
-        var iter = s.makeIterator()
-        var pending: Character?
-        while let ch = pending ?? iter.next() {
-            pending = nil
-            if ch == self.sentinel {
-                if let next = iter.next() {
-                    if next == self.escapeMark { out.append(self.sentinel) }
-                    else { out.append(self.sentinel); pending = next }
-                } else { out.append(self.sentinel) }
-            } else { out.append(ch) }
+        let work = ParseWorkAccumulator(cancellable: false)
+        return try! self.decodeText(s, tableCount: 0, work: work).map {
+            if case .literal(let value) = $0 { return value }; return ""
+        }.joined()
+    }
+
+    package enum DecodedPiece { case literal(String), entry(Int) }
+    private struct DecodeEvent {
+        let range: Range<Int>
+        let entry: Int? // nil removes only an inserted ESC scalar
+    }
+
+    package static func decodeText(_ source: String, tableCount: Int, work: ParseWorkAccumulator) throws -> [DecodedPiece] {
+        if let result = try source.utf8.withContiguousStorageIfAvailable({ bytes in
+            try self.decodeText(source, bytes: bytes, tableCount: tableCount, work: work)
+        }) { return result }
+        let bytes = Array(source.utf8)
+        try work.copy(bytes.count)
+        return try bytes.withUnsafeBufferPointer { try self.decodeText(source, bytes: $0, tableCount: tableCount, work: work) }
+    }
+
+    private static func decodeText(
+        _ source: String,
+        bytes: UnsafeBufferPointer<UInt8>,
+        tableCount: Int,
+        work: ParseWorkAccumulator
+    ) throws -> [DecodedPiece] {
+        var events: [DecodeEvent] = []
+        var index = 0
+        func marker(at offset: Int, last: UInt8) -> Bool {
+            offset + 4 <= bytes.count && bytes[offset] == 0xF4 && bytes[offset + 1] == 0x8F
+                && bytes[offset + 2] == 0xB8 && bytes[offset + 3] == last
         }
-        return out
+        while index < bytes.count {
+            try work.map()
+            guard marker(at: index, last: 0x80) else { index += 1; continue }
+            if marker(at: index + 4, last: 0x81) {
+                try work.arrayGrowth(events)
+                events.append(DecodeEvent(range: index + 4 ..< index + 8, entry: nil))
+                try work.metadata(MemoryLayout<DecodeEvent>.stride)
+                try work.map(7)
+                index += 8
+                continue
+            }
+            var cursor = index + 4
+            var number = 0
+            var overflow = false
+            while cursor < bytes.count, bytes[cursor] >= 48, bytes[cursor] <= 57 {
+                try work.map()
+                let (product, multiplied) = number.multipliedReportingOverflow(by: 10)
+                let (sum, added) = product.addingReportingOverflow(Int(bytes[cursor] - 48))
+                overflow = overflow || multiplied || added
+                number = sum
+                cursor += 1
+            }
+            if cursor > index + 4, !overflow, number < tableCount, marker(at: cursor, last: 0x80) {
+                try work.arrayGrowth(events)
+                events.append(DecodeEvent(range: index ..< cursor + 4, entry: number))
+                try work.metadata(MemoryLayout<DecodeEvent>.stride)
+                try work.map(7)
+                index = cursor + 4
+            } else { index += 1 }
+        }
+        guard !events.isEmpty else { return [.literal(source)] }
+        work.decodedEventCount = ParseWorkMetrics.saturatingAdd(work.decodedEventCount, events.count)
+        var pieces: [DecodedPiece] = []
+        var ranges: [Range<Int>] = []
+        pieces.reserveCapacity(ParseWorkMetrics.saturatingAdd(ParseWorkMetrics.saturatingMultiply(events.count, 2), 1))
+        ranges.reserveCapacity(events.count + 1)
+        var cursor = 0
+        func flush() throws {
+            guard !ranges.isEmpty else { return }
+            var count = 0
+            for range in ranges {
+                count += range.count; try work.metadata(MemoryLayout<Range<Int>>.stride)
+            }
+            let literal = try String(unsafeUninitializedCapacity: count) { output in
+                var target = 0
+                for range in ranges {
+                    for index in range {
+                        output[target] = bytes[index]; target += 1; try work.copy(1)
+                    }
+                }
+                return target
+            }
+            try work.arrayGrowth(pieces)
+            pieces.append(.literal(literal))
+            try work.metadata(MemoryLayout<DecodedPiece>.stride)
+            ranges.removeAll(keepingCapacity: true)
+        }
+        for event in events {
+            try work.check()
+            if cursor < event.range.lowerBound { try work.arrayGrowth(ranges); ranges.append(cursor ..< event.range.lowerBound) }
+            if let entry = event.entry {
+                try flush()
+                try work.arrayGrowth(pieces)
+                pieces.append(.entry(entry))
+                try work.metadata(MemoryLayout<DecodedPiece>.stride)
+            }
+            cursor = event.range.upperBound
+        }
+        if cursor < bytes.count { try work.arrayGrowth(ranges); ranges.append(cursor ..< bytes.count) }
+        try flush()
+        return pieces
     }
 
     /// 用 UTF-8 字节区间（来自 MathScanner）把公式替换成裸锚。
     /// 同时产出 transformed↔original 的字节分段映射（`segments`），
     /// 由与拼接 `pieces` 完全相同的边界推导，保证与变换串逐字节一致。
     public static func substitute(source: String, spans: [MathSpan]) -> SubstituteResult {
+        let work = ParseWorkAccumulator(cancellable: false)
+        return try! self.substitute(source: source, bytes: Array(source.utf8), spans: spans, work: work)
+    }
+
+    package static func substitute(source: String, spans: [MathSpan], metrics: inout ParseWorkMetrics) throws -> SubstituteResult {
         let bytes = Array(source.utf8)
-        var pieces: [String] = []
+        metrics.materializationBytes = ParseWorkMetrics.saturatingAdd(metrics.materializationBytes, bytes.count)
+        return try self.substitute(source: source, bytes: bytes, spans: spans, metrics: &metrics)
+    }
+
+    package static func substitute<Bytes: RandomAccessCollection>(source: String, bytes: Bytes, spans: [MathSpan], hasReserved: Bool = true, metrics: inout ParseWorkMetrics) throws -> SubstituteResult where Bytes.Element == UInt8, Bytes.Index == Int {
+        let work = ParseWorkAccumulator(metrics, cancellable: true)
+        defer { metrics = work.metrics }
+        return try self.substitute(source: source, bytes: bytes, spans: spans, hasReserved: hasReserved, work: work)
+    }
+
+    private static func substitute<Bytes: RandomAccessCollection>(source: String, bytes: Bytes, spans: [MathSpan], hasReserved: Bool = true, work: ParseWorkAccumulator) throws -> SubstituteResult where Bytes.Element == UInt8, Bytes.Index == Int {
+        try work.check()
+        let reserved: [UInt8] = [0xF4, 0x8F, 0xB8, 0x80]
+        let escaped: [UInt8] = [0xF4, 0x8F, 0xB8, 0x81]
         var table: [Entry] = []
         var segments: [Segment] = []
-        var cursor = 0 // 原始字节游标
-        var xf = 0 // 变换串字节游标
-
-        /// 把一段原始文本 escape 后的产物拆成「仿射段序列」：
-        /// escapeReservedScalar 仅把每个 U+10FE00（原始 4 字节）替换为
-        /// U+10FE00 U+10FE01（变换 8 字节），其余标量逐字节透传。
-        /// 因此在每个被转义的 sentinel 标量处切一刀，段内即为同长平移。
-        func appendText(originalStart: Int, originalEnd: Int) {
-            guard originalStart < originalEnd else { return }
-            let text = String(decoding: bytes[originalStart ..< originalEnd], as: UTF8.self)
-            let escaped = self.escapeReservedScalar(text)
-            pieces.append(escaped)
-            var oRun = originalStart // 当前仿射段原始起点
-            var origCursor = originalStart
-            for scalar in text.unicodeScalars {
-                let w = String(scalar).utf8.count
-                if scalar == self.sentinel.unicodeScalars.first! {
-                    // 收尾当前仿射段（不含此 sentinel）。
-                    if origCursor > oRun {
-                        let len = origCursor - oRun
-                        segments.append(Segment(
-                            transformedStart: xf,
-                            transformedEnd: xf + len,
-                            originalStart: oRun,
-                            originalEnd: oRun + len,
-                            isAnchor: false
-                        ))
-                        xf += len
-                    }
-                    // sentinel 自身：原始 4 字节 → 变换 8 字节（S + ESC）。
-                    // 视作一个仿射段映射到该 sentinel 原始 4 字节（端点夹到 [oStart,oEnd]）。
-                    segments.append(Segment(
-                        transformedStart: xf,
-                        transformedEnd: xf + 2 * w,
-                        originalStart: origCursor,
-                        originalEnd: origCursor + w,
-                        isAnchor: true
-                    ))
-                    xf += 2 * w
-                    origCursor += w
-                    oRun = origCursor
-                } else {
-                    origCursor += w
-                }
+        var replacements: [(Range<Int>, [UInt8])] = []
+        table.reserveCapacity(spans.count)
+        replacements.reserveCapacity(spans.count)
+        var cursor = 0
+        var spanIndex = 0
+        var capacity = bytes.count
+        while cursor < bytes.count {
+            if !hasReserved {
+                guard spanIndex < spans.count else { break }
+                cursor = spans[spanIndex].range.lowerBound
             }
-            if origCursor > oRun {
-                let len = origCursor - oRun
+            try work.scan()
+            if spanIndex < spans.count, spans[spanIndex].range.lowerBound == cursor {
+                let span = spans[spanIndex]
+                let anchor = Array("\(sentinel)\(table.count)\(self.sentinel)".utf8)
+                guard span.range.lowerBound >= 0, span.range.upperBound <= bytes.count else { throw IncrementalSourceBuffer.BufferError.invalidBoundary }
+                let (nextCapacity, overflow) = capacity.addingReportingOverflow(anchor.count - span.range.count)
+                guard !overflow else { throw IncrementalSourceBuffer.BufferError.sizeOverflow }
+                capacity = nextCapacity
+                try work.arrayGrowth(replacements)
+                try work.arrayGrowth(table)
+                replacements.append((span.range, anchor))
+                table.append(Entry(latex: span.latex, display: span.display))
+                try work.copy(2 * anchor.count) // interpolated String and its UTF-8 Array
+                try work.metadata(MemoryLayout<Entry>.stride + MemoryLayout<(Range<Int>, [UInt8])>.stride)
+                cursor = span.range.upperBound
+                spanIndex += 1
+            } else if cursor + 4 <= bytes.count, bytes[cursor ..< cursor + 4].elementsEqual(reserved) {
+                let (nextCapacity, overflow) = capacity.addingReportingOverflow(4)
+                guard !overflow else { throw IncrementalSourceBuffer.BufferError.sizeOverflow }
+                capacity = nextCapacity
+                try work.arrayGrowth(replacements)
+                replacements.append((cursor ..< cursor + 4, reserved + escaped))
+                try work.copy(8)
+                try work.metadata(MemoryLayout<(Range<Int>, [UInt8])>.stride)
+                cursor += 4
+            } else { cursor += 1 }
+        }
+        guard !replacements.isEmpty else {
+            return SubstituteResult(transformed: source, table: [], segments: [])
+        }
+        segments.reserveCapacity(ParseWorkMetrics.saturatingAdd(ParseWorkMetrics.saturatingMultiply(replacements.count, 2), 1))
+        let transformed = try String(unsafeUninitializedCapacity: capacity) { output in
+            var original = 0
+            var written = 0
+            func appendText(until end: Int) throws {
+                guard original < end else { return }
+                let originalStart = original
+                let transformedStart = written
+                while original < end {
+                    output[written] = bytes[original]
+                    written += 1; original += 1
+                    try work.copy(1)
+                }
+                try work.arrayGrowth(segments)
                 segments.append(Segment(
-                    transformedStart: xf,
-                    transformedEnd: xf + len,
-                    originalStart: oRun,
-                    originalEnd: oRun + len,
+                    transformedStart: transformedStart,
+                    transformedEnd: written,
+                    originalStart: originalStart,
+                    originalEnd: original,
                     isAnchor: false
                 ))
-                xf += len
+                try work.metadata(MemoryLayout<Segment>.stride)
             }
+            for (range, replacement) in replacements {
+                try work.check()
+                try appendText(until: range.lowerBound)
+                let transformedStart = written
+                for byte in replacement {
+                    output[written] = byte
+                    written += 1
+                    try work.copy(1)
+                }
+                try work.arrayGrowth(segments)
+                segments.append(Segment(
+                    transformedStart: transformedStart,
+                    transformedEnd: written,
+                    originalStart: range.lowerBound,
+                    originalEnd: range.upperBound,
+                    isAnchor: true
+                ))
+                try work.metadata(MemoryLayout<Segment>.stride)
+                original = range.upperBound
+            }
+            try appendText(until: bytes.count)
+            return written
         }
-
-        for span in spans {
-            appendText(originalStart: cursor, originalEnd: span.range.lowerBound)
-            let idx = table.count
-            table.append(Entry(latex: span.latex, display: span.display))
-            let anchor = "\(sentinel)\(idx)\(sentinel)"
-            pieces.append(anchor)
-            let anchorBytes = anchor.utf8.count
-            segments.append(Segment(
-                transformedStart: xf,
-                transformedEnd: xf + anchorBytes,
-                originalStart: span.range.lowerBound,
-                originalEnd: span.range.upperBound,
-                isAnchor: true
-            ))
-            xf += anchorBytes
-            cursor = span.range.upperBound
-        }
-        appendText(originalStart: cursor, originalEnd: bytes.count)
-        return SubstituteResult(transformed: pieces.joined(), table: table, segments: segments)
+        return SubstituteResult(transformed: transformed, table: table, segments: segments)
     }
 
     /// 在字符串里定位裸锚（S<digits>S，紧跟其后不是 escapeMark）。

@@ -63,7 +63,41 @@ package struct ParseSubmission: Hashable {
 
 package struct ParseJob {
     package let submission: ParseSubmission
-    package let source: String
+    private let suppliedSource: String?
+    package let sourceBuffer: IncrementalSourceBuffer?
+    package let previousParse: IncrementalParseResult?
+    package let workMetrics: ParseWorkMetrics
+    package let attemptRecorder: ParseAttemptRecorder
+    package var source: String {
+        if let suppliedSource { return suppliedSource }
+        var metrics = ParseWorkMetrics()
+        // Explicit compatibility facade for injected synchronous parsers. Its
+        // immutable value cannot change merely because the worker was cancelled.
+        // The production parser consumes sourceBuffer's measured tail directly.
+        let result = (try? self.sourceBuffer?.materialize(from: 0, metrics: &metrics, cancellable: false)) ?? ""
+        self.sourceBuffer?.recorder?.recordFacade(metrics)
+        return result
+    }
+
+    package init(submission: ParseSubmission, source: String) {
+        self.submission = submission; self.suppliedSource = source
+        self.sourceBuffer = nil; self.previousParse = nil
+        let recorder = ParseAttemptRecorder()
+        self.attemptRecorder = recorder; self.workMetrics = .init(recording: recorder)
+    }
+
+    package init(
+        submission: ParseSubmission,
+        buffer: IncrementalSourceBuffer,
+        previous: IncrementalParseResult?,
+        metrics: ParseWorkMetrics
+    ) {
+        self.submission = submission; self.suppliedSource = nil
+        let recorder = ParseAttemptRecorder()
+        self.sourceBuffer = buffer.recordingFacades(with: ParseWorkRecorder(parent: buffer.recorder, attempt: recorder))
+        self.previousParse = previous
+        self.attemptRecorder = recorder; self.workMetrics = metrics.recording(recorder, seed: true)
+    }
 }
 
 package enum ParseExecutorResult {
@@ -88,12 +122,50 @@ package struct ParseExecutorDiagnostics: Equatable {
     package let registryCount: Int
 }
 
+package enum ParseAttemptDisposition { case accepted, discarded }
+
+package struct ParseAttemptReport {
+    package let submission: ParseSubmission
+    package let disposition: ParseAttemptDisposition
+    package let metrics: ParseWorkMetrics
+}
+
+package struct ParseAttemptDiagnostics {
+    package private(set) var accepted = ParseWorkMetrics()
+    package private(set) var discarded = ParseWorkMetrics()
+    package private(set) var acceptedCount = 0
+    package private(set) var discardedCount = 0
+    package var totalAttempted: ParseWorkMetrics {
+        var total = self.accepted; total.add(self.discarded); return total
+    }
+
+    package mutating func record(_ report: ParseAttemptReport) {
+        switch report.disposition {
+        case .accepted: self.accepted.add(report.metrics); self.acceptedCount += 1
+        case .discarded: self.discarded.add(report.metrics); self.discardedCount += 1
+        }
+    }
+}
+
+/// Executor-instance parse work includes orphaned jobs after sink teardown.
+/// Session preparation is tracked separately by each attempt recorder.
+package struct ParseExecutorWorkDiagnostics {
+    package var completed = ParseWorkMetrics()
+    package var orphaned = ParseWorkMetrics()
+    package var completedCount = 0
+    package var orphanedCount = 0
+    package var totalAttempted: ParseWorkMetrics {
+        var total = self.completed; total.add(self.orphaned); return total
+    }
+}
+
 package typealias SynchronousParser = @Sendable (ParseJob) -> MarkdownDocument
 package typealias RenderSessionPreparation = @Sendable (RenderInput) async throws -> RenderDisplayModel
 
 package struct ParseWorkerOutput {
     package let job: ParseJob
-    package let document: MarkdownDocument
+    package let document: MarkdownDocument?
+    package let incremental: IncrementalParseResult?
 }
 
 package struct ActiveParse {
@@ -108,6 +180,13 @@ package enum ParseTokenState {
 
 package protocol ParseResultSink: Actor {
     func receive(_ result: ParseExecutorResult) async
+    func receive(_ result: ParseExecutorResult, incremental: IncrementalParseResult) async
+}
+
+extension ParseResultSink {
+    package func receive(_ result: ParseExecutorResult, incremental: IncrementalParseResult) async {
+        await self.receive(result)
+    }
 }
 
 package enum RenderSessionMutation {

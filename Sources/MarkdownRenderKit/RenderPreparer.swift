@@ -10,26 +10,39 @@ public struct RenderPreparer: Sendable {
 
     public enum PreparationError: Error { case configurationMismatch }
     public func prepare(_ input: RenderInput) throws -> RenderDisplayModel {
+        var metrics = ParseWorkMetrics(recording: input.attemptRecorder)
+        let bundles = try self.prepareBlocks(input, range: 0 ..< input.document.blockStorage.count, metrics: &metrics)
+        return RenderDisplayModel(bundles: bundles, input: input)
+    }
+
+    package func prepareBlocks(_ input: RenderInput, range: Range<Int>, metrics: inout ParseWorkMetrics, checkCancellation: @escaping ParseCancellationCheck = { try Task.checkCancellation() }) throws -> PersistentValues<DisplayBlockBundle> {
         guard input.configuration == self.configuration else { throw PreparationError.configurationMismatch }
-        var builder = PreparationBuilder(configuration: configuration, width: input.availableWidth, mode: input.placeholderMode)
-        var pieces: [PreparedPiece] = []
-        var blocks: [DisplayBlock] = []
-        for (index, block) in input.document.parsedBlocks.enumerated() {
-            try Task.checkCancellation()
-            builder.lineage = UInt64(index)
+        var builder = PreparationBuilder(configuration: configuration, checkCancellation: checkCancellation, width: input.availableWidth, mode: input.placeholderMode, work: ParseWorkMetrics(recording: metrics.recorder))
+        defer { metrics.addRecorded(builder.work) }
+        var bundles: [DisplayBlockBundle] = []
+        for index in range {
+            try checkCancellation()
+            let block = input.document.blockStorage[index]
+            builder.runs = []
+            builder.resources = []
+            builder.lineage = block.lineage
             builder.sourceRange = block.sourceRange
-            if index > 0 { pieces.append(.run(builder.separator())) }
+            var pieces: [PreparedPiece] = []
             pieces.append(.blockStart)
-            let start = builder.runs.count
-            pieces += try builder.block(block.block, overlayBlockIndex: index)
-            blocks.append(DisplayBlock(lineage: UInt64(index), runs: Array(builder.runs[start...]), sourceRange: block.sourceRange))
+            pieces += try builder.block(block.block, overlayEligible: true)
+            builder.metadataBytes = ParseWorkMetrics.saturatingAdd(builder.metadataBytes, pieces.count * MemoryLayout<PreparedPiece>.stride)
+            let display = DisplayBlock(lineage: builder.lineage, runs: builder.runs, sourceRange: block.sourceRange)
+            bundles.append(DisplayBlockBundle(block: display, resources: builder.resources, content: pieces, accessibilityRoots: []))
+            builder.metadataBytes = ParseWorkMetrics.saturatingAdd(builder.metadataBytes, MemoryLayout<DisplayBlockBundle>.stride)
         }
-        return RenderDisplayModel(runs: builder.runs, blocks: blocks, resources: builder.resources, input: input, preparedContent: pieces)
+        builder.metadataBytes = ParseWorkMetrics.saturatingAdd(builder.metadataBytes, 88)
+        return PersistentValues(bundles)
     }
 }
 
 private struct PreparationBuilder {
     let configuration: RenderConfigurationSnapshot
+    let checkCancellation: ParseCancellationCheck
     var width: Double
     var mode: PlaceholderMode
     var lineage: UInt64 = 0
@@ -39,6 +52,21 @@ private struct PreparationBuilder {
     var resolves = true
     var resources: [UnresolvedResource] = []
     var runs: [DisplayRun] = []
+    var work = ParseWorkMetrics()
+    var workBytes: Int {
+        get { self.work.renderPreparationBytes }
+        set { self.work.renderPreparationBytes = newValue }
+    }
+
+    var metadataBytes: Int {
+        get { self.work.metadataBytes }
+        set { self.work.metadataBytes = newValue }
+    }
+
+    mutating func payload(_ bytes: Int) throws {
+        self.workBytes = ParseWorkMetrics.saturatingAdd(self.workBytes, bytes)
+    }
+
     func body() -> PreparedAttributes {
         PreparedAttributes(color: self.quoteColor ? .quote : .body, paragraph: PreparedParagraph(spacing: self.configuration.spacing.paragraph))
     }
@@ -51,12 +79,16 @@ private struct PreparationBuilder {
     }
 
     mutating func text(_ value: String, attributes: PreparedAttributes, kind: PreparedRunKind = .text, resource: ResourceID? = nil) -> PreparedRun {
+        // String values are shared here; no source payload is inspected or copied.
+        self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, MemoryLayout<DisplayRun>.stride + MemoryLayout<PreparedRun>.stride)
         self.runs.append(DisplayRun(text: resource != nil && self.mode == .static ? "\u{FFFC}" : value, role: attributes.role ?? .body, sourceRange: self.sourceRange, resourceID: resource))
         return PreparedRun(text: value, attributes: attributes, kind: kind)
     }
 
     mutating func resource(_ make: (ResourceID) -> UnresolvedResource) -> ResourceID {
         let id = ResourceID(rawValue: "\(configuration.generation):\(self.lineage):\(self.resources.count)")
+        self.workBytes = ParseWorkMetrics.saturatingAdd(self.workBytes, id.rawValue.utf8.count)
+        self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, MemoryLayout<UnresolvedResource>.stride)
         self.resources.append(make(id))
         return id
     }
@@ -64,7 +96,7 @@ private struct PreparationBuilder {
     mutating func inlines(_ nodes: [InlineNode], attributes: PreparedAttributes) throws -> [PreparedRun] {
         var result: [PreparedRun] = []
         for node in nodes {
-            try Task.checkCancellation()
+            try self.checkCancellation()
             var attrs = attributes
             switch node {
             case .text(let value), .html(let value): result.append(self.text(value, attributes: attrs))
@@ -83,12 +115,15 @@ private struct PreparationBuilder {
                 attrs.strike = true
                 result += try self.inlines(children, attributes: attrs)
             case .link(let destination, _, let children):
+                try self.payload(destination.utf8.count)
                 attrs.color = .link; attrs.underline = true; attrs.destination = URL(string: destination)?.absoluteString
+                try self.payload(attrs.destination?.utf8.count ?? 0)
                 result += try self.inlines(children, attributes: attrs)
             case .image(let source, let alt):
                 let id = self.resource { .image(id: $0, source: source, alt: alt) }
                 attrs.color = .image
                 let label = alt.isEmpty ? (source.isEmpty ? "image" : source) : alt
+                try self.payload(label.utf8.count + 5)
                 result.append(self.text("🖼 \(label)", attributes: attrs, kind: .image(id: id, source: source, width: self.width, resolves: self.resolves), resource: id))
             case .math(let latex):
                 let id = self.resource { .math(id: $0, latex: latex, display: false) }
@@ -99,8 +134,14 @@ private struct PreparationBuilder {
         return result
     }
 
-    mutating func block(_ node: BlockNode, overlayBlockIndex: Int? = nil) throws -> [PreparedPiece] {
-        try Task.checkCancellation()
+    mutating func block(_ node: BlockNode, overlayEligible: Bool = false) throws -> [PreparedPiece] {
+        let result = try self.buildBlock(node, overlayEligible: overlayEligible)
+        self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, result.count * MemoryLayout<PreparedPiece>.stride)
+        return result
+    }
+
+    mutating func buildBlock(_ node: BlockNode, overlayEligible: Bool = false) throws -> [PreparedPiece] {
+        try self.checkCancellation()
         var attrs = self.body()
         switch node {
         case .paragraph(let nodes): return try self.inlines(nodes, attributes: attrs).map(PreparedPiece.run)
@@ -111,12 +152,26 @@ private struct PreparationBuilder {
         case .codeBlock(let language, let body):
             attrs.role = .code; attrs.color = .code
             attrs.paragraph = PreparedParagraph(lineSpacing: 4, head: 16, first: 16, tail: -16)
-            let trimmed = body.hasSuffix("\n") ? String(body.dropLast()) : body
-            if language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "svg" {
+            let trimsNewline = body.hasSuffix("\n")
+            try self.payload(min(body.utf8.count, 1))
+            let trimmed = trimsNewline ? String(body.dropLast()) : body
+            if trimsNewline { try self.payload(trimmed.utf8.count) }
+            try self.payload(language?.utf8.count ?? 0)
+            let trimmedLanguage = language?.trimmingCharacters(in: .whitespacesAndNewlines)
+            try self.payload(2 * (trimmedLanguage?.utf8.count ?? 0)) // trim output and lowercase input
+            let normalizedLanguage = trimmedLanguage?.lowercased()
+            try self.payload(normalizedLanguage?.utf8.count ?? 0)
+            if normalizedLanguage == "svg" {
                 let id = self.resource { .svg(id: $0, source: body) }
                 let placeholderWidth: Double
                 let placeholderHeight: Double
-                if let native = SVGViewBoxParser.parseSize(from: body) {
+                var svgMetrics = ParseWorkMetrics(recording: self.work.recorder)
+                let nativeSize: CGSize?
+                do {
+                    defer { self.work.addRecorded(svgMetrics) }
+                    nativeSize = try SVGViewBoxParser.parseSize(from: body, metrics: &svgMetrics)
+                }
+                if let native = nativeSize {
                     placeholderWidth = self.width.isFinite && self.width > 0 ? min(native.width, self.width) : native.width
                     placeholderHeight = placeholderWidth * native.height / native.width
                 } else {
@@ -132,7 +187,7 @@ private struct PreparationBuilder {
             self.width = .greatestFiniteMagnitude; self.mode = .streaming; self.quoteColor = true; self.resolves = false; self.quoteIndent = indent + 16
             var result: [PreparedPiece] = []
             for (index, child) in children.enumerated() {
-                try Task.checkCancellation()
+                try self.checkCancellation()
                 if index > 0 { result.append(.run(self.separator())) }
                 result += try self.block(child)
             }
@@ -168,21 +223,21 @@ private struct PreparationBuilder {
                 try preparedHead.append(self.inlines(cell.content, attributes: header))
             }
             for row in rows {
-                try Task.checkCancellation()
+                try self.checkCancellation()
                 var prepared: [[PreparedRun]] = []
                 for cell in row {
                     try prepared.append(self.inlines(cell.content, attributes: attrs))
                 }
                 preparedRows.append(prepared)
             }
-            return [.table(PreparedTable(blockIndex: overlayBlockIndex, columns: columns, head: preparedHead, rows: preparedRows, width: self.width))]
+            return [.table(PreparedTable(overlayEligible: overlayEligible, columns: columns, head: preparedHead, rows: preparedRows, width: self.width))]
         }
     }
 
     mutating func list(_ items: [ListItem], start: Int?, depth: Int = 0) throws -> [PreparedPiece] {
         var result: [PreparedPiece] = []
         for (index, item) in items.enumerated() {
-            try Task.checkCancellation()
+            try self.checkCancellation()
             let bare = PreparedAttributes(role: nil, color: nil)
             if index > 0 { result.append(.run(self.text("\n", attributes: bare))) }
             let marker = start.map { "\($0 + index).\t" } ?? "•\t"

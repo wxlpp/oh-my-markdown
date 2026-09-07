@@ -38,7 +38,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     private var isDismantled = false
     private var requestedWidth: CGFloat = 1
     private var displayScale: CGFloat = 1
-    private var renderedBlocks: [BlockNode] = []
+    private var renderedDocument: MarkdownDocument?
 
     package convenience init(frame: CGRect, driver: any RenderSessionDriving) {
         self.init(frame: frame)
@@ -78,9 +78,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         }
         self._liveString = NSMutableAttributedString(attributedString: snapshot.attributedString)
         self.blockStarts = snapshot.blockStarts
-        self.parsedBlocks = snapshot.displayModel.preparedBlocks ?? []
-        self.renderedBlocks = self.parsedBlocks.map(\.block)
-        self.lastParsedSource = snapshot.displayModel.source ?? ""
+        self.renderedDocument = snapshot.displayModel.preparedDocument
         self.resetLayout()
         let range = NSRange(location: 0, length: snapshot.attributedString.length)
         self.triggerImageLoads(in: range)
@@ -101,7 +99,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
 
     package func resolvedResources(for model: RenderDisplayModel, configuration: RenderConfigurationSnapshot) -> ResolvedResourceSnapshot {
         var values: [ResourceID: ResolvedPlatformResource] = [:]
-        for resource in model.resources {
+        for resource in model.resourceValues {
             switch resource {
             case .image(let id, let source, _):
                 if let image = _imageCache[source] {
@@ -132,9 +130,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         }
         self._liveString = NSMutableAttributedString(string: "")
         self.blockStarts = []
-        self.parsedBlocks = []
-        self.renderedBlocks = []
-        self.lastParsedSource = ""
+        self.renderedDocument = nil
         self._tableOverlays.values.forEach { $0.scroll.removeFromSuperview() }
         self._tableOverlays.removeAll()
         self.sessionDriver?.send(.dismantle)
@@ -192,7 +188,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     public var blocks: [BlockNode] {
-        get { self.renderedBlocks }
+        get { self.renderedDocument?.blocks ?? [] }
         set {
             guard !self.isDismantled else { return }
             self.driver().send(.setDocument(MarkdownDocument(parsedBlocks: newValue.map { ParsedBlockNode(block: $0) }), self.configurationSnapshot()))
@@ -473,8 +469,14 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// Bundles long-press selection, handle dragging, and Copy/Share menu (no keyboard).
     private var textInteraction: UITextInteraction!
 
-    private var lastParsedSource = ""
-    private var parsedBlocks: [ParsedBlockNode] = []
+    private var lastParsedSource: String {
+        self.currentSnapshot?.displayModel.source ?? ""
+    }
+
+    private var parsedBlocks: [ParsedBlockNode] {
+        self.renderedDocument?.parsedBlocks ?? []
+    }
+
     /// Tracks the public set/append placeholder mode.
     public internal(set) var renderMode: PlaceholderMode = .static
 

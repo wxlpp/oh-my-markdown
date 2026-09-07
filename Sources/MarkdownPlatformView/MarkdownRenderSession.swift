@@ -11,7 +11,25 @@ package actor MarkdownRenderSession: ParseResultSink {
     private var availableWidth: Double
     private var placeholderMode: PlaceholderMode
     private let prepareInput: RenderSessionPreparation
-    private var source = ""
+    private let usesDefaultPreparation: Bool
+    private let diagnostics: (@Sendable (ParseSubmission, ParseWorkMetrics) async -> Void)?
+    private let attemptSink: (@Sendable (ParseAttemptReport) async -> Void)?
+    private var attempts: [ParseSubmission: ParseAttemptRecorder] = [:]
+    package private(set) var attemptDiagnostics = ParseAttemptDiagnostics()
+    private let workRecorder: ParseWorkRecorder
+    private var sourceBuffer: IncrementalSourceBuffer
+    package var facadeMaterializationCount: Int {
+        self.workRecorder.snapshot().facadeMaterializationCount
+    }
+
+    private var pendingWorkMetrics = ParseWorkMetrics()
+    private var latestParse: IncrementalParseResult?
+    private var incomingParse: IncrementalParseResult?
+    private var previousModel: RenderDisplayModel?
+    private var previousModelWitness: IncrementalSourceBuffer.Witness?
+    private var previousModelConfiguration: RenderConfigurationSnapshot?
+    package private(set) var deltaPreparationCount = 0
+    package private(set) var lastWorkMetrics: ParseWorkMetrics?
     private var configuration: RenderConfigurationSnapshot?
     private var suppliedDocument: MarkdownDocument?
     package private(set) var currentToken: RenderCommitToken?
@@ -26,16 +44,24 @@ package actor MarkdownRenderSession: ParseResultSink {
         registry: RenderSessionSinkRegistry, clock: any RenderSessionClock = ContinuousRenderSessionClock(),
         availableWidth: Double = 320, placeholderMode: PlaceholderMode = .static,
         configuration: RenderConfigurationSnapshot? = nil,
-        prepare: @escaping RenderSessionPreparation = MarkdownRenderSession.prepare
+        prepare: RenderSessionPreparation? = nil,
+        diagnostics: (@Sendable (ParseSubmission, ParseWorkMetrics) async -> Void)? = nil,
+        attemptDiagnostics: (@Sendable (ParseAttemptReport) async -> Void)? = nil
     ) {
         self.id = id
+        let recorder = ParseWorkRecorder()
+        self.workRecorder = recorder
+        self.sourceBuffer = IncrementalSourceBuffer(recorder: recorder)
         self.executor = executor
         self.registry = registry
         self.clock = clock
         self.availableWidth = availableWidth
         self.placeholderMode = placeholderMode
         self.configuration = configuration
-        self.prepareInput = prepare
+        self.prepareInput = prepare ?? MarkdownRenderSession.prepare
+        self.usesDefaultPreparation = prepare == nil
+        self.diagnostics = diagnostics
+        self.attemptSink = attemptDiagnostics
     }
 
     deinit {
@@ -65,16 +91,22 @@ package actor MarkdownRenderSession: ParseResultSink {
         self.submission = nil
         switch event.mutation {
         case .setSource(let value, let configuration):
-            self.source = value
+            self.sourceBuffer = IncrementalSourceBuffer(recorder: self.workRecorder)
+            self.pendingWorkMetrics = ParseWorkMetrics()
+            do { try self.sourceBuffer.append(value, metrics: &self.pendingWorkMetrics) }
+            catch { self.publish(error: .preparationFailed, token: event.commitToken); return }
+            self.latestParse = nil
             self.configuration = configuration
             self.suppliedDocument = nil
             self.placeholderMode = .static
         case .setDocument(let document, let configuration):
-            self.source = ""
+            self.sourceBuffer = IncrementalSourceBuffer(recorder: self.workRecorder)
+            self.latestParse = nil
             self.suppliedDocument = document
             self.configuration = configuration
         case .append(let delta):
-            self.source.append(delta)
+            do { try self.sourceBuffer.append(delta, metrics: &self.pendingWorkMetrics) }
+            catch { self.publish(error: .preparationFailed, token: event.commitToken); return }
             self.suppliedDocument = nil
             self.placeholderMode = .streaming
         case .replaceConfiguration(let configuration): self.configuration = configuration
@@ -95,6 +127,7 @@ package actor MarkdownRenderSession: ParseResultSink {
         if let document = self.suppliedDocument {
             let submission = ParseSubmission(id: UUID(), sessionToken: token, commitToken: event.commitToken, attempt: 1)
             self.submission = submission
+            self.attempts[submission] = ParseAttemptRecorder()
             self.receive(.parsed(submission: submission, document: document))
             return
         }
@@ -110,7 +143,10 @@ package actor MarkdownRenderSession: ParseResultSink {
         self.preparationTask?.cancel()
         self.preparationTask = nil
         self.submission = nil
-        self.source = ""
+        self.sourceBuffer = IncrementalSourceBuffer(recorder: self.workRecorder)
+        self.latestParse = nil
+        self.incomingParse = nil
+        self.previousModel = nil
         self.configuration = nil
         self.suppliedDocument = nil
         await self.executor.tombstone(self.token)
@@ -125,7 +161,11 @@ package actor MarkdownRenderSession: ParseResultSink {
         guard !self.dismantled, !self.token.isRevoked, self.currentToken == commitToken else { return }
         let next = ParseSubmission(id: UUID(), sessionToken: token, commitToken: commitToken, attempt: attempt)
         self.submission = next
-        let admission = await executor.enqueue(ParseJob(submission: next, source: self.source), sink: self)
+        let job = ParseJob(submission: next, buffer: self.sourceBuffer, previous: self.latestParse, metrics: self.pendingWorkMetrics)
+        self.pendingWorkMetrics = ParseWorkMetrics()
+        self.attempts[next] = job.attemptRecorder
+        let admission = await executor.enqueue(job, sink: self)
+        if admission == .busy { self.finishAttempt(next, disposition: .discarded) }
         // enqueue is short but crossing actors still permits a newer event/teardown.
         guard !self.dismantled, !self.token.isRevoked, self.submission == next, self.currentToken == commitToken else { return }
         if admission == .busy { self.receive(.busy(submission: next)) }
@@ -135,11 +175,16 @@ package actor MarkdownRenderSession: ParseResultSink {
     /// Parsing, retry clocks, preparation and MainActor delivery are never awaited here.
     package func receive(_ result: ParseExecutorResult) {
         let received = result.submission
-        guard !self.dismantled, !self.token.isRevoked, self.submission == received, self.currentToken == received.commitToken else { return }
+        guard !self.dismantled, !self.token.isRevoked, self.submission == received, self.currentToken == received.commitToken else {
+            self.finishAttempt(received, disposition: .discarded)
+            return
+        }
         switch result {
         case .stale:
-            break
+            self.finishAttempt(received, disposition: .discarded)
+            self.submission = nil
         case .busy:
+            self.finishAttempt(received, disposition: .discarded)
             guard self.retryTask == nil else { return }
             if received.attempt >= 3 || self.clock.now() >= self.deadline {
                 self.submission = nil
@@ -153,21 +198,46 @@ package actor MarkdownRenderSession: ParseResultSink {
                 }
             }
         case .parsed(_, let document):
-            guard let configuration else { return }
+            guard let configuration else { self.finishAttempt(received, disposition: .discarded); return }
+            let incremental = self.incomingParse
+            self.incomingParse = nil
+            let base = self.previousModelWitness == self.latestParse?.state.sourceWitness
+                && self.previousModelConfiguration == configuration
+                && self.previousModel?.availableWidth == self.availableWidth
+                && self.previousModel?.placeholderMode == self.placeholderMode ? self.previousModel : nil
+            if let incremental { self.latestParse = incremental }
+            // Each input's explicit facades follow its attempt, including discarded
+            // preparation. The parent observer keeps session-wide facade diagnostics.
+            let facadeRecorder = ParseWorkRecorder(parent: self.workRecorder, attempt: self.attempts[received])
+            let observedDocument = MarkdownDocument(blockStorage: document.blockStorage, recorder: facadeRecorder)
             let input = RenderInput(
-                document: document, source: suppliedDocument == nil ? self.source : nil, availableWidth: self.availableWidth,
-                configuration: configuration, placeholderMode: self.placeholderMode
+                document: observedDocument, source: nil, availableWidth: self.availableWidth,
+                configuration: configuration, placeholderMode: self.placeholderMode,
+                previousModel: base, sourceBuffer: self.suppliedDocument == nil ? self.sourceBuffer.recordingFacades(with: facadeRecorder) : nil,
+                attemptRecorder: self.attempts[received]
             )
             self.preparationTask?.cancel()
             let prepare = self.prepareInput
-            self.preparationTask = Task { [weak self, prepare, input, received] in
+            let useBuiltIn = self.usesDefaultPreparation
+            self.preparationTask = Task { [weak self, prepare, input, received, incremental, base, useBuiltIn] in
                 do {
-                    let model = try await prepare(input)
+                    let (model, metrics, usedDelta) = try await Self.prepareUpdate(
+                        input, incremental: incremental, base: base, useBuiltIn: useBuiltIn, prepare: prepare
+                    )
                     try Task.checkCancellation()
-                    await self?.publishPrepared(model, configuration: input.configuration, submission: received)
+                    await self?.publishPrepared(
+                        model,
+                        configuration: input.configuration,
+                        submission: received,
+                        witness: incremental?.state.sourceWitness,
+                        metrics: metrics,
+                        usedDelta: usedDelta
+                    )
                 } catch is CancellationError {
+                    await self?.finishAttempt(received, disposition: .discarded)
                     return
                 } catch {
+                    await self?.finishAttempt(received, disposition: .discarded)
                     guard !Task.isCancelled else { return }
                     await self?.preparationFailed(received)
                 }
@@ -175,20 +245,80 @@ package actor MarkdownRenderSession: ParseResultSink {
         }
     }
 
+    @concurrent private static func prepareUpdate(
+        _ input: RenderInput, incremental: IncrementalParseResult?, base: RenderDisplayModel?,
+        useBuiltIn: Bool, prepare: RenderSessionPreparation
+    ) async throws -> (RenderDisplayModel, ParseWorkMetrics, Bool) {
+        try Task.checkCancellation()
+        var metrics = input.attemptRecorder.map { $0.snapshot().recording($0) } ?? incremental?.metrics ?? ParseWorkMetrics()
+        let model: RenderDisplayModel
+        let usedDelta = useBuiltIn && incremental != nil && base != nil
+        if usedDelta, let incremental, let base {
+            let delta = try RenderPreparer(configuration: input.configuration).prepareDelta(
+                input, replacing: incremental.replacedPreviousRange,
+                with: incremental.changedBlockRange, metrics: &metrics
+            )
+            let prepared = try await delta.preparingSyntax(metrics: &metrics)
+            model = prepared.applying(to: base, metrics: &metrics)
+        } else if useBuiltIn {
+            let bundles = try RenderPreparer(configuration: input.configuration).prepareBlocks(
+                input, range: 0 ..< input.document.blockStorage.count, metrics: &metrics
+            )
+            let prepared = try await RenderDisplayModel.prepareSyntax(bundles, metrics: &metrics)
+            model = RenderDisplayModel(bundles: prepared, input: input)
+        } else {
+            model = try await prepare(input)
+        }
+        try Task.checkCancellation()
+        return (model, input.attemptRecorder.map { $0.snapshot().recording($0) } ?? metrics, usedDelta)
+    }
+
+    package func receive(_ result: ParseExecutorResult, incremental: IncrementalParseResult) {
+        guard !self.dismantled, !self.token.isRevoked, self.submission == result.submission,
+              self.currentToken == result.submission.commitToken else {
+            self.finishAttempt(result.submission, disposition: .discarded)
+            return
+        }
+        self.incomingParse = incremental
+        self.receive(result)
+    }
+
     @concurrent package static func prepare(_ input: RenderInput) async throws -> RenderDisplayModel {
         try Task.checkCancellation()
-        return try await RenderPreparer(configuration: input.configuration).prepare(input).preparingSyntax()
+        return try await RenderPreparer(configuration: input.configuration).prepare(input).preparingSyntax(recorder: input.attemptRecorder)
     }
 
     private func publishPrepared(
         _ model: RenderDisplayModel, configuration: RenderConfigurationSnapshot,
-        submission received: ParseSubmission
-    ) {
+        submission received: ParseSubmission, witness: IncrementalSourceBuffer.Witness?, metrics: ParseWorkMetrics, usedDelta: Bool
+    ) async {
         guard !self.dismantled, !self.token.isRevoked, self.submission == received,
-              self.currentToken == received.commitToken else { return }
+              self.currentToken == received.commitToken else {
+            self.finishAttempt(received, disposition: .discarded)
+            return
+        }
+        let metrics = metrics.withoutRecording
         self.submission = nil
         self.preparationTask = nil
+        self.previousModel = model
+        self.previousModelWitness = witness
+        self.previousModelConfiguration = configuration
+        self.lastWorkMetrics = metrics.withoutRecording
+        if usedDelta { self.deltaPreparationCount += 1 }
+        await self.diagnostics?(received, metrics)
+        guard !self.dismantled, !self.token.isRevoked, self.currentToken == received.commitToken else {
+            self.finishAttempt(received, disposition: .discarded)
+            return
+        }
+        self.finishAttempt(received, disposition: .accepted)
         self.registry.enqueue(.snapshot(model: model, configuration: configuration), token: received.commitToken)
+    }
+
+    private func finishAttempt(_ submission: ParseSubmission, disposition: ParseAttemptDisposition) {
+        guard let recorder = self.attempts.removeValue(forKey: submission) else { return }
+        let report = ParseAttemptReport(submission: submission, disposition: disposition, metrics: recorder.snapshot())
+        self.attemptDiagnostics.record(report)
+        if let sink = self.attemptSink { Task { [sink, report] in await sink(report) } }
     }
 
     private func preparationFailed(_ received: ParseSubmission) {
