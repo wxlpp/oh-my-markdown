@@ -1,9 +1,115 @@
 @testable import MarkdownCore
+@testable import MarkdownPlatformView
 import MarkdownRenderKit
 import Testing
 
+#if canImport(UIKit)
+import UIKit
+#else
+import AppKit
+#endif
+
 @Suite("Incremental parsing differential")
 struct IncrementalParseDifferentialTests {
+    @Test("Public signed source ranges survive lineage and rendering without narrowing traps")
+    @MainActor func signedSourceRangeLineage() throws {
+        let nodes = [-1, Int.min, 0].map { lower in
+            ParsedBlockNode(block: .paragraph([.image(source: "image.png", alt: "image")]), sourceRange: MarkdownSourceRange(lowerBound: lower, upperBound: 0))
+        }
+        let document = MarkdownDocument(parsedBlocks: nodes)
+        #expect(Set(document.blockStorage.map(\.lineage)).count == 3)
+        #expect(document.parsedBlocks.map(\.sourceRange) == nodes.map(\.sourceRange))
+        let configuration = MarkdownRenderConfiguration.default.snapshot(generation: 1)
+        let model = try RenderPreparer(configuration: configuration).prepare(RenderInput(document: document, source: nil, availableWidth: 320, configuration: configuration, placeholderMode: .streaming))
+        let snapshot = RenderMaterializer(configuration: configuration).materialize(model, resources: .init(values: [:]))
+        #expect(snapshot.attributedString.string == "🖼 image\n🖼 image\n🖼 image")
+        #expect(Set(model.runs.compactMap(\.resourceID)).count == 3)
+    }
+
+    @Test("Programmatic image paragraphs have distinct document-local lineage through public entry points", arguments: [false, true])
+    @MainActor func programmaticImageLineages(_ publicBlocksSetter: Bool) async throws {
+        let blocks: [BlockNode] = [
+            .paragraph([.image(source: "file:///first-missing.png", alt: "first")]),
+            .paragraph([.image(source: "file:///second-missing.png", alt: "second")]),
+        ]
+        let document = MarkdownDocument(parsedBlocks: blocks.map { ParsedBlockNode(block: $0) })
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        defer { view.dismantleRenderSession() }
+        let model: RenderDisplayModel
+        let text: String
+        if publicBlocksSetter {
+            view.blocks = blocks
+            #expect(await eventually { view.currentSnapshot != nil })
+            let snapshot = try #require(view.currentSnapshot)
+            model = snapshot.displayModel
+            text = snapshot.attributedString.string
+            #expect(snapshot.blockStarts == [0, 9])
+            #expect(view.blocks == blocks)
+        } else {
+            let registry = RenderSessionSinkRegistry()
+            let sink = RecordingRenderSink()
+            let session = MarkdownRenderSession(registry: registry)
+            registry.register(sink, for: session.id)
+            let driver = MarkdownRenderSessionDriver(session: session)
+            driver.send(.setDocument(document, MarkdownRenderConfiguration.default.snapshot(generation: 0)))
+            #expect(await eventually { sink.models.count == 1 })
+            model = try #require(sink.models.first)
+            text = try #require(sink.strings.first)
+            driver.send(.dismantle)
+        }
+        #expect(Set(model.blocks.map(\.lineage)).count == 2)
+        let firstID = try #require(model.blocks[0].runs.first?.resourceID)
+        let secondID = try #require(model.blocks[1].runs.first?.resourceID)
+        #expect(firstID != secondID)
+        #expect(model.resources == [
+            .image(id: firstID, source: "file:///first-missing.png", alt: "first"),
+            .image(id: secondID, source: "file:///second-missing.png", alt: "second"),
+        ])
+        let firstImage = PlatformImage()
+        let secondImage = PlatformImage()
+        var resolved: [ResourceID: ResolvedPlatformResource] = [:]
+        resolved[firstID] = .image(firstImage, owner: LegacyResourceOwner(retaining: firstImage))
+        resolved[secondID] = .image(secondImage, owner: LegacyResourceOwner(retaining: secondImage))
+        let materialized = RenderMaterializer(configuration: MarkdownRenderConfiguration.default.snapshot(generation: 1)).materialize(model, resources: .init(values: resolved))
+        #expect(materialized.attributedString.string == "\u{FFFC}\n\u{FFFC}")
+        let firstAttachment = materialized.attributedString.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
+        let secondAttachment = materialized.attributedString.attribute(.attachment, at: 2, effectiveRange: nil) as? NSTextAttachment
+        #expect(firstAttachment?.image === firstImage)
+        #expect(secondAttachment?.image === secondImage)
+        #expect(text == "🖼 first\n🖼 second")
+        let rebuilt = MarkdownDocument(parsedBlocks: blocks.map { ParsedBlockNode(block: $0) })
+        #expect(document.blockStorage.map(\.lineage) == rebuilt.blockStorage.map(\.lineage))
+        let roundTrip = MarkdownDocument(parsedBlocks: document.parsedBlocks)
+        #expect(document.blockStorage.map(\.lineage) == roundTrip.blockStorage.map(\.lineage))
+        let sourceBacked = MarkdownDocument(parsing: "one $x$ two\n")
+        #expect(sourceBacked.blockStorage.map(\.lineage) == MarkdownDocument(parsedBlocks: sourceBacked.parsedBlocks).blockStorage.map(\.lineage))
+    }
+
+    @Test("Escaped reference-label closers invalidate prior links at every append boundary")
+    func escapedReferenceDefinitionBoundaries() throws {
+        for label in [#"foo\]"#, #"foo\\\]"#, #"foo\\"#] {
+            let prefix = "[link][\(label)]\n\n"
+            let definition = "[\(label)]: /target\n"
+            let bytes = Array(definition.utf8)
+            for boundary in 0 ... bytes.count {
+                var buffer = IncrementalSourceBuffer()
+                var metrics = ParseWorkMetrics()
+                try buffer.append(prefix, metrics: &metrics)
+                let previous = try buffer.parse(previous: nil)
+                let first = String(decoding: bytes[..<boundary], as: UTF8.self)
+                try buffer.append(first, metrics: &metrics)
+                let partial = try buffer.parse(previous: previous)
+                #expect(partial.document.parsedBlocks == MarkdownDocument(parsing: prefix + first).parsedBlocks)
+                try buffer.append(bytes: Array(bytes[boundary...]), metrics: &metrics)
+                let result = try buffer.parse(previous: partial)
+                #expect(result.document.parsedBlocks == MarkdownDocument(parsing: prefix + definition).parsedBlocks)
+                #expect(result.document.blocks == [.paragraph([.link(destination: "/target", title: nil, children: [.text("link")])])])
+                #expect(result.fullParseReason == .referenceDefinition)
+                #expect(result.invalidationStartByte == 0)
+            }
+        }
+    }
+
     @Test("Retained table/resource suffixes survive prefix insertion and deletion without stale positions", arguments: [false, true])
     @MainActor func shiftedSuffixMaterialization(_ deleting: Bool) throws {
         let configuration = MarkdownRenderConfiguration.default.snapshot(generation: 1)

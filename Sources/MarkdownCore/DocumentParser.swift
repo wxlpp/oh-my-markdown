@@ -153,7 +153,13 @@ public struct MarkdownDocument: Sendable, Equatable {
     }
 
     public init(parsedBlocks: [ParsedBlockNode]) {
-        self.blockStorage = PersistentValues(parsedBlocks)
+        // Programmatic top-level nodes have no source anchor. Their ordinal is
+        // local to this document, deterministic across equivalent reconstruction,
+        // and in a separate identity domain from parser/backfill source anchors.
+        self.blockStorage = PersistentValues(parsedBlocks.enumerated().map { ordinal, node in
+            guard node.documentOrdinal != nil else { return node }
+            return ParsedBlockNode(block: node.block, sourceRange: node.sourceRange, fingerprint: node.fingerprint, sourceAnchor: 0, documentOrdinal: ordinal)
+        })
         self.workRecorder = nil
     }
 
@@ -304,11 +310,13 @@ public struct ParsedBlockNode: Sendable, Equatable {
         self.fingerprint = fingerprint
         self.sourceAnchor = sourceRange?.lowerBound ?? 0
         self.splitOrdinal = 0
+        self.documentOrdinal = sourceRange == nil ? 0 : nil
     }
 
-    package init(block: BlockNode, sourceRange: MarkdownSourceRange?, fingerprint: UInt64?, sourceAnchor: Int, splitOrdinal: Int = 0) {
+    package init(block: BlockNode, sourceRange: MarkdownSourceRange?, fingerprint: UInt64?, sourceAnchor: Int, splitOrdinal: Int = 0, documentOrdinal: Int? = nil) {
         self.block = block; self.sourceRange = sourceRange; self.fingerprint = fingerprint
         self.sourceAnchor = sourceAnchor; self.splitOrdinal = splitOrdinal
+        self.documentOrdinal = documentOrdinal
     }
 
     public let block: BlockNode
@@ -317,6 +325,9 @@ public struct ParsedBlockNode: Sendable, Equatable {
     /// Immutable original-source start survives math backfill's nil range policy.
     package let sourceAnchor: Int
     package let splitOrdinal: Int
+    /// Non-nil only for public, programmatically constructed source-less nodes.
+    /// Parser/backfill constructors explicitly preserve their real source anchor.
+    package let documentOrdinal: Int?
     package var lineage: UInt64 {
         let role: UInt64 = switch self.block {
         case .paragraph: 1
@@ -332,7 +343,11 @@ public struct ParsedBlockNode: Sendable, Equatable {
         }
         // Fixed-size identity fields only; no content/end/fingerprint is hashed.
         var hash: UInt64 = 14_695_981_039_346_656_037
-        for value in [UInt64(self.sourceAnchor), role, UInt64(self.splitOrdinal)] {
+        // Public source ranges are signed values. Preserve all anchor bits rather
+        // than narrowing to an unsigned value (which traps for negative ranges).
+        let identity = self.documentOrdinal.map(UInt64.init) ?? UInt64(bitPattern: Int64(self.sourceAnchor))
+        let discriminator = self.documentOrdinal == nil ? UInt64(self.splitOrdinal) : UInt64.max
+        for value in [identity, role, discriminator] {
             var bits = value
             for _ in 0 ..< 8 {
                 hash = (hash ^ (bits & 255)) &* 1_099_511_628_211; bits >>= 8

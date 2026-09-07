@@ -9,6 +9,7 @@ private struct InvalidationLines {
     private var started = false
     private var referenceState = 0
     private var labelCount = 0
+    private var labelEscaped = false
     private var marker: UInt8?
     private var markerCount = 0
     private var trailingSpace = false
@@ -28,8 +29,9 @@ private struct InvalidationLines {
             return
         }
         if self.referenceState == 1 {
-            if byte == 93 { self.referenceState = self.labelCount > 0 ? 2 : -1 }
+            if byte == 93, !self.labelEscaped { self.referenceState = self.labelCount > 0 ? 2 : -1 }
             else { self.labelCount += 1 }
+            self.labelEscaped = byte == 92 && !self.labelEscaped
         } else if self.referenceState == 2 {
             self.hasReference = self.hasReference || byte == 58
             self.referenceState = -1
@@ -45,6 +47,7 @@ private struct InvalidationLines {
     mutating func finishLine() {
         if let marker, self.validBreak, self.markerCount >= (marker == 61 ? 1 : 3) { self.hasBreak = true }
         self.leadingSpaces = 0; self.started = false; self.referenceState = 0; self.labelCount = 0
+        self.labelEscaped = false
         self.marker = nil; self.markerCount = 0; self.trailingSpace = false; self.trailingTab = false; self.validBreak = true
     }
 }
