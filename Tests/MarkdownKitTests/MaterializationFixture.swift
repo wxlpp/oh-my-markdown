@@ -34,7 +34,7 @@ struct MaterializationFixture {
         for resource in model.resources {
             switch resource {
             case .image(let id, let source, _):
-                if let image = images[source] { values[id] = .image(image, owner: LegacyResourceOwner(retaining: image)) }
+                if let image = images[source] { values[id] = .image(image, owner: TestResourceOwner(retaining: image)) }
             case .math(let id, let latex, _):
                 if let (image, baseline) = math[latex] {
                     values[id] = .math(owner: RenderedResourceRecord(image: image, baselineOffset: baseline).acquireLease())

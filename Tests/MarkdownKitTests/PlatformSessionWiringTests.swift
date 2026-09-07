@@ -67,7 +67,7 @@ struct PlatformSessionWiringTests {
     @Test(arguments: ["success", "failure", "cancellation"])
     func currentTokenCanLoadSameImageWhileOldTokenIsPending(oldOutcome: String) async throws {
         let loader = PausedImageLoader()
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("A ![alt](https://example.com/image.png)")
         #expect(await eventually { await loader.sources.count == 1 })
@@ -86,7 +86,7 @@ struct PlatformSessionWiringTests {
         }
         await loader.finish(0, result: oldResult)
         #expect(await eventually { await loader.completed == 1 })
-        #expect(await eventually { owner.count == 1 })
+        #expect(await eventually { owner.images.taskCount == 1 })
         #expect(view.currentCommitToken == current)
         #expect(view.currentSnapshot?.attributedString.string == "B 🖼 alt")
         #expect(view.imageRequests.count == 1)
@@ -104,7 +104,7 @@ struct PlatformSessionWiringTests {
     @Test(arguments: ["success", "failure", "cancellation"])
     func teardownClearsImageBookkeepingAndLateCompletionCannotMutate(oldOutcome: String) async throws {
         let loader = PausedImageLoader()
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("![alt](https://example.com/image.png)")
         #expect(await eventually { await loader.sources.count == 1 })
@@ -129,7 +129,7 @@ struct PlatformSessionWiringTests {
     }
 
     @Test func overflowPlatformOverlayConsumesCurrentSnapshotAndPreservesScrollView() async throws {
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
         view.setMarkdown("| A | B |\n|---|---|\n| old | value |")
         #expect(await eventually { view._tableOverlays[0] != nil })
         let first = try #require(view._tableOverlays[0])
@@ -149,7 +149,7 @@ struct PlatformSessionWiringTests {
 
     @Test func overflowImageResolutionPublishesOwnedCellAttachment() async throws {
         let loader = PausedImageLoader()
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("| Photo | Text |\n|---|---|\n| ![alt](https://example.com/image.png) | value |")
         #expect(await eventually { await loader.sources.count == 1 })
@@ -167,7 +167,7 @@ struct PlatformSessionWiringTests {
 
     @Test func currentImageFailureIsRecordedWithoutPublishingOrRetryLoop() async throws {
         let loader = PausedImageLoader()
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("![alt](https://example.com/image.png)")
         #expect(await eventually { await loader.sources.count == 1 })
@@ -250,7 +250,7 @@ struct PlatformSessionWiringTests {
 
     @Test func pendingLegacyResourceDoesNotRetainViewAcrossTeardown() async {
         let renderer = PausedSVGRenderer()
-        var view: MarkdownLabelView? = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        var view: MarkdownLabelView? = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         let weakView = WeakLifetime(view)
         view?.svgBlockRenderer = SVGRendererConfiguration(renderer: renderer)
         view?.setMarkdown("```svg\n<svg viewBox=\"0 0 20 10\"/>\n```")
@@ -278,7 +278,7 @@ struct PlatformSessionWiringTests {
     @Test func failedLegacyRenderersPreserveStaticPlaceholders() async throws {
         let math = MissingMathRenderer()
         let svg = MissingSVGRenderer()
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
         var style = view.renderStyle
         style.bodyFont = .systemFont(ofSize: 16)
         view.renderStyle = style
@@ -294,7 +294,7 @@ struct PlatformSessionWiringTests {
     }
 
     @Test func programmaticDocumentUsesSessionAndSourceAbsentCopyFallback() async {
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         view.blocks = [.paragraph([.strong([.text("direct")])]), .paragraph([.text("😀")])]
         #expect(await eventually { view.currentSnapshot?.attributedString.string == "direct\n😀" })
         #expect(view.currentSnapshot?.displayModel.source == nil)
@@ -358,17 +358,20 @@ struct PlatformSessionWiringTests {
         #expect(view.currentSnapshot == nil)
     }
 
-    @Test func publishedSnapshotOwnsLegacyResourcesUntilTextKitIsCleared() {
+    @Test func publishedSnapshotOwnsImageResidencyUntilTextKitIsCleared() throws {
+        let ledger = ImageResidencyLedger(hardLimit: 4096, cacheLimit: 2048)
         let driver = RecordingSessionDriver()
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400), driver: driver)
         let registry = RenderSessionSinkRegistry()
         let id = RenderSessionID(rawValue: UUID())
         registry.register(view, for: id)
         let token = RenderCommitToken(sessionID: id, sequence: 1, sourceRevision: 1, configurationGeneration: 1)
-        weak var observed: LegacyResourceOwner?
+        weak var observed: ImageOwnerLease?
         weak var observedSnapshot: RenderSnapshot?
-        do {
-            let owner = LegacyResourceOwner(retaining: NSObject())
+        var backingID = UUID()
+        try {
+            let owner = try ownedTestImage(ledger).inFlightOwner
+            backingID = owner.backingID
             observed = owner
             let attachment = NSTextAttachment()
             attachment.bounds = CGRect(x: 0, y: -3, width: 30, height: 10)
@@ -377,16 +380,20 @@ struct PlatformSessionWiringTests {
             observedSnapshot = snapshot
             registry.authorize(token)
             registry.withAuthorizedSink(for: token) { $0.replaceSnapshot(snapshot, token: token) }
-        }
+        }()
         #expect(observed != nil)
         #expect(observedSnapshot != nil)
+        #expect(ledger.ownerCount(backingID) == 1)
+        #expect(ledger.accountedBytes == 256)
         view.dismantleRenderSession()
         #expect(observed == nil)
         #expect(observedSnapshot == nil)
+        #expect(ledger.ownerCount(backingID) == 0)
+        #expect(ledger.isAtBaseline)
     }
 
     @Test func realDriverPublishesAppendAndWidthThenTearsDown() async throws {
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         view.setMarkdown("**one**")
         view.appendMarkdown(" two")
         #expect(await eventually { view.currentSnapshot?.attributedString.string == "one two" })

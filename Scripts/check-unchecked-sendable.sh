@@ -8,8 +8,8 @@ if [[ "$(printf '%s\n' "$tokens" | wc -l | tr -d ' ')" != 1 ]] || ! printf '%s\n
     printf 'FAIL: production unchecked Sendable inventory changed\n%s\n' "$matches" >&2
     exit 1
 fi
-if rg -n 'LegacyResourceOwner' Sources | rg -v '^Sources/MarkdownRenderKit/ResolvedResource.swift:[0-9]+:package final class LegacyResourceOwner: ResourceResidencyOwner \{$|^Sources/MarkdownPlatformView/MarkdownLabelView\+(iOS|macOS).swift:[0-9]+: +values\[id\] = \.image\(image, owner: LegacyResourceOwner\(retaining: image\)\)$'; then
-    printf 'FAIL: LegacyResourceOwner is allowed only for remote images\n' >&2
+if rg -n 'LegacyResourceOwner' Sources; then
+    printf 'FAIL: the retention bridge is gone; every resource owner is a lease\n' >&2
     exit 1
 fi
-echo 'PASS: only ImmutableCGImageBacking is unchecked; legacy owners are image-only'
+echo 'PASS: only ImmutableCGImageBacking is unchecked; no retention bridge remains'

@@ -64,13 +64,16 @@ struct RenderIsolationTests {
         context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
         let backing = try ImmutableCGImageBacking(frames: [#require(context.makeImage())])
         context.clear(CGRect(x: 0, y: 0, width: 2, height: 2))
-        #expect(backing.accountedPixelBytes == 16)
+        // 8-bit BGRA/sRGB with 64-byte aligned rows: alignUp(2 * 4, 64) * 2.
+        #expect(backing.accountedPixelBytes == 128)
+        #expect(backing.frames[0].bytesPerRow == 64)
         await withTaskGroup(of: Bool.self) { group in
             for _ in 0 ..< 32 {
                 group.addTask {
                     guard let data = backing.frames[0].dataProvider?.data else { return false }
                     let bytes = CFDataGetBytePtr(data)!
-                    return backing.frames[0].width == 2 && bytes[0] == 255 && bytes[3] == 255
+                    // Opaque red in BGRA byte order.
+                    return backing.frames[0].width == 2 && bytes[2] == 255 && bytes[3] == 255
                 }
             }
             for await valid in group {

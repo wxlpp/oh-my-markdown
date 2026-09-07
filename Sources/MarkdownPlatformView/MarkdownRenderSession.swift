@@ -357,13 +357,19 @@ package protocol RenderSessionDriving: AnyObject {
 package final class RenderSessionResourceTaskOwner {
     package let math: MathLoadCoordinator
     package let svg: SVGBlockLoadCoordinator
+    package let images: ImageLoadCoordinator
     private let clock: any RenderSessionClock
     private var debounceTask: Task<Void, Never>?
     private var deferredActions: [String: @MainActor () -> Void] = [:]
     private var tasks: [UUID: Task<Void, Never>] = [:]
-    package init(cache: RenderedResourceCache = .shared, clock: any RenderSessionClock = ContinuousRenderSessionClock()) {
+    package init(
+        sessionID: RenderSessionID = .init(rawValue: UUID()), cache: RenderedResourceCache = .shared,
+        clock: any RenderSessionClock = ContinuousRenderSessionClock(),
+        residency: ImageResidencyConfiguration = .shared
+    ) {
         self.math = MathLoadCoordinator(cache: cache)
         self.svg = SVGBlockLoadCoordinator(cache: cache)
+        self.images = ImageLoadCoordinator(sessionID: sessionID, residency: residency)
         self.clock = clock
     }
 
@@ -402,6 +408,7 @@ package final class RenderSessionResourceTaskOwner {
     package func cancelAll() {
         self.math.cancelAll()
         self.svg.cancelAll()
+        self.images.cancelAll()
         self.debounceTask?.cancel()
         self.debounceTask = nil
         self.deferredActions.removeAll()
@@ -414,6 +421,7 @@ package final class RenderSessionResourceTaskOwner {
     isolated deinit {
         math.cancelAll()
         svg.cancelAll()
+        images.cancelAll()
         debounceTask?.cancel()
         for task in tasks.values {
             task.cancel()
@@ -432,8 +440,10 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
     private var configurationGeneration: UInt64 = 0
     private var dismantled = false
 
-    package init(session: MarkdownRenderSession) {
-        self.resourceTaskOwner = RenderSessionResourceTaskOwner(clock: session.clock)
+    package init(session: MarkdownRenderSession, residency: ImageResidencyConfiguration = .shared) {
+        self.resourceTaskOwner = RenderSessionResourceTaskOwner(
+            sessionID: session.id, clock: session.clock, residency: residency
+        )
         self.session = session
         let (stream, continuation) = AsyncStream<RenderSessionEvent>.makeStream()
         self.continuation = continuation

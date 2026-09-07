@@ -49,7 +49,9 @@ package struct RenderImageRequest: Hashable {
 }
 
 package enum RenderImageLoadState {
-    case loading, failed
+    /// `deferred` is a transient residency/admission outcome that keeps the
+    /// accessible placeholder without recording a deterministic failure.
+    case loading, failed, deferred
 }
 
 package struct ParseSubmission: Hashable {
@@ -223,6 +225,8 @@ package protocol RenderSessionSink: AnyObject {
 @MainActor
 package protocol RenderSessionResourceProviding: AnyObject {
     func resolvedResources(for model: RenderDisplayModel, configuration: RenderConfigurationSnapshot) -> ResolvedResourceSnapshot
+    /// Admits the new owners, materializes and installs, all without suspension.
+    func installSnapshot(model: RenderDisplayModel, configuration: RenderConfigurationSnapshot, token: RenderCommitToken)
 }
 
 @MainActor
@@ -263,11 +267,14 @@ package final class RenderSessionSinkRegistry {
             registry.withAuthorizedSink(for: token) { sink in
                 switch delivery {
                 case .snapshot(let model, let configuration):
-                    let resources = (sink as? any RenderSessionResourceProviding)?.resolvedResources(for: model, configuration: configuration) ?? .init(values: [:])
-                    let snapshot = RenderMaterializer(configuration: configuration).materialize(
-                        model, resources: resources
-                    )
-                    sink.replaceSnapshot(snapshot, token: token)
+                    if let provider = sink as? any RenderSessionResourceProviding {
+                        provider.installSnapshot(model: model, configuration: configuration, token: token)
+                    } else {
+                        sink.replaceSnapshot(
+                            RenderMaterializer(configuration: configuration).materialize(model, resources: .init(values: [:])),
+                            token: token
+                        )
+                    }
                 case .error(let error):
                     sink.receive(error: error)
                 }

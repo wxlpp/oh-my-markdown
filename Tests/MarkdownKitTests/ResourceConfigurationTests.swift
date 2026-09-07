@@ -43,7 +43,7 @@ struct ResourceConfigurationTests {
     @Test func optInStartsCustomLoaderAndSameIDReplacementRejectsLateFailure() async throws {
         let loader = PausedLoader()
         let shared = MarkdownConfigurationID.semantic(namespace: "host", version: 1)
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }
         var failures: [MarkdownResourceFailure] = []
         view.onResourceError = { failures.append($0) }
@@ -83,7 +83,7 @@ struct ResourceConfigurationTests {
     @Test(arguments: [false, true])
     func pendingFailureUsesTheCurrentHandlerOrHonorsRemoval(removeHandler: Bool) async throws {
         let loader = PausedLoader()
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }
         var oldCalls = 0
         var currentCalls = 0
@@ -107,7 +107,7 @@ struct ResourceConfigurationTests {
 
     @Test func disablingDuringLoadDropsLateValidBytes() async throws {
         let loader = PausedLoader()
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }
         var failures: [MarkdownResourceFailure] = []
         view.onResourceError = { failures.append($0) }
@@ -126,7 +126,7 @@ struct ResourceConfigurationTests {
 
     @Test func customPayloadCannotBypassValidationInPlatformRendering() async {
         let loader = PausedLoader()
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }
         var failures: [MarkdownResourceFailure] = []
         view.onResourceError = { failures.append($0) }
@@ -146,7 +146,7 @@ struct ResourceConfigurationTests {
             proto.respond()
         }
         defer { MarkdownImageLoaderTests.ControlledProtocol.routes.withLock { $0[url.path] = nil } }
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }
         view.remoteImages = .init(loader: DefaultHTTPSImageLoader(requestTimeout: .seconds(75), resourceTimeout: .seconds(95), protocolClasses: [MarkdownImageLoaderTests.ControlledProtocol.self]))
         view.blocks = MarkdownDocument(parsing: "![alt](\(url.absoluteString))").blocks
@@ -185,7 +185,7 @@ struct ResourceConfigurationTests {
     }
 
     @Test func defaultRenderingLeavesRemoteImagePlaceholderWithoutResourceWork() async {
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }
         view.blocks = MarkdownDocument(parsing: "![private alt](https://127.0.0.1:1/private.png?secret=never-send)").blocks
         #expect(await eventually { view.currentSnapshot != nil })

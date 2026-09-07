@@ -87,8 +87,8 @@ struct IncrementalParseDifferentialTests {
         let firstImage = PlatformImage()
         let secondImage = PlatformImage()
         var resolved: [ResourceID: ResolvedPlatformResource] = [:]
-        resolved[firstID] = .image(firstImage, owner: LegacyResourceOwner(retaining: firstImage))
-        resolved[secondID] = .image(secondImage, owner: LegacyResourceOwner(retaining: secondImage))
+        resolved[firstID] = .image(firstImage, owner: TestResourceOwner(retaining: firstImage))
+        resolved[secondID] = .image(secondImage, owner: TestResourceOwner(retaining: secondImage))
         let materialized = RenderMaterializer(configuration: MarkdownRenderConfiguration.default.snapshot(generation: 1)).materialize(model, resources: .init(values: resolved))
         #expect(materialized.attributedString.string == "\u{FFFC}\n\u{FFFC}")
         let firstAttachment = materialized.attributedString.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment

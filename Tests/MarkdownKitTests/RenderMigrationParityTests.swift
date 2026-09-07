@@ -46,10 +46,10 @@ struct RenderMigrationParityTests {
         let cgImage = try #require(context.makeImage())
         let backing = try ImmutableCGImageBacking(frames: [cgImage])
         let image = try #require(materializer.platformImage(from: backing))
-        weak var observed: LegacyResourceOwner?
+        weak var observed: TestResourceOwner?
         var snapshot: RenderSnapshot?
         do {
-            let owner = LegacyResourceOwner(retaining: image)
+            let owner = TestResourceOwner(retaining: image)
             observed = owner
             var values: [ResourceID: ResolvedPlatformResource] = [:]
             for resource in model.resources {
@@ -246,10 +246,10 @@ struct RenderMigrationParityTests {
         let photo = try image(width: 400, height: 200, scale: 2)
         let math = try image(width: 30, height: 10)
         let svg = try image(width: 120, height: 60)
-        weak var observed: LegacyResourceOwner?
+        weak var observed: TestResourceOwner?
         var snapshot: RenderSnapshot?
         do {
-            let owner = LegacyResourceOwner(retaining: NSObject())
+            let owner = TestResourceOwner(retaining: NSObject())
             observed = owner
             var values: [ResourceID: ResolvedPlatformResource] = [:]
             for resource in model.resources {

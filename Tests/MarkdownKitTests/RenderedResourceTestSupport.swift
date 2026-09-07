@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import ImageIO
 import MarkdownCore
 @testable import MarkdownPlatformView
 @testable import MarkdownRenderKit
@@ -98,4 +99,68 @@ func resourceMathKey(_ source: String = "x", configuration: MathRendererConfigur
 @MainActor
 func resourceSVGKey(_ source: String = "<svg/>", configuration: SVGRendererConfiguration) -> SVGBlockCacheKey {
     SVGBlockCacheKey(svg: source, availableWidth: 100, rasterScale: 2, configurationID: configuration.configurationID)
+}
+
+/// Test-only owner for materialization fixtures that never enter the residency ledger.
+@MainActor final class TestResourceOwner: ResourceResidencyOwner {
+    let retainedObject: AnyObject
+    private(set) var releaseCount = 0
+    init(retaining object: AnyObject) {
+        self.retainedObject = object
+    }
+
+    func release() {
+        self.releaseCount += 1
+    }
+}
+
+func encodedPNG(width: Int, height: Int) throws -> Data {
+    let context = try #require(CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    let image = try #require(context.makeImage())
+    let data = NSMutableData()
+    let destination = try #require(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, image, nil)
+    #expect(CGImageDestinationFinalize(destination))
+    return data as Data
+}
+
+@MainActor
+func decodedTestBacking(width: Int = 4, height: Int = 4) throws -> DecodedImage {
+    let context = try #require(CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    return try DecodedImage(backing: ImmutableCGImageBacking(frames: [#require(context.makeImage())]))
+}
+
+/// Promotes one real backing through the ledger so tests own a genuine lease.
+@MainActor
+func ownedTestImage(_ ledger: ImageResidencyLedger, width: Int = 4, height: Int = 4) throws -> OwnedImage {
+    let decoded = try decodedTestBacking(width: width, height: height)
+    let reservation = try #require(ledger.reserveDecodedPixelBytes(decoded.backing.accountedPixelBytes))
+    return try #require(reservation.promote(decoded))
+}
+
+/// Private residency instances. Suites run in parallel, so sharing the process
+/// budgets would let one suite's held transfers starve another's.
+@MainActor
+func isolatedImageResidency(
+    hardLimit: Int = 192 << 20, cacheLimit: Int = 128 << 20,
+    maxPixelSize: Int = ImageDecoder.maxOutputSide,
+    clock: any RenderSessionClock = ContinuousRenderSessionClock()
+) -> ImageResidencyConfiguration {
+    ImageResidencyConfiguration(
+        ledger: ImageResidencyLedger(hardLimit: hardLimit, cacheLimit: cacheLimit, clock: clock),
+        permits: ImageResourceCoordinator(), maxPixelSize: maxPixelSize
+    )
+}
+
+@MainActor
+func imageTestView(frame: CGRect, residency: ImageResidencyConfiguration = isolatedImageResidency()) -> MarkdownLabelView {
+    let view = MarkdownLabelView(frame: frame)
+    view.imageResidency = residency
+    return view
 }

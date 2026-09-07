@@ -20,10 +20,11 @@ package struct RenderMaterializer {
         self.configuration = configuration
     }
 
-    package func materialize(_ model: RenderDisplayModel, resources: ResolvedResourceSnapshot)
-        -> RenderSnapshot {
+    package func materialize(
+        _ model: RenderDisplayModel, resources: ResolvedResourceSnapshot, snapshotID: UUID = UUID()
+    ) -> RenderSnapshot {
         if model.preparedDocument != nil {
-            return self.materializePrepared(model: model, resources: resources)
+            return self.materializePrepared(model: model, resources: resources, snapshotID: snapshotID)
         }
         let result = NSMutableAttributedString(string: "")
         var owners: [any ResourceResidencyOwner] = []
@@ -62,11 +63,11 @@ package struct RenderMaterializer {
                 result.append(NSAttributedString(string: run.text, attributes: attributes))
             }
         }
-        return RenderSnapshot(attributedString: result, displayModel: model, resourceOwners: owners)
+        return RenderSnapshot(id: snapshotID, attributedString: result, displayModel: model, resourceOwners: owners)
     }
 
     /// Converts audited immutable image backing to a platform image only here.
-    package func platformImage(
+    package static func platformImage(
         from backing: ImmutableCGImageBacking, frame: Int = 0, scale: Double = 1
     ) -> PlatformImage? {
         guard backing.frames.indices.contains(frame), scale.isFinite, scale > 0 else { return nil }
@@ -79,6 +80,12 @@ package struct RenderMaterializer {
             size: NSSize(width: Double(image.width) / scale, height: Double(image.height) / scale)
         )
         #endif
+    }
+
+    package func platformImage(
+        from backing: ImmutableCGImageBacking, frame: Int = 0, scale: Double = 1
+    ) -> PlatformImage? {
+        Self.platformImage(from: backing, frame: frame, scale: scale)
     }
 
     private func font(for role: MarkdownTextRole) -> PlatformFont {
@@ -112,7 +119,7 @@ package struct RenderMaterializer {
         PlatformColor(red: token.red, green: token.green, blue: token.blue, alpha: token.alpha)
     }
 
-    private func materializePrepared(model: RenderDisplayModel, resources: ResolvedResourceSnapshot) -> RenderSnapshot {
+    private func materializePrepared(model: RenderDisplayModel, resources: ResolvedResourceSnapshot, snapshotID: UUID) -> RenderSnapshot {
         let result = NSMutableAttributedString(string: "")
         var starts: [Int] = []
         var owners: [any ResourceResidencyOwner] = []
@@ -136,7 +143,7 @@ package struct RenderMaterializer {
                 }
             }
         }
-        return RenderSnapshot(attributedString: result, displayModel: model, resourceOwners: owners, blockStarts: starts, tableOverlays: overlays)
+        return RenderSnapshot(id: snapshotID, attributedString: result, displayModel: model, resourceOwners: owners, blockStarts: starts, tableOverlays: overlays)
     }
 
     private func paragraph(_ value: PreparedParagraph) -> NSParagraphStyle {

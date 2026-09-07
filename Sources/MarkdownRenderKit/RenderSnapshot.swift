@@ -21,6 +21,8 @@ package final class RenderTableOverlay {
 
 @MainActor
 public final class RenderSnapshot {
+    /// Identity for snapshot-replacement transactions and residency diagnostics.
+    package let id: UUID
     public let attributedString: NSAttributedString
     public let displayModel: RenderDisplayModel
     package let resourceOwners: [any ResourceResidencyOwner]
@@ -28,9 +30,10 @@ public final class RenderSnapshot {
     package let tableOverlays: [Int: RenderTableOverlay]
 
     package init(
-        attributedString: NSAttributedString, displayModel: RenderDisplayModel,
+        id: UUID = UUID(), attributedString: NSAttributedString, displayModel: RenderDisplayModel,
         resourceOwners: [any ResourceResidencyOwner], blockStarts: [Int] = [], tableOverlays: [Int: RenderTableOverlay] = [:]
     ) {
+        self.id = id
         self.attributedString = NSAttributedString(attributedString: attributedString)
         self.displayModel = displayModel
         self.resourceOwners = resourceOwners

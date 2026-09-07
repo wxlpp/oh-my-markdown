@@ -4,28 +4,29 @@ import Foundation
 @MainActor
 package struct ResolvedResourceSnapshot {
     package let values: [ResourceID: ResolvedPlatformResource]
+    /// Every owner this resolution acquired, in a stable order, so a snapshot
+    /// transaction can roll back exactly what it admitted.
+    package var owners: [any ResourceResidencyOwner] {
+        self.values.keys.sorted { $0.rawValue < $1.rawValue }.compactMap { self.values[$0]?.owner }
+    }
+
     package init(values: [ResourceID: ResolvedPlatformResource]) {
         self.values = values
     }
 }
 
 @MainActor
-package protocol ResourceResidencyOwner: AnyObject {}
+package protocol ResourceResidencyOwner: AnyObject {
+    /// Idempotent. Explicit release is the normal path; every implementation also
+    /// releases from `deinit` so a dropped owner cannot strand residency cost.
+    func release()
+}
 
 @MainActor
 package protocol RenderedResourceOwning: ResourceResidencyOwner {
     var image: PlatformImage { get }
     var baselineOffset: Double { get }
     func acquirePublication() -> any RenderedResourceOwning
-}
-
-/// Temporary retention bridge. Tasks 4C/7 replace glyph/image uses with leases.
-@MainActor
-package final class LegacyResourceOwner: ResourceResidencyOwner {
-    package let retainedObject: AnyObject
-    package init(retaining object: AnyObject) {
-        self.retainedObject = object
-    }
 }
 
 /// Audited invariant: every frame is rasterized into privately allocated storage,
@@ -44,13 +45,16 @@ package struct ImmutableCGImageBacking: @unchecked Sendable {
         var total = 0
         for frame in frames {
             guard frame.width > 0, frame.height > 0 else { throw ValidationError.invalidFrame }
-            let (rowBytes, rowOverflow) = frame.width.multipliedReportingOverflow(by: 4)
+            let (rawRowBytes, rowOverflow) = frame.width.multipliedReportingOverflow(by: 4)
+            let (padded, paddingOverflow) = rawRowBytes.addingReportingOverflow(63)
+            guard !rowOverflow, !paddingOverflow else { throw ValidationError.sizeOverflow }
+            let rowBytes = padded / 64 * 64
             let (count, countOverflow) = rowBytes.multipliedReportingOverflow(by: frame.height)
             let (nextTotal, totalOverflow) = total.addingReportingOverflow(count)
             guard !rowOverflow, !countOverflow, !totalOverflow else { throw ValidationError.sizeOverflow }
             let space = CGColorSpace(name: CGColorSpace.sRGB)!
-            let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue).union(
-                .byteOrder32Big
+            let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue).union(
+                .byteOrder32Little
             )
             guard
                 let context = CGContext(
@@ -85,4 +89,11 @@ package enum ResolvedPlatformResource {
     case image(PlatformImage, owner: any ResourceResidencyOwner)
     case math(owner: any RenderedResourceOwning)
     case svg(owner: any RenderedResourceOwning)
+
+    package var owner: any ResourceResidencyOwner {
+        switch self {
+        case .image(_, let owner): owner
+        case .math(let owner), .svg(let owner): owner
+        }
+    }
 }

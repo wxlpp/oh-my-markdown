@@ -53,7 +53,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         if let sessionDriver { return sessionDriver }
         let session = MarkdownRenderSession(id: sessionID, registry: sessionRegistry, availableWidth: requestedWidth, configuration: configurationSnapshot())
         self.sessionRegistry.register(self, for: self.sessionID)
-        let driver = MarkdownRenderSessionDriver(session: session)
+        let driver = MarkdownRenderSessionDriver(session: session, residency: self.imageResidency)
         sessionDriver = driver
         return driver
     }
@@ -102,8 +102,8 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         for resource in model.resourceValues {
             switch resource {
             case .image(let id, let source, _):
-                if let image = _imageCache[source] {
-                    values[id] = .image(image, owner: LegacyResourceOwner(retaining: image))
+                if let url = URL(string: source), let lease = self.driver().resourceTaskOwner.images.publication(for: url) {
+                    values[id] = .image(lease.backing.image, owner: lease)
                 }
             case .math(let id, let latex, let display):
                 if let key = self.mathKey(latex: latex, display: display, configuration: configuration),
@@ -136,7 +136,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self.sessionDriver?.send(.dismantle)
         self.sessionRegistry.revokeAndUnregister(self.sessionID)
         self.sessionDriver = nil
-        self._imageCache.removeAll()
         self.imageRequests.removeAll()
         withExtendedLifetime(previousSnapshot) {}
     }
@@ -464,16 +463,19 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     var _deferredHeightScheduleCount = 0
     /// In-flight parse task. Streaming keeps this single-flight so large documents do not
     /// accumulate cancelled full-document parses as tokens arrive.
-    /// In-memory image cache keyed by source URL string.
-    private var _imageCache: [String: NSImage] = [:]
+    /// Test seam: private residency instances keep parallel suites from contending
+    /// for the process-wide image budgets. Assign before the first render.
+    package var imageResidency = ImageResidencyConfiguration.shared
+    /// Test seam: forces the snapshot-replacement install closure to throw.
+    package var _materializationFailureForTesting: (any Error)?
     /// Source URLs currently being fetched (prevents duplicate requests).
     package private(set) var imageRequests: [RenderImageRequest: RenderImageLoadState] = [:]
     /// Remote images remain placeholders until the host explicitly opts in.
     public var remoteImages: MarkdownRemoteImageConfiguration = .disabled {
         didSet {
             guard !self.isDismantled else { return }
-            self._imageCache.removeAll()
             self.imageRequests.removeAll()
+            self.driver().resourceTaskOwner.images.configure(self.remoteImages)
             self.driver().send(.replaceImageConfiguration(self.remoteImages))
         }
     }
@@ -579,68 +581,70 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         guard let str = string ?? contentStorage.attributedString, let token = self.currentCommitToken else { return }
         let safeRange = range.clamped(to: str.length)
         guard safeRange.length > 0 else { return }
+        let registry = self.sessionRegistry
+        let owner = self.driver().resourceTaskOwner
         str.enumerateAttribute(.markdownImageSource, in: safeRange) { value, _, _ in
-            guard let source = value as? String, self._imageCache[source] == nil else { return }
+            guard let source = value as? String else { return }
             let request = RenderImageRequest(token: token, source: source)
             guard self.imageRequests[request] == nil else { return }
-            self.imageRequests[request] = .loading
-            self.loadImage(request)
-        }
-    }
-
-    private func loadImage(_ request: RenderImageRequest) {
-        let registry = self.sessionRegistry
-        guard let url = URL(string: request.source) else {
-            registry.withAuthorizedSink(for: request.token) { sink in
-                (sink as? MarkdownLabelView)?.finishImageLoadFailure(request)
+            guard let url = URL(string: source) else {
+                self.imageRequests[request] = .failed
+                return
             }
-            return
-        }
-        guard let loader = self.remoteImages.loader else { return }
-        let imageRequest = self.remoteImages.request(for: url)
-        self.driver().resourceTaskOwner.start {
-            do {
-                let encoded = try await ValidatedImageFactory.load(loader, request: imageRequest)
-                try Task.checkCancellation()
-                registry.withAuthorizedSink(for: request.token) { sink in
-                    guard let view = sink as? MarkdownLabelView else { return }
-                    let image = NSImage(data: encoded.data)
-                    if let image { view.finishImageLoad(request, image: image) }
-                    else {
-                        view.finishImageLoadFailure(request)
-                        view.onResourceError?(MarkdownResourceFailure(category: .typeMismatch, origin: SanitizedMarkdownOrigin(url: url)))
+            self.imageRequests[request] = .loading
+            owner.images.load(source: url, isCurrent: {
+                registry.withAuthorizedSink(for: token) { _ in }
+            }, completed: { [weak owner] in
+                registry.withAuthorizedSink(for: token) { sink in
+                    (sink as? MarkdownLabelView)?.imageRequests.removeValue(forKey: request)
+                }
+                owner?.deferAction(key: "resources") {
+                    registry.withAuthorizedSink(for: token) { sink in
+                        (sink as? MarkdownLabelView)?.refreshResolvedResources()
                     }
                 }
-            } catch {
-                guard !Task.isCancelled, !(error is CancellationError),
-                      (error as? URLError)?.code != .cancelled else { return }
-                registry.withAuthorizedSink(for: request.token) { sink in
+            }, failed: { category, deferral in
+                registry.withAuthorizedSink(for: token) { sink in
                     guard let view = sink as? MarkdownLabelView else { return }
-                    view.finishImageLoadFailure(request)
-                    view.onResourceError?(MarkdownResourceFailure(category: .classify(error), origin: SanitizedMarkdownOrigin(url: url)))
+                    view.imageRequests[request] = deferral == nil ? .failed : .deferred
+                    if let category {
+                        view.onResourceError?(MarkdownResourceFailure(category: category, origin: SanitizedMarkdownOrigin(url: url)))
+                    }
                 }
-            }
+            })
         }
-    }
-
-    private func finishImageLoad(_ request: RenderImageRequest, image: NSImage) {
-        self._imageCache[request.source] = image
-        self.imageRequests.removeValue(forKey: request)
-        self.updateContent()
-    }
-
-    private func finishImageLoadFailure(_ request: RenderImageRequest) {
-        self.imageRequests[request] = .failed
     }
 
     // MARK: Rendered resources
 
     private func refreshResolvedResources() {
         guard let snapshot = self.currentSnapshot, let token = self.currentCommitToken else { return }
-        let configuration = self.configurationSnapshot()
-        let resources = self.resolvedResources(for: snapshot.displayModel, configuration: configuration)
-        let replacement = RenderMaterializer(configuration: configuration).materialize(snapshot.displayModel, resources: resources)
-        self.replaceSnapshot(replacement, token: token)
+        self.installSnapshot(model: snapshot.displayModel, configuration: self.configurationSnapshot(), token: token)
+    }
+
+    /// The new owners are admitted, the snapshot is materialized and the sink is
+    /// installed inside one synchronous MainActor turn. The outgoing snapshot's
+    /// own leases are never touched here: `replaceSnapshot` clears TextKit and
+    /// installs the replacement first, so the old backing stays charged until the
+    /// old snapshot itself is released.
+    package func installSnapshot(model: RenderDisplayModel, configuration: RenderConfigurationSnapshot, token: RenderCommitToken) {
+        guard !self.isDismantled else { return }
+        let snapshotID = UUID()
+        let resources = self.resolvedResources(for: model, configuration: configuration)
+        let transaction = self.driver().resourceTaskOwner.images.ledger.prepareSnapshotReplacement(
+            session: self.sessionID, oldSnapshotID: self.currentSnapshot?.id, newSnapshotID: snapshotID,
+            owners: resources.owners
+        )
+        do {
+            try transaction.commit { _ in
+                if let failure = self._materializationFailureForTesting { throw failure }
+                let snapshot = RenderMaterializer(configuration: configuration)
+                    .materialize(model, resources: resources, snapshotID: snapshotID)
+                self.replaceSnapshot(snapshot, token: token)
+            }
+        } catch {
+            self.lastRenderError = .preparationFailed
+        }
     }
 
     private func mathKey(latex: String, display: Bool, configuration: RenderConfigurationSnapshot) -> MathCacheKey? {
