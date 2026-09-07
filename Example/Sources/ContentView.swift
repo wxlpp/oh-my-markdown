@@ -561,9 +561,10 @@ private let streamTokens: [String] = {
       - `BlockNode` — 统一的中间表示，与平台无关
         - `.paragraph`, `.heading`, `.codeBlock`, `.table`…
     - **渲染层**
-      - `RenderDisplayModel` — 不可变、Sendable
-        - 接收 `availableWidth`，内联计算 tab stops
-        - 溢出表格：文字置透明，写入 `.markdownTableNaturalWidth`
+      - `RenderPreparer` → `RenderDisplayModel` — 不可变、Sendable
+        - off-main 准备渲染 recipes、源码范围、资源与表格意图
+      - `RenderMaterializer`（内部）— MainActor
+        - 按可用宽度完成 TextKit 测量、tab stops 与 attachments
     - **显示层**
       - `MarkdownLabelView` — 平台视图（UIView / NSView）
         - TextKit 2 直接驱动，无中间层
