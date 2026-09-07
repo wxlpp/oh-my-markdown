@@ -110,6 +110,7 @@ package actor MarkdownRenderSession: ParseResultSink {
             self.suppliedDocument = nil
             self.placeholderMode = .streaming
         case .replaceConfiguration(let configuration): self.configuration = configuration
+        case .replaceImageConfiguration: break
         case .replaceWidth(let width): self.availableWidth = max(1, width)
         case .dismantle:
             await self.dismantle()
@@ -454,7 +455,7 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
             self.sourceRevision += 1
             self.configurationGeneration += 1
         case .append: self.sourceRevision += 1
-        case .replaceConfiguration, .replaceWidth: self.configurationGeneration += 1
+        case .replaceConfiguration, .replaceImageConfiguration, .replaceWidth: self.configurationGeneration += 1
         case .dismantle:
             self.dismantled = true
             self.resourceTaskOwner.cancelAll()

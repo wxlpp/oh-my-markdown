@@ -30,13 +30,17 @@ public struct MarkdownText: View {
             source: self.source,
             style: self.style,
             mathRenderer: self.mathRenderer,
-            svgBlockRenderer: self.svgBlockRenderer
+            svgBlockRenderer: self.svgBlockRenderer,
+            remoteImages: self.remoteImages,
+            resourceErrorHandler: self.resourceErrorHandler
         )
     }
 
     @Environment(\.markdownStyle) private var style
     @Environment(\.markdownMathRenderer) private var mathRenderer
     @Environment(\.markdownSVGBlockRenderer) private var svgBlockRenderer
+    @Environment(\.markdownRemoteImageConfiguration) private var remoteImages
+    @Environment(\.markdownResourceErrorHandler) private var resourceErrorHandler
 
     private let source: String
 }
@@ -55,12 +59,15 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
         var lastStyle: RenderStyle?
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
+        var lastImageReplacementID: UUID?
     }
 
     let source: String
     let style: RenderStyle
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
+    let remoteImages: MarkdownRemoteImageConfiguration
+    let resourceErrorHandler: MarkdownResourceErrorHandler?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -76,6 +83,11 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
+        uiView.onResourceError = self.resourceErrorHandler
+        if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
+            uiView.remoteImages = self.remoteImages
+            context.coordinator.lastImageReplacementID = self.remoteImages.replacementID
+        }
         if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
             uiView.renderStyle = self.style
             context.coordinator.lastStyle = self.style
@@ -124,12 +136,15 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
         var lastStyle: RenderStyle?
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
+        var lastImageReplacementID: UUID?
     }
 
     let source: String
     let style: RenderStyle
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
+    let remoteImages: MarkdownRemoteImageConfiguration
+    let resourceErrorHandler: MarkdownResourceErrorHandler?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -140,6 +155,11 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
+        nsView.onResourceError = self.resourceErrorHandler
+        if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
+            nsView.remoteImages = self.remoteImages
+            context.coordinator.lastImageReplacementID = self.remoteImages.replacementID
+        }
         if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
             nsView.renderStyle = self.style
             context.coordinator.lastStyle = self.style

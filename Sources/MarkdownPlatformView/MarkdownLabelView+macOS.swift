@@ -468,10 +468,17 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     private var _imageCache: [String: NSImage] = [:]
     /// Source URLs currently being fetched (prevents duplicate requests).
     package private(set) var imageRequests: [RenderImageRequest: RenderImageLoadState] = [:]
-    package var imageLoader: RenderImageLoader = { url in
-        let (data, _) = try await URLSession.shared.data(from: url)
-        return data
+    /// Remote images remain placeholders until the host explicitly opts in.
+    public var remoteImages: MarkdownRemoteImageConfiguration = .disabled {
+        didSet {
+            guard !self.isDismantled else { return }
+            self._imageCache.removeAll()
+            self.imageRequests.removeAll()
+            self.driver().send(.replaceImageConfiguration(self.remoteImages))
+        }
     }
+
+    public var onResourceError: MarkdownResourceErrorHandler?
 
     /// Install a stable wrapper to preserve its completed-cache identity.
     public var mathRenderer: MathRendererConfiguration? {
@@ -568,6 +575,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     // MARK: Image loading
 
     private func triggerImageLoads(in range: NSRange, string: NSAttributedString? = nil) {
+        guard self.remoteImages.loader != nil else { return }
         guard let str = string ?? contentStorage.attributedString, let token = self.currentCommitToken else { return }
         let safeRange = range.clamped(to: str.length)
         guard safeRange.length > 0 else { return }
@@ -588,22 +596,28 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             }
             return
         }
-        let loader = self.imageLoader
+        guard let loader = self.remoteImages.loader else { return }
+        let errorHandler = self.onResourceError
+        let imageRequest = self.remoteImages.request(for: url)
         self.driver().resourceTaskOwner.start {
             do {
-                let data = try await loader(url)
+                let encoded = try await ValidatedImageFactory.load(loader, request: imageRequest)
                 try Task.checkCancellation()
-                let image = NSImage(data: data)
                 registry.withAuthorizedSink(for: request.token) { sink in
                     guard let view = sink as? MarkdownLabelView else { return }
+                    let image = NSImage(data: encoded.data)
                     if let image { view.finishImageLoad(request, image: image) }
-                    else { view.finishImageLoadFailure(request) }
+                    else {
+                        view.finishImageLoadFailure(request)
+                        errorHandler?(MarkdownResourceFailure(category: .typeMismatch, origin: SanitizedMarkdownOrigin(url: url)))
+                    }
                 }
             } catch {
                 guard !Task.isCancelled, !(error is CancellationError),
                       (error as? URLError)?.code != .cancelled else { return }
                 registry.withAuthorizedSink(for: request.token) { sink in
                     (sink as? MarkdownLabelView)?.finishImageLoadFailure(request)
+                    errorHandler?(MarkdownResourceFailure(category: .classify(error), origin: SanitizedMarkdownOrigin(url: url)))
                 }
             }
         }

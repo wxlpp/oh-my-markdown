@@ -19,6 +19,7 @@ import AppKit
         case .setSource(let source, _): self.events.append("set:\(source)")
         case .append(let source): self.events.append("append:\(source)")
         case .replaceConfiguration: self.events.append("configuration")
+        case .replaceImageConfiguration: self.events.append("images")
         case .replaceWidth(let width): self.events.append("width:\(Int(width))")
         case .setDocument: self.events.append("document")
         case .dismantle: self.events.append("dismantle")
@@ -28,12 +29,16 @@ import AppKit
 
 @MainActor
 struct PlatformSessionWiringTests {
-    private actor PausedImageLoader {
+    private actor PausedImageLoader: MarkdownImageLoading {
         enum Failure: Error { case failed }
         private var continuations: [Int: CheckedContinuation<Data, any Error>] = [:]
         private(set) var sources: [URL] = []
         private(set) var completed = 0
         private(set) var cancelledCompletions = 0
+        func load(_ request: MarkdownImageRequest) async throws -> MarkdownImagePayload {
+            try await MarkdownImagePayload(data: self.load(request.url), declaredMIMEType: "image/png")
+        }
+
         func load(_ url: URL) async throws -> Data {
             let index = self.sources.count
             self.sources.append(url)
@@ -63,7 +68,7 @@ struct PlatformSessionWiringTests {
     func currentTokenCanLoadSameImageWhileOldTokenIsPending(oldOutcome: String) async throws {
         let loader = PausedImageLoader()
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
-        view.imageLoader = { try await loader.load($0) }
+        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("A ![alt](https://example.com/image.png)")
         #expect(await eventually { await loader.sources.count == 1 })
         let oldToken = try #require(view.currentCommitToken)
@@ -100,7 +105,7 @@ struct PlatformSessionWiringTests {
     func teardownClearsImageBookkeepingAndLateCompletionCannotMutate(oldOutcome: String) async throws {
         let loader = PausedImageLoader()
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
-        view.imageLoader = { try await loader.load($0) }
+        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("![alt](https://example.com/image.png)")
         #expect(await eventually { await loader.sources.count == 1 })
         #expect(view.imageRequests.count == 1)
@@ -145,7 +150,7 @@ struct PlatformSessionWiringTests {
     @Test func overflowImageResolutionPublishesOwnedCellAttachment() async throws {
         let loader = PausedImageLoader()
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
-        view.imageLoader = { try await loader.load($0) }
+        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("| Photo | Text |\n|---|---|\n| ![alt](https://example.com/image.png) | value |")
         #expect(await eventually { await loader.sources.count == 1 })
         #expect(view.currentSnapshot?.attributedString.string == "\u{00A0}")
@@ -163,7 +168,7 @@ struct PlatformSessionWiringTests {
     @Test func currentImageFailureIsRecordedWithoutPublishingOrRetryLoop() async throws {
         let loader = PausedImageLoader()
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
-        view.imageLoader = { try await loader.load($0) }
+        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("![alt](https://example.com/image.png)")
         #expect(await eventually { await loader.sources.count == 1 })
         let token = try #require(view.currentCommitToken)

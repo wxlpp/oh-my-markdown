@@ -52,8 +52,6 @@ package enum RenderImageLoadState {
     case loading, failed
 }
 
-package typealias RenderImageLoader = @Sendable (URL) async throws -> Data
-
 package struct ParseSubmission: Hashable {
     package let id: UUID
     package let sessionToken: ParseSessionToken
@@ -194,6 +192,7 @@ package enum RenderSessionMutation {
     case setDocument(MarkdownDocument, RenderConfigurationSnapshot)
     case append(String)
     case replaceConfiguration(RenderConfigurationSnapshot)
+    case replaceImageConfiguration(MarkdownRemoteImageConfiguration)
     case replaceWidth(Double)
     case dismantle
 }
