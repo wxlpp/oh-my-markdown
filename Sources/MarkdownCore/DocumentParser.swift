@@ -331,7 +331,9 @@ public struct ParsedBlockNode: Sendable, Equatable {
     package var lineage: UInt64 {
         let role: UInt64 = switch self.block {
         case .paragraph: 1
-        case .heading(let level, _): 2 + UInt64(level)
+        // Public blocks accept any Int; match the renderer's heading role clamp
+        // before unsigned conversion or arithmetic, including Int.min/Int.max.
+        case .heading(let level, _): 2 + UInt64(min(max(level, 1), 6))
         case .codeBlock: 10
         case .blockquote: 11
         case .bulletList: 12

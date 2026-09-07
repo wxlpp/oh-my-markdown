@@ -11,6 +11,25 @@ import AppKit
 
 @Suite("Incremental parsing differential")
 struct IncrementalParseDifferentialTests {
+    @Test("Public heading levels use renderer-normalized lineage across the entire Int domain", arguments: [
+        (-1, 1), (Int.min, 1), (0, 1), (1, 1), (2, 2), (6, 6), (7, 6), (Int.max, 6),
+    ])
+    @MainActor func publicHeadingLevelLineage(level: Int, normalized: Int) throws {
+        let document = MarkdownDocument(parsedBlocks: [ParsedBlockNode(block: .heading(level: level, content: [.text("Heading")]))])
+        let expected = MarkdownDocument(parsedBlocks: [ParsedBlockNode(block: .heading(level: normalized, content: [.text("Heading")]))])
+        let configuration = MarkdownRenderConfiguration.default.snapshot(generation: 1)
+        let preparer = RenderPreparer(configuration: configuration)
+        let model = try preparer.prepare(RenderInput(document: document, source: nil, availableWidth: 320, configuration: configuration, placeholderMode: .streaming))
+        let expectedModel = try preparer.prepare(RenderInput(document: expected, source: nil, availableWidth: 320, configuration: configuration, placeholderMode: .streaming))
+        #expect(model.blocks.map(\.lineage) == expectedModel.blocks.map(\.lineage))
+        let materializer = RenderMaterializer(configuration: configuration)
+        let snapshot = materializer.materialize(model, resources: .init(values: [:]))
+        let expectedSnapshot = materializer.materialize(expectedModel, resources: .init(values: [:]))
+        #expect(snapshot.attributedString.string == "Heading")
+        #expect(snapshot.attributedString.isEqual(to: expectedSnapshot.attributedString))
+        #expect(document.blocks == [.heading(level: level, content: [.text("Heading")])])
+    }
+
     @Test("Public signed source ranges survive lineage and rendering without narrowing traps")
     @MainActor func signedSourceRangeLineage() throws {
         let nodes = [-1, Int.min, 0].map { lower in
