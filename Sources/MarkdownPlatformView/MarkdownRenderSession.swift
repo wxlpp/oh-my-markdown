@@ -440,7 +440,11 @@ package final class RenderSessionResourceTaskOwner {
 @MainActor
 package final class MarkdownRenderSessionDriver: RenderSessionDriving {
     package let resourceTaskOwner: RenderSessionResourceTaskOwner
-    package private(set) var linkConfiguration = MarkdownLinkConfiguration.webOnly()
+    package private(set) var linkConfiguration = MarkdownLinkConfiguration.webOnly(handler: PlatformMarkdownLinkHandler.shared)
+    /// Bumped by every install, identical identities included. The render
+    /// generation cannot serve here: it also moves on width and style changes,
+    /// which would silently void a tap during a rotation or a window resize.
+    package private(set) var linkConfigurationRevision: UInt64 = 0
     private let session: MarkdownRenderSession
     private let continuation: AsyncStream<RenderSessionEvent>.Continuation
     private let pump: Task<Void, Never>
@@ -496,10 +500,17 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
         if self.dismantled { self.continuation.finish() }
     }
 
+    /// The live configuration always advances. Identity only decides whether this
+    /// is a *replacement* worth a generation bump — deciding propagation on it
+    /// would leave a superseded policy in force, because tightening a stateful
+    /// policy keeps the same policy type and therefore the same identities.
     package func replaceLinkConfiguration(_ configuration: MarkdownLinkConfiguration) {
         guard !self.dismantled else { return }
+        let replaced = self.linkConfiguration.policyID != configuration.policyID
+            || self.linkConfiguration.handlerID != configuration.handlerID
         self.linkConfiguration = configuration
-        self.send(.replaceLinkConfiguration)
+        self.linkConfigurationRevision &+= 1
+        if replaced { self.send(.replaceLinkConfiguration) }
     }
 
     /// The decision runs off the main actor, so the configuration can be replaced
@@ -512,18 +523,17 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
     package func activateLink(_ url: URL, sourceRange: MarkdownSourceRange?) {
         guard !self.dismantled else { return }
         let configuration = self.linkConfiguration
+        let revision = self.linkConfigurationRevision
         let request = MarkdownLinkRequest(
             url: url, sourceRange: sourceRange, configurationGeneration: self.configurationGeneration
         )
         Task { [weak self] in
             let disposition = await MarkdownLinkEvaluation.disposition(of: configuration.policy, for: request)
-            // Identities, not instance identity: a host that installs the same
-            // semantic IDs is saying "this is the same configuration", and an
-            // in-flight decision under those IDs stays valid.
+            // The revision, not the render generation: any install supersedes a
+            // decision already in flight, including one that reuses the same
+            // identities, while a width or style change leaves the tap alone.
             guard let self, !self.dismantled,
-                  self.linkConfiguration.policyID == configuration.policyID,
-                  self.linkConfiguration.handlerID == configuration.handlerID,
-                  self.configurationGeneration == request.configurationGeneration,
+                  self.linkConfigurationRevision == revision,
                   case .allow(let allowed) = disposition
             else { return }
             configuration.handler.open(allowed)

@@ -134,7 +134,7 @@ public struct MarkdownLinkConfiguration {
     /// The built-in policy keeps its deterministic identity; the handler stays
     /// uniquely identified unless the caller opts into semantic sharing.
     public static func webOnly(
-        handler: any MarkdownLinkHandler = PlatformMarkdownLinkHandler(),
+        handler: any MarkdownLinkHandler = PlatformMarkdownLinkHandler.shared,
         handlerID: MarkdownConfigurationID = .uniqueInstance()
     ) -> Self {
         Self(

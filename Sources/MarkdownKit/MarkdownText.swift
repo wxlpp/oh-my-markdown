@@ -62,7 +62,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
         var lastImageReplacementID: UUID?
-        var lastLinkIdentity: Pair<MarkdownConfigurationID, MarkdownConfigurationID>?
+        var lastLinkIdentity: LinkIdentity?
     }
 
     let source: String
@@ -88,7 +88,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
         uiView.onResourceError = self.resourceErrorHandler
-        let linkIdentity = self.linkConfiguration.map { Pair($0.policyID, $0.handlerID) }
+        let linkIdentity = self.linkConfiguration.map { LinkIdentity(policyID: $0.policyID, handlerID: $0.handlerID) }
         if let link = self.linkConfiguration, context.coordinator.lastLinkIdentity != linkIdentity {
             uiView.linkConfiguration = link
             context.coordinator.lastLinkIdentity = linkIdentity
@@ -146,7 +146,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
         var lastImageReplacementID: UUID?
-        var lastLinkIdentity: Pair<MarkdownConfigurationID, MarkdownConfigurationID>?
+        var lastLinkIdentity: LinkIdentity?
     }
 
     let source: String
@@ -167,7 +167,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
         nsView.onResourceError = self.resourceErrorHandler
-        let linkIdentity = self.linkConfiguration.map { Pair($0.policyID, $0.handlerID) }
+        let linkIdentity = self.linkConfiguration.map { LinkIdentity(policyID: $0.policyID, handlerID: $0.handlerID) }
         if let link = self.linkConfiguration, context.coordinator.lastLinkIdentity != linkIdentity {
             nsView.linkConfiguration = link
             context.coordinator.lastLinkIdentity = linkIdentity

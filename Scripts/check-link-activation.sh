@@ -14,18 +14,21 @@ handler="MarkdownPlatformView/MarkdownLinkPolicy.swift"
 # The Markdown *editor* is a genuine text-view subclass showing raw source, not
 # rendered links, so the text-view names are inventoried there rather than banned.
 editor="MarkdownPlatformView/MarkdownEditorTextView.swift"
-for required in "$handler" "$editor"; do
+# `Link` collides with swift-markdown's `Markup.Link` in exactly one file. That
+# file is inventoried, so the name can be matched unconditionally everywhere
+# else: anchoring on `import SwiftUI` instead would break on `internal import`,
+# `public import` and attributed forms, which this package already uses.
+markup="MarkdownCore/DocumentParser.swift"
+for required in "$handler" "$editor" "$markup"; do
     if [[ ! -f "$source_root/$required" ]]; then
         echo "FAIL: an inventoried file is missing: $source_root/$required" >&2
         exit 1
     fi
 done
 
-openers='\b(?:UIApplication|NSWorkspace|LSApplicationWorkspace|LSOpen\w*|SFSafariViewController|ASWebAuthenticationSession|WKWebView|OpenURLAction|openURL)\b'
+openers='\b(?:UIApplication|NSWorkspace|LSApplicationWorkspace|LSOpen\w*|SFSafariViewController|ASWebAuthenticationSession|WKWebView|UIWindowScene|UIScene|OpenURLAction|openURL)\b'
 text_views='\b(?:UITextView|NSTextView)\b'
-# `Link` collides with swift-markdown's `Markup.Link`, so it counts only in a
-# file that imports SwiftUI. Scoped rather than dropped.
-swiftui_openers='\bLink\b'
+link_view='\bLink\b'
 
 count=0
 while IFS= read -r -d '' file; do
@@ -33,14 +36,16 @@ while IFS= read -r -d '' file; do
     relative="${file#"$source_root"/}"
     [[ "$relative" == "$handler" ]] && continue
 
-    patterns=(-e "$openers" -e "typealias\s+\w+\s*=\s*(?:\w+\s*\.\s*)?$openers")
+    # No separate alias rule is needed: an alias names its right-hand side, so the
+    # opener pattern already matches the declaration itself.
+    patterns=(-e "$openers")
     [[ "$relative" == "$editor" ]] || patterns+=(-e "$text_views")
-    if rg --quiet '^[[:space:]]*import[[:space:]]+SwiftUI\b' "$file" 2>/dev/null; then
-        patterns+=(-e "$swiftui_openers")
-    fi
+    [[ "$relative" == "$markup" ]] || patterns+=(-e "$link_view")
 
     # Ordered blanking, strings before comments, newlines preserved: prose may
-    # name these types, code may not, and line numbers stay real.
+    # name these types, code may not, and line numbers stay real. The limit of
+    # that is real and worth knowing: code inside a string interpolation, or a
+    # name reached through NSClassFromString, is invisible here.
     blanked="$(perl -0777 -e '
         open(my $handle, "<", $ARGV[0]) or exit 1;
         my $text = do { local $/; <$handle> };

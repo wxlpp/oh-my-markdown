@@ -39,13 +39,9 @@ extension View {
     }
 }
 
-/// Two identities compared as one value, so the update guard cannot drift by
+/// Both identities compared as one value, so the update guard cannot drift by
 /// checking only half of what identifies a link configuration.
-struct Pair<First: Equatable, Second: Equatable>: Equatable {
-    let first: First
-    let second: Second
-    init(_ first: First, _ second: Second) {
-        self.first = first
-        self.second = second
-    }
+struct LinkIdentity: Equatable {
+    let policyID: MarkdownConfigurationID
+    let handlerID: MarkdownConfigurationID
 }
