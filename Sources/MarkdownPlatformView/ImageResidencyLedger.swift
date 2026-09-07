@@ -18,8 +18,8 @@ package struct ImageCacheKey: Hashable {
 /// Pre-decode identity. Production always builds it with the coordinator's
 /// configured extent, so it is the *requested* extent, never the achieved one.
 /// A downsized result is kept out of the process cache by the explicit
-/// `decodedPixelSize == maxPixelSize` guard in `ImageLoadCoordinator`, not by this
-/// key — do not delete that guard on the strength of this type's name.
+/// `decodedPixelSize == self.maxPixelSize` guard in `ImageLoadCoordinator.load`,
+/// not by this key — do not delete that guard on the strength of this type's name.
 package struct ImageSourceKey: Hashable {
     package let source: URL
     package let configurationID: MarkdownConfigurationID
@@ -499,7 +499,7 @@ package struct ImageSourceKey: Hashable {
     package enum Deferral: Equatable { case residency, admission }
 
     private enum Outcome {
-        case owned(OwnedImage, ImageCacheKey, requestedPixelSize: Int)
+        case owned(OwnedImage, ImageCacheKey, decodedPixelSize: Int)
         /// Residency or admission pressure: an accessible placeholder, no callback.
         case deferred(Deferral)
         /// `cacheable` is false for connectivity and timeout failures, which are
@@ -570,10 +570,10 @@ package struct ImageSourceKey: Hashable {
         self.resolved.removeAll()
     }
 
-    private func sourceKey(_ source: URL, requestedPixelSize: Int? = nil) -> ImageSourceKey {
+    private func sourceKey(_ source: URL) -> ImageSourceKey {
         ImageSourceKey(
             source: source, configurationID: self.configuration.configurationID,
-            requestedPixelSize: requestedPixelSize ?? self.maxPixelSize
+            requestedPixelSize: self.maxPixelSize
         )
     }
 
@@ -642,12 +642,12 @@ package struct ImageSourceKey: Hashable {
                 return
             }
             switch outcome {
-            case .owned(let owned, let cacheKey, let requestedPixelSize):
+            case .owned(let owned, let cacheKey, let decodedPixelSize):
                 // A downsized decode stays session-local: publishing it to the
                 // process cache would serve a degraded image to a later
                 // full-extent requester. The decoder reports the extent it
                 // actually used, because it can halve again on its own.
-                if requestedPixelSize == self.maxPixelSize {
+                if decodedPixelSize == self.maxPixelSize {
                     self.ledger.insert(owned, for: cacheKey, indexedBy: key)
                 }
                 self.resolved.removeValue(forKey: key)?.release()
@@ -752,7 +752,7 @@ package struct ImageSourceKey: Hashable {
         return .owned(owned, ImageCacheKey(
             source: request.url, pixelWidth: frame.width, pixelHeight: frame.height,
             configurationID: key.configurationID
-        ), requestedPixelSize: decoded.decodedPixelSize)
+        ), decodedPixelSize: decoded.decodedPixelSize)
     }
 
     isolated deinit {

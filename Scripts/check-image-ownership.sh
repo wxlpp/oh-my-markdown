@@ -32,7 +32,9 @@ CGImageSourceCreateImage;MarkdownRenderKit/RenderedImage.swift
 CGImageSourceCreateWith;MarkdownPlatformView/ImageDecoder.swift,MarkdownPlatformView/ValidatedImageFactory.swift,MarkdownRenderKit/RenderedImage.swift
 CGImageSourceCreateIncremental;MarkdownPlatformView/ValidatedImageFactory.swift
 CGDataProvider;MarkdownRenderKit/ResolvedResource.swift
-CGContext;MarkdownRenderKit/ResolvedResource.swift,MarkdownRenderKit/RenderedImage.swift,MarkdownMath/SVGRasterizer.swift,MarkdownPlatformView/MarkdownLabelDecorations.swift
+CGContext;MarkdownRenderKit/ResolvedResource.swift,MarkdownMath/SVGRasterizer.swift,MarkdownPlatformView/MarkdownLabelDecorations.swift
+CGBitmapContext;
+NSGraphicsContext;MarkdownPlatformView/MarkdownLabelView+macOS.swift,MarkdownPlatformView/TableScrollView.swift
 CGAnimateImageData;
 UIImageReader;
 NSImageRep;
@@ -122,22 +124,27 @@ while IFS= read -r -d '' file; do
                 : $alias =~ /\A(?:UIImage|NSImage|PlatformImage)\z/;
             $fail->($line->(), "gives `$target` a second name `$alias`");
         }
-        # Residency owners are an inventory. Scanned twice: once raw, once with
-        # comments blanked, because a brace inside a comment can end an inheritance
-        # clause early while a string literal holding comment markers can make the
-        # blanking swallow a real declaration. Neither pass alone is sound; the two
-        # together catch both. Blanking preserves newlines so lines stay accurate.
-        my $blanked = $text;
-        $blanked =~ s{/\*(.*?)\*/}{ my $c = $1; $c =~ tr/\n//cd; $c }gse;
-        $blanked =~ s{//[^\n]*}{}g;
-        for my $pass ($text, $blanked) {
-            while ($pass =~ /\b(?:class|struct|enum|actor|protocol|extension)\s+(\w+)\s*(?:<[^>]*>)?\s*:[^{]*?\b(?:ResourceResidencyOwner|RenderedResourceOwning)\b/gs) {
-                next if $owners{$1};
-                my $upto = substr($pass, 0, $-[0]);
-                my $at = 1 + ($upto =~ tr/\n//);
-                print STDERR "  $relative:$at: declares `$1` as a residency owner; the inventory is: " . join(", ", sort keys %owners) . "\n";
-                exit 1;
-            }
+        # Residency owners are an inventory. Strings and comments are blanked in one
+        # ordered pass so neither can impersonate the other: a string literal cannot
+        # open a comment that swallows a real declaration, and a comment can neither
+        # end an inheritance clause with a brace nor fake one with prose. Newlines
+        # survive the blanking, so reported lines are the real ones.
+        my $scan = $text;
+        $scan =~ s{
+            ( """ .*? """ | \#+" .*? "\#+ | " (?: \\. | [^"\\\n] )* " )
+          | ( /\* .*? \*/ )
+          | ( // [^\n]* )
+        }{
+            my $matched = defined $1 ? $1 : (defined $2 ? $2 : $3);
+            my $newlines = ($matched =~ tr/\n//);
+            " " . ("\n" x $newlines)
+        }gsex;
+        while ($scan =~ /\b(?:class|struct|enum|actor|protocol|extension)\s+(\w+)\s*(?:<[^>]*>)?\s*:[^{]*?\b(?:ResourceResidencyOwner|RenderedResourceOwning)\b/gs) {
+            next if $owners{$1};
+            my $upto = substr($scan, 0, $-[0]);
+            my $at = 1 + ($upto =~ tr/\n//);
+            print STDERR "  $relative:$at: declares `$1` as a residency owner; the inventory is: " . join(", ", sort keys %owners) . "\n";
+            exit 1;
         }
         exit 0;
     ' "$file"; then
