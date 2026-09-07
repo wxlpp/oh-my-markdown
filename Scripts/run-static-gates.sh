@@ -14,9 +14,11 @@ swiftformat_bin="${SWIFTFORMAT_BIN:-swiftformat}"
 mkdir -p "$artifact_dir"
 cd "$repo_root"
 
-"$swiftformat_bin" --lint . 2>&1 | tee "$artifact_dir/swiftformat.log"
 Scripts/check-platform-floors.sh 2>&1 | tee "$artifact_dir/platform-floors.log"
 Scripts/check-image-ownership.sh 2>&1 | tee "$artifact_dir/image-ownership.log"
 "$swift_bin" test 2>&1 | tee "$artifact_dir/swift-test.log"
 "$swift_bin" build -c release -Xswiftc -warnings-as-errors 2>&1 \
     | tee "$artifact_dir/swift-release.log"
+# Last, because `set -e` aborts here: the repository still carries one known
+# formatter debt file, so every other gate must have run before this point.
+"$swiftformat_bin" --lint . 2>&1 | tee "$artifact_dir/swiftformat.log"

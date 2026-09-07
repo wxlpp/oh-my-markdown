@@ -209,6 +209,9 @@ struct ImageResidencyLedgerTests {
         #expect(ledger.hardLimit == 192 << 20)
         #expect(ledger.cacheLimit == 128 << 20)
         #expect(ImageResidencyLedger.shared.hardLimit == 192 << 20)
+        // The shared instance is the only one wired to the process pressure signal.
+        #expect(ImageResidencyLedger.shared.observesMemoryPressure)
+        #expect(!ledger.observesMemoryPressure)
         #expect(ImageResidencyLedger.shared.cacheLimit == 128 << 20)
         // Three maximum-size images exactly fill the hard limit; the next byte is refused.
         var reservations: [DecodedPixelReservation] = []

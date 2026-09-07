@@ -170,14 +170,16 @@ package struct ImageSourceKey: Hashable {
         self.owners = owners
     }
 
-    /// `install` must retain the owners it receives; it runs without suspension so
-    /// no other MainActor work can observe a half-installed snapshot.
-    /// `install` must retain the owners it receives before it can fail; anything
-    /// it throws after that point keeps them, because the new snapshot now owns them.
+    /// `install` receives the new owners and must call `handOver` with the object
+    /// that now retains them; only then does a later throw keep them alive. Handing
+    /// over anything else is a programmer error, not a silent rollback suppression.
     package func commit(_ install: (([any ResourceResidencyOwner]) -> Void, [any ResourceResidencyOwner]) throws -> Void) rethrows {
+        let expected = Set(self.owners.map(ObjectIdentifier.init))
         var handedOver = false
         do {
-            try install({ _ in handedOver = true }, self.owners)
+            try install({ retained in
+                handedOver = expected.isSubset(of: Set(retained.map(ObjectIdentifier.init)))
+            }, self.owners)
             self.owners.removeAll()
         } catch {
             if handedOver { self.owners.removeAll() } else { self.cancel() }
@@ -367,11 +369,15 @@ package struct ImageSourceKey: Hashable {
 
     /// Subscribes the process signal to cache-owner release. Only the shared
     /// instance does this; injected test ledgers stay inert and deterministic.
+    package var observesMemoryPressure: Bool {
+        self.pressureSource != nil
+    }
+
     package func observeMemoryPressure() {
         guard self.pressureSource == nil else { return }
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
         source.setEventHandler { [weak self] in
-            MainActor.assumeIsolated { self?.handleMemoryPressure() }
+            Task { @MainActor in self?.handleMemoryPressure() }
         }
         source.resume()
         self.pressureSource = source
@@ -505,8 +511,9 @@ package struct ImageSourceKey: Hashable {
     private var resolved: [ImageSourceKey: ImageOwnerLease] = [:]
     private var epoch: UInt64 = 0
     package private(set) var configuration: MarkdownRemoteImageConfiguration = .disabled
-    /// Counts finished resolutions, including results a replaced generation
-    /// discards. Tests wait on this instead of counting actor turns.
+    /// Counts every finished resolution, whatever its outcome — published,
+    /// deferred, failed, cancelled, or discarded by a replaced generation. Tests
+    /// wait on this instead of counting actor turns; it cannot say which happened.
     package private(set) var settledResolutionCount = 0
     package var taskCount: Int {
         self.tasks.count
@@ -561,6 +568,16 @@ package struct ImageSourceKey: Hashable {
             source: source, configurationID: self.configuration.configurationID,
             requestedPixelSize: requestedPixelSize ?? self.maxPixelSize
         )
+    }
+
+    /// Releases resolutions the installed model no longer references, so a long
+    /// streamed document cannot pin residency behind images it stopped showing.
+    package func retainOnly(_ sources: Set<URL>) {
+        let keys = Set(sources.map { self.sourceKey($0) })
+        for (key, lease) in self.resolved where !keys.contains(key) {
+            lease.release()
+            self.resolved[key] = nil
+        }
     }
 
     /// Hands out an independent publication owner. The session keeps its own
@@ -619,10 +636,12 @@ package struct ImageSourceKey: Hashable {
             }
             switch outcome {
             case .owned(let owned, let cacheKey, let requestedPixelSize):
-                self.ledger.insert(
-                    owned, for: cacheKey,
-                    indexedBy: self.sourceKey(cacheKey.source, requestedPixelSize: requestedPixelSize)
-                )
+                // A downsized decode stays session-local: publishing it to the
+                // process cache under its own smaller extent would hold a cache
+                // lease no lookup can ever reach.
+                if requestedPixelSize == self.maxPixelSize {
+                    self.ledger.insert(owned, for: cacheKey, indexedBy: key)
+                }
                 self.resolved.removeValue(forKey: key)?.release()
                 self.resolved[key] = owned.inFlightOwner
                 completed()

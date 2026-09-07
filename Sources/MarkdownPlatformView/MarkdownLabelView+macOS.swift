@@ -36,8 +36,8 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     private let configurationID = MarkdownConfigurationID.uniqueInstance()
     package private(set) var sessionDriver: (any RenderSessionDriving)?
     /// Session-owned image admission, exposed for residency assertions.
-    package var imageCoordinator: ImageLoadCoordinator {
-        self.driver().resourceTaskOwner.images
+    package var imageCoordinator: ImageLoadCoordinator? {
+        self.sessionDriver?.resourceTaskOwner.images
     }
 
     private var isDismantled = false
@@ -108,6 +108,11 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     package func resolvedResources(for model: RenderDisplayModel, configuration: RenderConfigurationSnapshot) -> ResolvedResourceSnapshot {
         guard !self.isDismantled else { return ResolvedResourceSnapshot(values: [:]) }
         var values: [ResourceID: ResolvedPlatformResource] = [:]
+        var shown: Set<URL> = []
+        for resource in model.resourceValues {
+            if case .image(_, let source, _) = resource, let url = URL(string: source) { shown.insert(url) }
+        }
+        self.driver().resourceTaskOwner.images.retainOnly(shown)
         for resource in model.resourceValues {
             switch resource {
             case .image(let id, let source, _):
@@ -476,6 +481,10 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     package var sessionOverrides = RenderSessionOverrides()
     /// Test seam: forces the snapshot-replacement install closure to throw.
     package var _materializationFailureForTesting: (any Error)?
+    /// Every full re-materialization of the display model, including the ones each
+    /// coalesced batch of resolved resources triggers. Bounds the cost that
+    /// per-arrival resource completion imposes on a long document.
+    package private(set) var _materializationCount = 0
     /// Source URLs currently being fetched (prevents duplicate requests).
     package private(set) var imageRequests: [RenderImageRequest: RenderImageLoadState] = [:]
     /// Remote images remain placeholders until the host explicitly opts in.
@@ -637,6 +646,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     /// old snapshot itself is released.
     package func installSnapshot(model: RenderDisplayModel, configuration: RenderConfigurationSnapshot, token: RenderCommitToken) {
         guard !self.isDismantled else { return }
+        self._materializationCount += 1
         let snapshotID = UUID()
         let resources = self.resolvedResources(for: model, configuration: configuration)
         let transaction = self.driver().resourceTaskOwner.images.ledger.prepareSnapshotReplacement(
@@ -645,12 +655,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         )
         do {
             try transaction.commit { handOver, _ in
-                // The transaction was prepared against the snapshot that is still
-                // installed. Anything that re-entered and replaced it in between
-                // invalidates this attempt, and the new owners roll back.
-                guard self.currentSnapshot?.id == transaction.oldSnapshotID else {
-                    throw RenderSessionError.preparationFailed
-                }
                 if let failure = self._materializationFailureForTesting { throw failure }
                 let snapshot = RenderMaterializer(configuration: configuration)
                     .materialize(model, resources: resources, snapshotID: snapshotID)

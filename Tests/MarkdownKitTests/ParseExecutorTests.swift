@@ -68,8 +68,12 @@ actor PausedParseSink: ParseResultSink {
     }
 }
 
+/// Anti-hang guard, not an assertion: the predicate is what the test asserts. The
+/// budget must exceed the longest legitimate stall in the process, and on the iOS
+/// simulator two pre-existing tests run 60-120 seconds while everything else polls
+/// here, so ten seconds expired on a loaded machine and reported a false failure.
 func eventually(isolation: isolated (any Actor)? = #isolation, _ predicate: () async -> Bool) async -> Bool {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(120))
     while await !predicate() {
         if ContinuousClock.now >= deadline { return false }
         await Task.yield()

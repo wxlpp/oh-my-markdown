@@ -47,8 +47,12 @@ actor PausedFixtureLoader: MarkdownImageLoading {
         return try await withCheckedThrowingContinuation { self.pending.append($0) }
     }
 
+    /// Never silently drops: a no-op here would read as a passing test.
     func finish(_ result: Result<MarkdownImagePayload, any Error>) {
-        guard !self.pending.isEmpty else { return }
+        guard !self.pending.isEmpty else {
+            Issue.record("No pending image request to complete")
+            return
+        }
         self.pending.removeFirst().resume(with: result)
     }
 }
@@ -148,7 +152,7 @@ struct ImageAdversarialTests {
         // per arriving batch.
         #expect(await quiesce { await loader.calls == 100 })
         // Every resolution has settled: a deterministic signal, not a turn count.
-        let settled = { views.reduce(0) { $0 + $1.imageCoordinator.settledResolutionCount } }
+        let settled = { views.reduce(0) { $0 + ($1.imageCoordinator?.settledResolutionCount ?? 0) } }
         #expect(await quiesce { settled() == 100 })
         await flushCoalescedResources(clock)
         #expect(views.allSatisfy { $0.imageRequests.values.allSatisfy { $0 != .loading } })
@@ -244,7 +248,7 @@ struct ImageAdversarialTests {
         #expect(await settle(clock) { view.currentCommitToken?.configurationGeneration == stale.configurationGeneration + 1 })
         #expect(await settle(clock) { await loader.calls == 2 })
 
-        let images = view.imageCoordinator
+        let images = try #require(view.imageCoordinator)
         #expect(images.settledResolutionCount == 0)
         await loader.finish(.success(MarkdownImagePayload(data: png, declaredMIMEType: "image/png")))
         // The stale resolution has demonstrably run to completion before anything
@@ -494,7 +498,7 @@ struct ImageAdversarialTests {
 
         ![b](https://images.test/defer/b.png)
         """).blocks
-        #expect(await settle(clock) { view.imageCoordinator.settledResolutionCount == 2 })
+        #expect(await settle(clock) { (view.imageCoordinator?.settledResolutionCount ?? 0) == 2 })
         #expect(await loader.calls == 2)
         #expect(view.imageRequests.values.contains(.deferred))
         // Deferral is not a failure: no negative-cache entry and no host callback.
@@ -517,6 +521,76 @@ struct ImageAdversarialTests {
         """).blocks
         #expect(await settle(clock) { await loader.calls > 2 })
         #expect(residency.ledger.accountedBytes <= 4096)
+        view.dismantleRenderSession()
+        residency.ledger.handleMemoryPressure()
+        #expect(await settle(clock) { residency.ledger.isAtBaseline })
+    }
+
+    /// The hundred-image suites deliberately let every resolution land inside one
+    /// debounce window so they stay cheap. That hides the schedule production
+    /// actually sees: with at most four transfers and two decodes, arrivals are
+    /// spaced wider than the 33 ms window, so each one costs a full
+    /// re-materialization of the whole display model. This pins that cost instead
+    /// of letting the cheap schedule stand in for it.
+    @Test func eachArrivalBatchCostsOneFullRematerialization() async throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
+        let png = try encodedPNG(width: 16, height: 16)
+        let loader = PausedFixtureLoader()
+        let residency = isolatedImageResidency(maxPixelSize: 32)
+        let view = imageTestView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency,
+            clock: clock, executor: executor
+        )
+        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.blocks = MarkdownDocument(parsing: (0 ..< 4).map {
+            "![alt \($0)](https://images.test/batch/\($0).png)"
+        }.joined(separator: "\n\n")).blocks
+        #expect(await settle(clock) { view.currentSnapshot != nil })
+        let baseline = view._materializationCount
+        for index in 0 ..< 4 {
+            // Only two transfers run per session, so wait until this arrival's
+            // request has actually started before completing it.
+            #expect(await settle(clock) { await loader.calls > index })
+            let before = view._materializationCount
+            await loader.finish(.success(MarkdownImagePayload(data: png, declaredMIMEType: "image/png")))
+            #expect(await settle(clock) { view._materializationCount > before })
+            // One arrival, one full re-materialization of the whole model.
+            #expect(view._materializationCount == before + 1)
+        }
+        #expect(view._materializationCount == baseline + 4)
+        #expect(view.currentSnapshot?.resourceOwners.count == 4)
+        view.dismantleRenderSession()
+        residency.ledger.handleMemoryPressure()
+        #expect(await settle(clock) { residency.ledger.isAtBaseline })
+    }
+
+    @Test func resolutionsAreReleasedWhenTheModelStopsShowingTheirImages() async throws {
+        let clock = ManualRenderClock()
+        let executor = ParseExecutor()
+        let png = try encodedPNG(width: 16, height: 16)
+        let loader = FixtureImageLoader(data: png)
+        let residency = isolatedImageResidency(maxPixelSize: 32)
+        let view = imageTestView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency,
+            clock: clock, executor: executor
+        )
+        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.blocks = MarkdownDocument(parsing: "![alt](https://images.test/dropped.png)").blocks
+        #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
+        #expect(view.imageCoordinator?.resolvedCount == 1)
+        let backingID = try #require(view.currentSnapshot?.resourceOwners.first as? ImageOwnerLease).backingID
+        #expect(residency.ledger.ownerCount(backingID) == 3)
+
+        // The same session renders a model that no longer shows the image.
+        let token = try #require(view.currentCommitToken)
+        view.installSnapshot(
+            model: RenderDisplayModel(runs: [], blocks: [], resources: [], accessibility: .init(roots: [])),
+            configuration: MarkdownRenderConfiguration.default.snapshot(generation: 0), token: token
+        )
+        #expect(view.imageCoordinator?.resolvedCount == 0)
+        // Only the completed cache still holds it; the session let go.
+        #expect(residency.ledger.ownerCount(backingID) == 1)
         view.dismantleRenderSession()
         residency.ledger.handleMemoryPressure()
         #expect(await settle(clock) { residency.ledger.isAtBaseline })
