@@ -326,11 +326,11 @@ struct MarkdownRenderKitTests {
         // If a property is added to RenderStyle, isSemanticallyEqual must be updated
         // to compare it. This test guards against silently missing one.
         let propertyCount = Mirror(reflecting: RenderStyle.default).children.count
-        // 23 includes the three math fields (mathScale, mathColorOverride, mathTokenColor);
-        // mathScale/mathColorOverride were added in Task 8, mathTokenColor in Task 9;
-        // isSemanticallyEqual compares all three.
+        // 24 includes the three math fields (mathScale, mathColorOverride, mathTokenColor)
+        // and scaledBaseSizes, which decides which roles follow Dynamic Type;
+        // isSemanticallyEqual compares all four.
         #expect(
-            propertyCount == 23,
+            propertyCount == 24,
             "RenderStyle has \(propertyCount) stored properties; update isSemanticallyEqual to match."
         )
     }

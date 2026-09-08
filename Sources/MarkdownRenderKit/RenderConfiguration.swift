@@ -126,19 +126,32 @@ public struct MarkdownRenderConfiguration {
     public let configurationID: MarkdownConfigurationID
     private let usesPreferredMetrics: Bool
     private let resolvedDefault: RenderConfigurationSnapshot?
+    private var contentSizeCategory: MarkdownContentSizeCategory = .large
 
     /// Custom fonts retain fixed metrics until explicitly opted into a scaling policy.
     public init(style: RenderStyle, configurationID: MarkdownConfigurationID = .uniqueInstance()) {
+        self.init(style: style, configurationID: configurationID, contentSizeCategory: .large)
+    }
+
+    /// A host style resolved at the reader's text size. Only the roles the style
+    /// registered as scalable move; the rest stay exactly as the host set them.
+    public init(
+        style: RenderStyle, configurationID: MarkdownConfigurationID = .uniqueInstance(),
+        contentSizeCategory: MarkdownContentSizeCategory
+    ) {
         self.style = style
         self.configurationID = configurationID
         self.usesPreferredMetrics = false
         self.resolvedDefault = nil
+        self.contentSizeCategory = contentSizeCategory
     }
 
-    private init(defaultStyle: RenderStyle) {
+    private init(defaultStyle: RenderStyle, contentSizeCategory: MarkdownContentSizeCategory) {
         self.style = defaultStyle
         self.usesPreferredMetrics = true
-        let resolved = defaultStyle.snapshot(generation: 0, usesPreferredMetrics: true)
+        let resolved = defaultStyle.snapshot(
+            generation: 0, usesPreferredMetrics: true, contentSizeCategory: contentSizeCategory
+        )
         self.configurationID = resolved.id
         self.resolvedDefault = resolved
     }
@@ -146,7 +159,14 @@ public struct MarkdownRenderConfiguration {
     /// Captures the current appearance together with its semantic identity.
     /// Create a new default configuration when the environment changes.
     public static var `default`: Self {
-        Self(defaultStyle: .default)
+        Self.default(contentSizeCategory: .large)
+    }
+
+    /// The default appearance resolved at the reader's text size. The category is
+    /// part of the semantic identity, so a size change is a different
+    /// configuration rather than a cache hit at the wrong size.
+    public static func `default`(contentSizeCategory: MarkdownContentSizeCategory) -> Self {
+        Self(defaultStyle: .default, contentSizeCategory: contentSizeCategory)
     }
 
     public func snapshot(generation: UInt64) -> RenderConfigurationSnapshot {
@@ -159,7 +179,7 @@ public struct MarkdownRenderConfiguration {
         }
         return self.style.snapshot(
             generation: generation, configurationID: self.configurationID,
-            usesPreferredMetrics: self.usesPreferredMetrics
+            usesPreferredMetrics: self.usesPreferredMetrics, contentSizeCategory: self.contentSizeCategory
         )
     }
 }

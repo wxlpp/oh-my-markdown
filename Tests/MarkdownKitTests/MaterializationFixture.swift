@@ -9,6 +9,7 @@ struct MaterializationFixture {
     var style: RenderStyle
     var availableWidth: CGFloat
     var placeholderMode: PlaceholderMode
+    var contentSizeCategory: MarkdownContentSizeCategory = .large
     var images: [String: PlatformImage] = [:]
     var math: [String: (PlatformImage, Double)] = [:]
     var svg: [String: PlatformImage] = [:]
@@ -20,7 +21,7 @@ struct MaterializationFixture {
     }
 
     func snapshot(_ blocks: [BlockNode]) -> RenderSnapshot {
-        let configuration = self.style.snapshot(generation: 0)
+        let configuration = self.style.snapshot(generation: 0, contentSizeCategory: self.contentSizeCategory)
         let document = MarkdownDocument(parsedBlocks: blocks.map { ParsedBlockNode(block: $0) })
         let input = RenderInput(
             document: document,

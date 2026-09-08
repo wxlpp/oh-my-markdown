@@ -15,7 +15,21 @@ import AppKit
 public struct RenderStyle {
     // MARK: - Default
 
+    /// Follows the reader's text-size setting: every default font is registered
+    /// as scalable, which is what a host opts *out* of by assigning its own.
     public static var `default`: RenderStyle {
+        var style = Self.fixedDefault
+        style.scaleFontWithContentSize(for: .body)
+        style.scaleFontWithContentSize(for: .code)
+        for level in 1 ... 6 {
+            style.scaleFontWithContentSize(for: .heading(level: level))
+        }
+        return style
+    }
+
+    /// The same sizes with no scaling registered — the shape a host gets when it
+    /// pins every font itself.
+    public static var fixedDefault: RenderStyle {
         #if canImport(UIKit)
         RenderStyle(
             bodyFont: .systemFont(ofSize: 16, weight: .regular),
@@ -107,6 +121,15 @@ public struct RenderStyle {
 
     // MARK: Fonts
 
+    /// Point size each role was registered at, for the roles that follow the
+    /// reader's text-size setting. `RenderStyle`'s own defaults populate it.
+    ///
+    /// A host opts out by assigning a font, and that is *detected* rather than
+    /// flagged: the entry applies only while the stored font is still the size it
+    /// was registered at. A `didSet` observer would be the obvious alternative,
+    /// but a check that reads the actual value cannot go stale.
+    public private(set) var scaledBaseSizes: [MarkdownTextRole: Double] = [:]
+
     public var bodyFont: PlatformFont
     public var codeFont: PlatformFont
     public var h1Font: PlatformFont
@@ -174,6 +197,7 @@ public struct RenderStyle {
             && self.headingBorderColor.isEqual(other.headingBorderColor)
             && self.paragraphSpacing == other.paragraphSpacing
             && self.quoteIndent == other.quoteIndent
+            && self.scaledBaseSizes == other.scaledBaseSizes
             && self.mathScale == other.mathScale
             && {
                 switch (self.mathColorOverride, other.mathColorOverride) {
@@ -216,14 +240,53 @@ public struct RenderStyle {
         self.snapshot(generation: generation, usesPreferredMetrics: false)
     }
 
+    /// Resolves at the reader's text size. Roles the host pinned to an exact
+    /// font are unaffected; the rest, and the chrome around them, follow.
     @MainActor
-    package func snapshot(generation: UInt64, configurationID: MarkdownConfigurationID? = nil, usesPreferredMetrics: Bool) -> RenderConfigurationSnapshot {
+    public func snapshot(
+        generation: UInt64, contentSizeCategory: MarkdownContentSizeCategory
+    ) -> RenderConfigurationSnapshot {
+        self.snapshot(
+            generation: generation, usesPreferredMetrics: false, contentSizeCategory: contentSizeCategory
+        )
+    }
+
+    /// Opts one role into following the reader's setting, keeping the face and
+    /// weight already set for it. The inverse of assigning a plain font.
+    public mutating func scaleFontWithContentSize(for role: MarkdownTextRole) {
+        self.scaledBaseSizes[role] = Double(self.font(for: role).pointSize)
+    }
+
+    func font(for role: MarkdownTextRole) -> PlatformFont {
+        switch role {
+        case .code: self.codeFont
+        case .heading(let level): self.headingFont(level: level)
+        default: self.bodyFont
+        }
+    }
+
+    @MainActor
+    package func snapshot(
+        generation: UInt64, configurationID: MarkdownConfigurationID? = nil, usesPreferredMetrics: Bool,
+        contentSizeCategory: MarkdownContentSizeCategory = .large
+    ) -> RenderConfigurationSnapshot {
+        func font(_ role: MarkdownTextRole, _ fixed: PlatformFont) -> PlatformFont {
+            // Still the size it was registered at means the host has not pinned
+            // it since; anything else is a font the host chose deliberately.
+            guard let base = self.scaledBaseSizes[role], Double(fixed.pointSize) == base else { return fixed }
+            return MarkdownScaledFont(base: fixed, relativeTo: role)
+                .resolve(contentSizeCategory: contentSizeCategory)
+        }
+        let body = font(.body, self.bodyFont)
         let fonts: [MarkdownTextRole: PlatformFont] = [
-            .body: bodyFont, .code: codeFont, .heading(level: 1): h1Font,
-            .heading(level: 2): h2Font, .heading(level: 3): h3Font,
-            .heading(level: 4): h4Font, .heading(level: 5): h5Font,
-            .heading(level: 6): h6Font, .listMarker: bodyFont,
-            .table: bodyFont, .caption: bodyFont,
+            .body: body, .code: font(.code, self.codeFont),
+            .heading(level: 1): font(.heading(level: 1), self.h1Font),
+            .heading(level: 2): font(.heading(level: 2), self.h2Font),
+            .heading(level: 3): font(.heading(level: 3), self.h3Font),
+            .heading(level: 4): font(.heading(level: 4), self.h4Font),
+            .heading(level: 5): font(.heading(level: 5), self.h5Font),
+            .heading(level: 6): font(.heading(level: 6), self.h6Font),
+            .listMarker: body, .table: body, .caption: body,
         ]
         let descriptors = fonts.mapValues {
             // Platform font descriptors support secure coding. A failure is a
@@ -242,7 +305,13 @@ public struct RenderStyle {
         ]
         additional["mathOverride"] = self.mathColorOverride?.rgbaToken
         let colors = ColorTokens(body: textColor.rgbaToken, secondary: self.secondaryTextColor.rgbaToken, code: self.codeTextColor.rgbaToken, link: self.linkColor.rgbaToken, additional: additional)
-        let spacing = SpacingTokens(paragraph: Double(paragraphSpacing), block: Double(paragraphSpacing), codeInsets: 8, quoteIndent: Double(quoteIndent))
+        // Chrome follows the same category as the text, at a gentler rate: a
+        // maximum-category document scaled linearly is mostly margin.
+        let chrome = contentSizeCategory.chromeScale
+        let spacing = SpacingTokens(
+            paragraph: Double(paragraphSpacing) * chrome, block: Double(paragraphSpacing) * chrome,
+            codeInsets: 8 * chrome, quoteIndent: Double(quoteIndent) * chrome
+        )
         /// The built-in identity includes every normalized token. Length-prefixed
         /// strings avoid ambiguity; sorted roles/keys avoid dictionary order.
         func field(_ value: String) -> String {
@@ -251,7 +320,9 @@ public struct RenderStyle {
         func color(_ value: ColorToken) -> String {
             [value.red, value.green, value.blue, value.alpha].map { String($0 == 0 ? 0 : $0) }.joined(separator: ",")
         }
-        var identity = "preferred:\(usesPreferredMetrics)"
+        var identity = "preferred:\(usesPreferredMetrics)" + field(contentSizeCategory.rawValue)
+        // Two categories can round a role to the same point size, so the
+        // category itself is a field rather than an implication of the sizes.
         for role in fonts.keys.sorted(by: { $0.identity < $1.identity }) {
             identity += field(role.identity) + field(typography.fontNames[role]!) + field(String(typography.pointSizes[role]!))
             // Custom descriptor bytes remain preserved above; built-in system

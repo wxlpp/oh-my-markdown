@@ -51,7 +51,33 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     private func configurationSnapshot() -> RenderConfigurationSnapshot {
-        MarkdownRenderConfiguration(style: self.renderStyle, configurationID: self.configurationID).snapshot(generation: 0)
+        MarkdownRenderConfiguration(
+            style: self.renderStyle, configurationID: self.configurationID,
+            contentSizeCategory: self.contentSizeCategory
+        ).snapshot(generation: 0)
+    }
+
+    /// The reader's text size, mirrored from the trait environment. Assigning it
+    /// directly is what a host does to pin a size; a trait change overwrites that.
+    public var contentSizeCategory: MarkdownContentSizeCategory {
+        get { self.contentSizeCategoryStorage }
+        set {
+            guard newValue != self.contentSizeCategoryStorage else { return }
+            self.contentSizeCategoryStorage = newValue
+            self.discardStyleDependentChrome()
+            self.updateContent()
+        }
+    }
+
+    // Written directly during init: going through the setter there would build
+    // the render session before a `package` caller can supply its own driver.
+    private var contentSizeCategoryStorage: MarkdownContentSizeCategory = .large
+
+    /// Table overlays carry the metrics they were built with, so a typography
+    /// change has to drop them rather than reuse them at the new size.
+    private func discardStyleDependentChrome() {
+        self._tableOverlays.values.forEach { $0.scroll.removeFromSuperview() }
+        self._tableOverlays.removeAll()
     }
 
     private func driver() -> any RenderSessionDriving {
@@ -160,6 +186,10 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.displayScale = UIScreen.main.scale
         self.buildStack()
         self.buildInteraction()
+        self.contentSizeCategoryStorage = MarkdownContentSizeCategory(traitCollection.preferredContentSizeCategory)
+        self.registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, _) in
+            view.contentSizeCategory = MarkdownContentSizeCategory(view.traitCollection.preferredContentSizeCategory)
+        }
     }
 
     @available(*, unavailable)
@@ -191,9 +221,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             guard !self.renderStyle.isSemanticallyEqual(to: oldValue) else {
                 return
             }
-            // Scroll overlays were built with the old style — discard them.
-            self._tableOverlays.values.forEach { $0.scroll.removeFromSuperview() }
-            self._tableOverlays.removeAll()
+            self.discardStyleDependentChrome()
             self.updateContent()
         }
     }

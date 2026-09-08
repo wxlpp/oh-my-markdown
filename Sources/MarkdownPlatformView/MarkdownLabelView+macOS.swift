@@ -51,7 +51,27 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     }
 
     private func configurationSnapshot() -> RenderConfigurationSnapshot {
-        MarkdownRenderConfiguration(style: self.renderStyle, configurationID: self.configurationID).snapshot(generation: 0)
+        MarkdownRenderConfiguration(
+            style: self.renderStyle, configurationID: self.configurationID,
+            contentSizeCategory: self.contentSizeCategory
+        ).snapshot(generation: 0)
+    }
+
+    /// macOS has no system text-size trait to mirror, so this stays where the
+    /// host puts it. Assigning it rebuilds the configuration exactly as on iOS.
+    public var contentSizeCategory: MarkdownContentSizeCategory = .large {
+        didSet {
+            guard self.contentSizeCategory != oldValue else { return }
+            self.discardStyleDependentChrome()
+            self.updateContent()
+        }
+    }
+
+    /// Table overlays carry the metrics they were built with, so a typography
+    /// change has to drop them rather than reuse them at the new size.
+    private func discardStyleDependentChrome() {
+        self._tableOverlays.values.forEach { self.stopObservingTableOverlayScroll($0.scroll); $0.scroll.removeFromSuperview() }
+        self._tableOverlays.removeAll()
     }
 
     private func driver() -> any RenderSessionDriving {
@@ -185,8 +205,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             guard !self.renderStyle.isSemanticallyEqual(to: oldValue) else {
                 return
             }
-            self._tableOverlays.values.forEach { self.stopObservingTableOverlayScroll($0.scroll); $0.scroll.removeFromSuperview() }
-            self._tableOverlays.removeAll()
+            self.discardStyleDependentChrome()
             self.updateContent()
         }
     }
