@@ -9,6 +9,53 @@ MarkdownKit adheres to [Semantic Versioning](http://semver.org/).
 
 ### Removed
 
+## [0.2.0](https://github.com/wxlpp/MarkdownKit)
+破坏性发布。迁移指南见 [`docs/release/0.2.0-migration.md`](docs/release/0.2.0-migration.md)。
+
+### Added
+- **远程图片按需开启**：`markdownRemoteImages(_:)`。`.defaultHTTPS` 走独立
+  `URLSession`（不共享 cookie / 凭据 / 缓存），仅 HTTPS，仅
+  PNG/JPEG/GIF/WebP/HEIC/HEIF，编码体 20 MiB、单边 8192 像素、32 帧、累计
+  4000 万像素上限，超时钳在 1…120 秒。
+- **链接策略与打开者分离**：`markdownLinkPolicy(_:handler:)`。`MarkdownLinkPolicy`
+  是纯 `Sendable` 判定，`MarkdownLinkHandler` 是 `@MainActor` 打开动作；非 web
+  scheme 需要两者同时放行。
+- **资源失败诊断**：`onMarkdownResourceError(_:)` 交出 `MarkdownResourceFailure`
+  ——类别 + `SanitizedMarkdownOrigin`（scheme/host/port，永不含 path 与 query）。
+- **两个复制命令**：`renderedSelectionResult()` 给屏幕上的内容，
+  `markdownSourceSelectionResult()` 给选区覆盖的源码，后者带
+  `MarkdownCopyGranularity` 说明保真度。
+- **语义无障碍树**：`AccessibilityTree` / `AccessibilityNode`，以及平台视图上按
+  文档顺序、各有真实布局框的元素。
+- **Dynamic Type**：`MarkdownContentSizeCategory`、`MarkdownScaledFont`、
+  `RenderStyle.pinFont(for:)` / `setFont(_:for:)`；`RenderStyle.default` 现在跟随
+  读者字号，标题至少保留其声明比例的平方根。
+- **不可变渲染边界**：`RenderConfigurationSnapshot`、`MarkdownConfigurationID`、
+  按 session 拥有的资源租约。
+
+### Changed
+- 平台下限从 iOS 26 / macOS 26 **下调**到 iOS 18 / macOS 15。
+- **⌘C 的结果变了**：过去给 Markdown 源码，现在给屏幕上的内容；旧行为改由
+  「Copy Markdown Source」提供。
+- `mathRenderer(_:)` / `svgRenderer(_:)` 改收
+  `MathRendererConfiguration` / `SVGRendererConfiguration`。
+- `MathJaxRenderer` / `SwiftDrawSVGBlockRenderer` 由 `@unchecked Sendable` class
+  改为 actor。
+- `RenderStyle` 不再是 `@unchecked Sendable`；跨 actor 传递改用快照。
+- `MarkdownRenderConfiguration.default` 的语义 ID 字符串变了（新增字号档位与
+  spacing 字段），以它为键持久化的内容在升级后失效。
+
+### Removed
+- `AttributedStringRenderer` 及其可变缓存（`imageCache` / `mathCache` /
+  `svgBlockCache` / `mathRasterScale` / `svgRasterScale` / `*RendererGeneration`）。
+  没有公开替代品直接交出 `NSAttributedString`——渲染需要主 actor、已解析资源集
+  与其租约，旧 API 允许在资源释放后继续持有字符串。
+- `MathLoadCoordinator.shared` / `SVGBlockLoadCoordinator.shared` 及其全部公开
+  方法：进程级可变缓存不再对宿主开放。
+- `MathRenderedGlyph` / `SVGBlockGlyph`（裸 `PlatformImage`）、
+  `MarkdownSourceHighlighter`、`SyntaxHighlighter.highlight(…)`、
+  `DocumentParser.parsedBlocks` 的公开可见性。
+
 ## [0.1.2](https://github.com/wxlpp/MarkdownKit/releases/tag/v0.1.2)
 ### Changed
 - `swift-markdown` 依赖从 `from: "0.8.0"` 收紧为 `.upToNextMinor(from: "0.8.0")`。

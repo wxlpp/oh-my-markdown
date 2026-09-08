@@ -59,9 +59,17 @@ jobs:
         env:
           HARDENING_ARTIFACTS_DIR: ${{ env.HARDENING_RESULT_DIR }}
         run: |
+          set -euo pipefail
           Scripts/assert-xcresult-tests.sh ios18 \
             "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.xcresult" \
             "$HARDENING_RESULT_DIR/Example-iOS18.xcresult"
+          # The iOS-only behaviour sections run inside the same bundle. Asserting
+          # them separately is what makes "it ran on iOS" a checked claim rather
+          # than an assumption: several of these suites are inert on macOS.
+          Scripts/assert-xcresult-tests.sh ios18-accessibility \
+            "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.xcresult"
+          Scripts/assert-xcresult-tests.sh ios18-dynamic-type \
+            "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.xcresult"
 
       - name: Write iOS runtime metadata
         if: always()

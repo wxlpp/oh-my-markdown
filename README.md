@@ -6,7 +6,9 @@ A lightweight Markdown rendering and source editing library for iOS and macOS, b
 
 - 🚀 **TextKit 2** based rendering for optimal performance
 - 📝 Full CommonMark support via swift-markdown
-- 🖼️ **Image Loading** - Async image loading with caching and placeholder support
+- 🔒 **Secure by default** - remote images and non-web links are off until the host opts in
+- 🖼️ **Image Loading** - opt-in async loading, isolated session, validated decode
+- ♿️ **Accessibility** - a semantic element tree, and Dynamic Type through the accessibility sizes
 - ✨ Rich visual rendering for headings, quotes, code blocks, and tables
 - ✍️ Native Markdown source editor backed by `UITextView` / `NSTextView`
 - 🎨 Customizable rendering through `RenderStyle`
@@ -17,7 +19,7 @@ A lightweight Markdown rendering and source editing library for iOS and macOS, b
 
 ## 📋 Requirements
 
-- iOS 26.0+
+- iOS 18.0+ / macOS 15.0+
 - Xcode 17.0+
 - Swift 6.2+
 
@@ -35,7 +37,7 @@ Or add it to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/wxlpp/MarkdownKit.git", .upToNextMinor(from: "0.1.2"))
+    .package(url: "https://github.com/wxlpp/MarkdownKit.git", .upToNextMinor(from: "0.2.0"))
 ]
 ```
 
@@ -174,7 +176,7 @@ Custom renderer wrappers are unique by default; only an explicit semantic config
 - ✅ **Bold**, *Italic*, ~~Strikethrough~~
 - ✅ `Inline code` and fenced code blocks
 - ✅ [Links](https://example.com)
-- ✅ Images with async loading ![alt text](url)
+- ✅ Images with opt-in async loading ![alt text](url)
 - ✅ Ordered, unordered, and task lists
 - ✅ Nested lists
 - ✅ Block quotes
@@ -201,25 +203,44 @@ Not included in the current editor release:
 - Image paste to Markdown conversion
 - Collaborative editing semantics
 
-## 🖼️ Image Loading
+## 🔒 Remote images and links
 
-MarkdownKit loads remote images asynchronously and reuses them across relayouts and style changes.
+Both are **off until you opt in**. A document that arrives from a network — a chat
+reply, a feed item — cannot make the library fetch anything or open anything by
+itself.
 
 ```swift
-let markdown = """
-# Example with Images
-
-![MarkdownKit sample image](https://placehold.co/800x400.png?text=MarkdownKit)
-"""
-
 MarkdownText(markdown)
+    .markdownRemoteImages(.defaultHTTPS)
+    .markdownLinkPolicy(.webOnly, handler: PlatformMarkdownLinkHandler())
+    .onMarkdownResourceError { failure in
+        // Category and a sanitized scheme://host — never a path or query.
+        logger.warning("\(failure.category) from \(failure.origin?.description ?? "unknown")")
+    }
 ```
 
-Images are automatically:
-- Loaded asynchronously in the background
-- Cached in memory for the lifetime of the view
-- Displayed with placeholders during loading
-- Scaled to fit available width while maintaining aspect ratio
+`.defaultHTTPS` is HTTPS only, through a `URLSession` with no shared cookies,
+credentials or cache: PNG/JPEG/GIF/WebP/HEIC/HEIF, a 20 MiB encoded body, 8192
+pixels per dimension, 32 animation frames, 40 million cumulative pixels, and
+timeouts clamped to 1…120 seconds. Supply your own `MarkdownImageLoading` for
+anything else; the decode-side limits still apply.
+
+Without the opt-in, an image renders as a placeholder and a link is inert.
+`.webOnly` is the default policy, so HTTP and HTTPS links work with no code; any
+other scheme needs both a policy that permits it and a handler that opens it.
+
+Once loading is enabled, images are:
+- fetched asynchronously and shown as a placeholder until they arrive
+- owned by the snapshot that uses them and released with it
+- scaled to fit the available width, keeping their aspect ratio
+
+## 📋 Copy
+
+A rendered view has two copy commands: **Copy** gives exactly what is on screen,
+and **Copy Markdown Source** gives the source the selection covers. Both are
+available programmatically as `renderedSelectionResult()` and
+`markdownSourceSelectionResult()`; the source result carries a
+`MarkdownCopyGranularity` saying how faithful it is.
 
 ## 🎨 Customization
 
@@ -238,6 +259,19 @@ style.quoteBarColor = .systemBlue
 style.paragraphSpacing = 14
 style.quoteIndent = 24
 ```
+
+`RenderStyle.default` follows the reader's text size. Assigning a font at a
+different size opts that role out; `pinFont(for:)` opts out a font you assigned at
+the same size, and `.fixedDefault` is the whole style with nothing registered. To
+keep a custom face *and* follow the reader, wrap it:
+
+```swift
+var style = RenderStyle.fixedDefault
+style.setFont(MarkdownScaledFont(base: myFace, relativeTo: .body), for: .body)
+```
+
+On iOS the view mirrors the system trait. macOS has no system-wide text-size
+setting, so assign `MarkdownLabelView.contentSizeCategory` yourself.
 
 ## 🏗️ Architecture
 
