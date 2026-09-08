@@ -26,26 +26,6 @@ private func utf8StringIndex(in source: String, at byteOffset: Int) -> String.In
     return String.Index(scalarIndex, within: source)
 }
 
-/// Pre-Task-9 shape of source copy: the source span of every block the selection
-/// overlaps, with no granularity reported and no recovery for blocks the parser
-/// rebuilt. No shipping command calls it; it is kept because the migration parity
-/// tests pin the legacy mapping deliberately. New code wants `markdownSourceCopy`.
-func markdownSourceForRenderedSelection(
-    renderedRange: NSRange,
-    renderedPlainText: String,
-    blockStarts: [Int],
-    parsedBlocks: [ParsedBlockNode],
-    renderedLength: Int,
-    originalSource: String
-)
-    -> String {
-    markdownSourceCopy(
-        renderedRange: renderedRange, renderedPlainText: renderedPlainText, blockStarts: blockStarts,
-        parsedBlocks: parsedBlocks, renderedLength: renderedLength, originalSource: originalSource,
-        renderedFallback: nil
-    ).text
-}
-
 /// Maps a rendered selection to the Markdown source it covers, and reports how
 /// faithful the result is instead of silently widening a partial selection.
 ///
@@ -152,33 +132,50 @@ func markdownSourceCopy(
     /// code block's range begins after its indent. Those bytes belong to the
     /// block and must come with it, or the copy stops parsing as code.
     func lineStart(before byte: Int) -> Int {
-        let utf8 = Array(originalSource.utf8)
-        var cursor = min(max(0, byte), utf8.count)
-        while cursor > 0, utf8[cursor - 1] == 0x20 || utf8[cursor - 1] == 0x09 {
-            cursor -= 1
+        // Indices, not a copy of the source: the sibling helper above carries the
+        // same warning about this file's cost model.
+        let utf8 = originalSource.utf8
+        var count = min(max(0, byte), utf8.count)
+        var cursor = utf8.index(utf8.startIndex, offsetBy: count)
+        while count > 0 {
+            let previous = utf8.index(before: cursor)
+            guard utf8[previous] == 0x20 || utf8[previous] == 0x09 else { break }
+            cursor = previous
+            count -= 1
         }
-        return cursor
+        return count
     }
 
     var lowerByte: Int?
     if let range = parsedBlocks[lower].sourceRange {
         lowerByte = lineStart(before: range.lowerBound)
-    } else if runStart(lower) == lower, parsedBlocks[lower].documentOrdinal == nil {
+    } else if runStart(lower) == lower, parsedBlocks[lower].splitOrdinal == 0,
+              parsedBlocks[lower].documentOrdinal == nil {
         // `documentOrdinal` is non-nil only for programmatic nodes, whose anchor
         // is a placeholder rather than a real offset.
         lowerByte = lineStart(before: parsedBlocks[lower].sourceAnchor)
     }
 
-    // The end is only provable when the last selected block owns a range, or when
-    // the selection runs to the end of the document — a source-less block has no
-    // recorded end, and the bytes after it may belong to no block.
-    var trimTrailing = false
+    /// End of the maximal run of source-less blocks containing `index`.
+    func runEnd(_ index: Int) -> Int {
+        var end = index
+        while end + 1 < parsedBlocks.count, parsedBlocks[end + 1].sourceRange == nil {
+            end += 1
+        }
+        return end
+    }
+
+    // The end comes from a real range, or from `sourceAnchorEnd`, which records
+    // where the block a rebuilt block came from ended. Never from the document's
+    // length: "the last selected block is the last block" does not mean its bytes
+    // reach the end, and a trailing reference definition belongs to no block.
+    // One anchor bounds the whole run, so it is only usable when the run ends
+    // where the selection does.
     var upperByte: Int?
     if let range = parsedBlocks[upper].sourceRange {
         upperByte = range.upperBound
-    } else if upper == parsedBlocks.count - 1, parsedBlocks[upper].documentOrdinal == nil {
-        upperByte = originalSource.utf8.count
-        trimTrailing = true
+    } else if runEnd(upper) == upper, parsedBlocks[upper].documentOrdinal == nil {
+        upperByte = parsedBlocks[upper].sourceAnchorEnd
     }
 
     if
@@ -186,12 +183,7 @@ func markdownSourceCopy(
         let startIndex = utf8StringIndex(in: originalSource, at: lowerByte),
         let endIndex = utf8StringIndex(in: originalSource, at: upperByte),
         startIndex <= endIndex {
-        var text = String(originalSource[startIndex ..< endIndex])
-        if trimTrailing {
-            while let last = text.last, last.isWhitespace || last.isNewline {
-                text.removeLast()
-            }
-        }
+        let text = String(originalSource[startIndex ..< endIndex])
         if !text.isEmpty {
             return MarkdownCopyResult(
                 text: text, granularity: coversEveryOverlappedBlock ? .exact : .blockExpanded
@@ -204,10 +196,13 @@ func markdownSourceCopy(
     // after it. Reconstructing the selected blocks returns only what they render,
     // never bytes belonging to something else, and is never called source.
     guard let reconstructedSource else { return fallback() }
-    let pieces = (lower ... upper).map { block in
-        reconstructedSource(NSRange(
-            location: blockStarts[block], length: max(0, contentEnd(of: block) - blockStarts[block])
-        ))
+    let pieces = (lower ... upper).compactMap { block -> String? in
+        // Clamped to the selection, like the plain fallback: reconstructing a
+        // whole block would paste an image URL for a three-character selection.
+        let start = max(blockStarts[block], selStart)
+        let end = min(contentEnd(of: block), selEnd)
+        guard start < end else { return nil }
+        return reconstructedSource(NSRange(location: start, length: end - start))
     }
     return MarkdownCopyResult(
         text: pieces.filter { !$0.isEmpty }.joined(separator: "\n\n"), granularity: .renderedFallback
@@ -255,11 +250,19 @@ func reconstructedSourceText(from attributed: NSAttributedString, range: NSRange
     var result = ""
     attributed.enumerateAttributes(in: clamped, options: []) { attributes, range, _ in
         if attributes[.markdownCopySkip] != nil { return }
-        if let source = attributes[.markdownCopySource] as? String {
+        /// A whole value may only stand in for a range the selection covers
+        /// whole. Partially selecting an image's placeholder text must not paste
+        /// the image's URL.
+        func covered(_ key: NSAttributedString.Key) -> Bool {
+            var effective = NSRange(location: 0, length: 0)
+            _ = attributed.attribute(key, at: range.location, effectiveRange: &effective)
+            return NSEqualRanges(effective, range)
+        }
+        if let source = attributes[.markdownCopySource] as? String, covered(.markdownCopySource) {
             result += source
             return
         }
-        if let semantic = attributes[.markdownCopyText] as? String {
+        if let semantic = attributes[.markdownCopyText] as? String, covered(.markdownCopyText) {
             result += semantic
             return
         }

@@ -2,13 +2,20 @@ import Foundation
 
 /// How faithfully a copy reproduced what the user selected.
 public enum MarkdownCopyGranularity: Sendable, Equatable {
-    /// The returned text covers the selection and nothing more.
+    /// The text is the contiguous source region between the selection's
+    /// endpoints. It adds nothing beyond them — but a *contiguous* region can
+    /// include source that belongs to no block, such as a link reference
+    /// definition sitting between two selected paragraphs. That is deliberate:
+    /// dropping it would leave `[text][ref]` links in the copy unresolvable.
     case exact
     /// The selection cut into a block, and the whole block's source is returned
     /// because inline source offsets do not exist. Callers that must not paste
     /// more than was selected should check for this.
     case blockExpanded
-    /// No source mapping was available, so the rendered text is returned instead.
+    /// No source mapping was available. The text is *approximate syntax*
+    /// reconstructed from what is rendered — delimiters the renderer consumed,
+    /// such as emphasis and links, are already gone — clamped to the selection
+    /// but not guaranteed to reparse as the same document.
     case renderedFallback
 }
 

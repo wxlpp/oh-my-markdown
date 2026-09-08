@@ -229,9 +229,16 @@ extension IncrementalSourceBuffer {
         }
         let shifted = try raw.map { node in
             try Task.checkCancellation()
-            return ParsedBlockNode(block: node.block, sourceRange: node.sourceRange.map {
-                MarkdownSourceRange(lowerBound: $0.lowerBound + start, upperBound: $0.upperBound + start)
-            }, fingerprint: node.fingerprint, sourceAnchor: node.sourceAnchor + start, splitOrdinal: node.splitOrdinal)
+            return ParsedBlockNode(
+                block: node.block,
+                sourceRange: node.sourceRange.map {
+                    MarkdownSourceRange(lowerBound: $0.lowerBound + start, upperBound: $0.upperBound + start)
+                },
+                fingerprint: node.fingerprint,
+                sourceAnchor: node.sourceAnchor + start,
+                sourceAnchorEnd: node.sourceAnchorEnd.map { $0 + start },
+                splitOrdinal: node.splitOrdinal
+            )
         }
         metrics.recordMetadata(raw.count * MemoryLayout<ParsedBlockNode>.stride + 88)
         let prefix = previous?.document.blockStorage.slice(0 ..< prefixCount, metrics: &metrics) ?? PersistentValues()

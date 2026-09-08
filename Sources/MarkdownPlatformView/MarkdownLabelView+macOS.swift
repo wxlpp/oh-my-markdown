@@ -330,9 +330,16 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         guard self.currentRenderedSelectionRange() != nil else { return hostMenu }
         let menu = (hostMenu?.copy() as? NSMenu) ?? NSMenu()
         if !menu.items.isEmpty { menu.addItem(.separator()) }
-        menu.addItem(withTitle: MarkdownCopyCommandTitle.copy, action: #selector(self.copy(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: MarkdownCopyCommandTitle.markdownSource, action: #selector(self.copyMarkdownSource(_:)), keyEquivalent: "")
-        menu.items.forEach { $0.target = self }
+        // Only the items added here get retargeted: retargeting the host's would
+        // point them at a view that does not respond to their action, which
+        // AppKit then disables.
+        var added: [(String, Selector)] = [(MarkdownCopyCommandTitle.markdownSource, #selector(self.copyMarkdownSource(_:)))]
+        if !menu.items.contains(where: { $0.action == #selector(self.copy(_:)) }) {
+            added.insert((MarkdownCopyCommandTitle.copy, #selector(self.copy(_:))), at: 0)
+        }
+        for (title, action) in added {
+            menu.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
+        }
         return menu
     }
 

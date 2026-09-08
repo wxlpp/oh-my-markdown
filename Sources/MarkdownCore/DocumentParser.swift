@@ -309,13 +309,15 @@ public struct ParsedBlockNode: Sendable, Equatable {
         self.sourceRange = sourceRange
         self.fingerprint = fingerprint
         self.sourceAnchor = sourceRange?.lowerBound ?? 0
+        self.sourceAnchorEnd = sourceRange?.upperBound
         self.splitOrdinal = 0
         self.documentOrdinal = sourceRange == nil ? 0 : nil
     }
 
-    package init(block: BlockNode, sourceRange: MarkdownSourceRange?, fingerprint: UInt64?, sourceAnchor: Int, splitOrdinal: Int = 0, documentOrdinal: Int? = nil) {
+    package init(block: BlockNode, sourceRange: MarkdownSourceRange?, fingerprint: UInt64?, sourceAnchor: Int, sourceAnchorEnd: Int? = nil, splitOrdinal: Int = 0, documentOrdinal: Int? = nil) {
         self.block = block; self.sourceRange = sourceRange; self.fingerprint = fingerprint
-        self.sourceAnchor = sourceAnchor; self.splitOrdinal = splitOrdinal
+        self.sourceAnchor = sourceAnchor; self.sourceAnchorEnd = sourceAnchorEnd
+        self.splitOrdinal = splitOrdinal
         self.documentOrdinal = documentOrdinal
     }
 
@@ -324,6 +326,11 @@ public struct ParsedBlockNode: Sendable, Equatable {
     public let fingerprint: UInt64?
     /// Immutable original-source start survives math backfill's nil range policy.
     package let sourceAnchor: Int
+    /// End of the original block a rebuilt block came from, carried for the same
+    /// reason and with the same lifetime as `sourceAnchor`. Every piece of one
+    /// split shares it, so it bounds the *run*, not an individual piece — without
+    /// it a copy has no provable end and has to guess at the document's.
+    package let sourceAnchorEnd: Int?
     package let splitOrdinal: Int
     /// Non-nil only for public, programmatically constructed source-less nodes.
     /// Parser/backfill constructors explicitly preserve their real source anchor.
@@ -663,6 +670,7 @@ enum MathBackfill {
                     sourceRange: nil,
                     fingerprint: nil,
                     sourceAnchor: node.sourceAnchor,
+                    sourceAnchorEnd: node.sourceRange?.upperBound ?? node.sourceAnchorEnd,
                     splitOrdinal: $0.offset
                 )
             }

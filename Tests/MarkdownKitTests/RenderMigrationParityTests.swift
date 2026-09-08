@@ -162,7 +162,7 @@ struct RenderMigrationParityTests {
         let model = pair.snapshot.displayModel
         #expect(pair.snapshot.attributedString.string == "A😀\n\u{00A0}\nlast")
         #expect(pair.snapshot.blockStarts == [0, 4, 6])
-        let copied = try markdownSourceForRenderedSelection(renderedRange: NSRange(location: 1, length: 4), renderedPlainText: pair.snapshot.attributedString.string, blockStarts: pair.snapshot.blockStarts, parsedBlocks: #require(model.preparedBlocks), renderedLength: pair.snapshot.attributedString.length, originalSource: #require(model.source))
+        let copied = try markdownSourceCopy(renderedRange: NSRange(location: 1, length: 4), renderedPlainText: pair.snapshot.attributedString.string, blockStarts: pair.snapshot.blockStarts, parsedBlocks: #require(model.preparedBlocks), renderedLength: pair.snapshot.attributedString.length, originalSource: #require(model.source), renderedFallback: nil).text
         #expect(copied == "**A😀**\n\n| x | y |\n|---|---|\n| a | b |")
         let configuration = RenderStyle.default.snapshot(generation: 0)
         let document = MarkdownDocument(parsedBlocks: [.init(block: .paragraph([.text("A😀")])), .init(block: .paragraph([.text("last")]))])
@@ -170,24 +170,22 @@ struct RenderMigrationParityTests {
         let prepared = try RenderPreparer(configuration: configuration).prepare(input)
         let snapshot = RenderMaterializer(configuration: configuration).materialize(prepared, resources: .init(values: [:]))
         #expect(snapshot.blockStarts == [0, 4])
-        #expect(markdownSourceForRenderedSelection(renderedRange: NSRange(location: 1, length: 2), renderedPlainText: snapshot.attributedString.string, blockStarts: snapshot.blockStarts, parsedBlocks: document.parsedBlocks, renderedLength: snapshot.attributedString.length, originalSource: "") == "😀")
+        #expect(markdownSourceCopy(renderedRange: NSRange(location: 1, length: 2), renderedPlainText: snapshot.attributedString.string, blockStarts: snapshot.blockStarts, parsedBlocks: document.parsedBlocks, renderedLength: snapshot.attributedString.length, originalSource: "", renderedFallback: nil).text == "😀")
     }
 
-    /// The legacy mapping keeps its all-or-nothing fallback. Task 9's replacement
-    /// recovers a source-less block's bytes only where a boundary is *provable*
-    /// — from `sourceAnchor` at the start, from a real range or the end of the
-    /// document at the end — and a block with more document after it has no
-    /// recorded end, so this shape stays on the fallback. `MarkdownCopyTests`
-    /// covers the shapes that do recover.
+    /// A block the math transform rebuilt carries no `sourceRange`, but it does
+    /// carry `sourceAnchor` and `sourceAnchorEnd`, so both boundaries are
+    /// provable and the author's bytes come back rather than the old
+    /// all-or-nothing rendered fallback.
     @Test
-    func mathBackfillWithoutSourceRangesKeepsLegacyCopyFallback() async throws {
+    func mathBackfillWithoutSourceRangesRecoversTheAuthorsBytes() async throws {
         let source = "**A😀**\n\n$$\nx\n$$\n\nlast"
         let pair = try await render(source, width: 120, mode: .static)
         let blocks = try #require(pair.snapshot.displayModel.preparedBlocks)
         #expect(blocks[1].sourceRange == nil)
         #expect(pair.snapshot.blockStarts == [0, 4, 6])
         let text = pair.snapshot.attributedString
-        #expect(markdownSourceForRenderedSelection(renderedRange: NSRange(location: 1, length: 4), renderedPlainText: text.string, blockStarts: [0, 4, 6], parsedBlocks: blocks, renderedLength: text.length, originalSource: source) == "😀\n\u{FFFC}")
+        #expect(markdownSourceCopy(renderedRange: NSRange(location: 1, length: 4), renderedPlainText: text.string, blockStarts: [0, 4, 6], parsedBlocks: blocks, renderedLength: text.length, originalSource: source, renderedFallback: nil).text == "**A😀**\n\n$$\nx\n$$")
     }
 
     @Test

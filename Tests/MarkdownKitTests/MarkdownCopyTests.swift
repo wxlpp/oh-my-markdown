@@ -140,10 +140,9 @@ struct MarkdownCopyTests {
         #expect(result.text.contains("programmatic text"))
     }
 
-    /// Bracketing recovers bytes from the gap between neighbouring source
-    /// ranges. It is only sound when the source-less run *starts* where the
-    /// selection starts: a run reaching further back would hand over the bytes of
-    /// blocks the reader never selected, and claim they were exact.
+    /// A rebuilt block's start comes from its own `sourceAnchor`, and one anchor
+    /// bounds the whole run it belongs to, so it may only be used when the run
+    /// starts where the selection starts.
     @Test func aSourcelessRunReachingPastTheSelectionIsNotPassedOffAsExactSource() async throws {
         let view = await self.view("alpha $x$ one\n\nbeta $y$ two")
         defer { view.dismantleRenderSession() }
@@ -155,8 +154,8 @@ struct MarkdownCopyTests {
         #expect(result.granularity != .exact)
     }
 
-    /// Whole-document selections may bracket freely, because there is nothing
-    /// outside the selection for the bracket to reach into.
+    /// A document made entirely of rebuilt blocks still has both boundaries:
+    /// the first block's anchor and the last block's recorded end.
     @Test func aWholeDocumentOfSourcelessBlocksStillRecoversItsBytes() async throws {
         let view = await self.view("alpha $x$ one\n\nbeta $y$ two")
         defer { view.dismantleRenderSession() }
@@ -167,7 +166,7 @@ struct MarkdownCopyTests {
     }
 
     /// Leading whitespace is load-bearing: four spaces are the difference between
-    /// a code block and a paragraph, so a block's own range is never trimmed.
+    /// a code block and a paragraph, and a range starts at the content column.
     @Test func indentationSurvivesWhenAnotherBlockInTheSelectionHasNoSourceRange() async throws {
         let source = "para\n\n    indented code\n    second line\n\n$$\nx\n$$"
         let view = await self.view(source)
@@ -227,6 +226,50 @@ struct MarkdownCopyTests {
         #expect(!result.text.contains("tail"))
     }
 
+    /// "The last selected block is the last block" is not "its bytes reach the
+    /// end of the document": a reference definition after it belongs to no block
+    /// and must not be copied, let alone called exact.
+    @Test func sourceOwnedByNoBlockAfterTheLastBlockIsNotCopied() async throws {
+        let view = await self.view("para with $x$ math\n\n[ref]: https://never-rendered.test/secret\n")
+        defer { view.dismantleRenderSession() }
+        self.selectAll(view)
+        let result = try #require(view.markdownSourceSelectionResult())
+        #expect(!result.text.contains("never-rendered.test"), "copied a trailing ref-def: \(result.text.debugDescription)")
+    }
+
+    @Test func aMidDocumentFormulaStillReturnsTheAuthorsBytes() async throws {
+        let view = await self.view("alpha\n\n$$\n  x  \n$$\n\nomega")
+        defer { view.dismantleRenderSession() }
+        let starts = try #require(view.currentSnapshot).blockStarts
+        let mathOnly = NSRange(location: starts[1], length: 1)
+        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: mathOnly))
+        #expect(result.text == "$$\n  x  \n$$", "lost the author's spacing: \(result.text.debugDescription)")
+        #expect(result.granularity == .exact)
+    }
+
+    /// A block rebuilt into several pieces shares one anchor and one end, so the
+    /// end may only be used when the selection covers the run's last piece.
+    @Test func selectingPartOfARebuiltRunDoesNotClaimTheWholeRunsBytes() async throws {
+        let view = await self.view("lead $x$ mid\n\n$$\ny\n$$\n\ntail")
+        defer { view.dismantleRenderSession() }
+        let starts = try #require(view.currentSnapshot).blockStarts
+        let firstOnly = NSRange(location: starts[0], length: starts[1] - 1 - starts[0])
+        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: firstOnly))
+        #expect(!result.text.contains("tail"))
+        #expect(!result.text.contains("$$"), "claimed a later block's bytes: \(result.text.debugDescription)")
+    }
+
+    /// The reconstruction path must respect the selection inside a block, or a
+    /// three-character selection pastes a whole paragraph including a URL.
+    @Test func reconstructionIsClampedToTheSelection() async throws {
+        let view = await self.view("text $x$ here\n\n![alt](https://never-rendered.test/p.png) and $y$ tail")
+        defer { view.dismantleRenderSession() }
+        let starts = try #require(view.currentSnapshot).blockStarts
+        let sliver = NSRange(location: starts[1] + 2, length: 3)
+        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: sliver))
+        #expect(!result.text.contains("never-rendered.test"), "reconstruction ignored the selection: \(result.text.debugDescription)")
+    }
+
     // MARK: Commands and resources
 
     /// Pins both the `resources:` wiring and the two `.strings` files: without
@@ -256,6 +299,29 @@ struct MarkdownCopyTests {
         #expect(titles.contains(MarkdownCopyCommandTitle.markdownSource))
         #endif
     }
+
+    #if canImport(AppKit)
+    /// The context menu adds to the host's. Retargeting the host's items would
+    /// point them at a view that does not respond to their action, which AppKit
+    /// then disables — the menu would look intact and do nothing.
+    @MainActor @Test func theHostsOwnContextMenuItemsKeepWorking() async throws {
+        final class HostTarget: NSObject { @objc func hostAction(_: Any?) {} }
+        let host = HostTarget()
+        let hostMenu = NSMenu()
+        let hostItem = hostMenu.addItem(withTitle: "Host Action", action: #selector(HostTarget.hostAction(_:)), keyEquivalent: "")
+        hostItem.target = host
+        let view = await self.view("# Title")
+        defer { view.dismantleRenderSession() }
+        view.menu = hostMenu
+        self.selectAll(view)
+        let menu = try #require(view.menu(for: NSEvent()))
+        let survivor = try #require(menu.items.first { $0.title == "Host Action" })
+        #expect(survivor.target as? HostTarget === host, "the host's item was retargeted and no longer works")
+        #expect(survivor.action == #selector(HostTarget.hostAction(_:)))
+        #expect(menu.items.contains { $0.title == MarkdownCopyCommandTitle.markdownSource })
+        withExtendedLifetime(host) {}
+    }
+    #endif
 
     /// `renderedCopyText` emits a whole `.markdownCopyText` value for any
     /// sub-range that touches it, which is only correct while every such run is
