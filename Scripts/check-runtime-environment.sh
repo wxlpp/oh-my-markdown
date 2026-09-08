@@ -8,7 +8,11 @@ if (($# != 1)); then
 fi
 
 section="$1"
-swift --version | grep -E 'Apple Swift version 6\.2([ .]|$)'
+# A minimum, not an exact version: `Package.swift` declares tools 6.2, and
+# pinning the toolchain to exactly 6.2 made the gate fail on the Xcode 26.4
+# toolchain the package is developed with (Swift 6.3). The release evidence
+# records the toolchain a given run actually used.
+swift --version | grep -E 'Apple Swift version 6\.([2-9]|[1-9][0-9])([ .]|$)'
 xcodebuild -version | head -1 | grep -E '^Xcode 26([.]|$)'
 
 case "$section" in
