@@ -400,7 +400,7 @@ private actor LegacyRegexSyntaxCache {
     }
 }
 
-@Suite("Incremental work budgets")
+@Suite("Incremental work budgets", .timeLimit(.minutes(5)))
 struct IncrementalWorkBudgetTests {
     @Test("Cancellation inside owned preparation loops retains only completed work")
     @MainActor func partialPreparationAttemptAccounting() async throws {

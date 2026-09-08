@@ -16,7 +16,7 @@ import AppKit
 /// a reader sees it; explicit source copy must return Markdown syntax and say
 /// how faithful it was.
 @MainActor
-@Suite(.serialized)
+@Suite(.timeLimit(.minutes(5)), .serialized)
 struct MarkdownCopyTests {
     private func view(_ markdown: String, width: Double = 360) async -> MarkdownLabelView {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: width, height: 10000))
@@ -26,7 +26,7 @@ struct MarkdownCopyTests {
         view.layoutSubtreeIfNeeded()
         #endif
         view.setMarkdown(markdown)
-        _ = await eventually { view.currentSnapshot != nil }
+        await view.settled { view.currentSnapshot != nil }
         return view
     }
 
@@ -40,7 +40,7 @@ struct MarkdownCopyTests {
         view.layoutSubtreeIfNeeded()
         #endif
         view.blocks = MarkdownDocument(parsing: markdown).blocks
-        _ = await eventually { view.currentSnapshot != nil }
+        await view.settled { view.currentSnapshot != nil }
         return view
     }
 
@@ -147,7 +147,7 @@ struct MarkdownCopyTests {
         view.layoutSubtreeIfNeeded()
         #endif
         view.blocks = MarkdownDocument(parsing: "programmatic text").blocks
-        _ = await eventually { view.currentSnapshot != nil }
+        await view.settled { view.currentSnapshot != nil }
         self.selectAll(view)
         let result = try #require(view.markdownSourceSelectionResult())
         #expect(result.granularity == .renderedFallback)
@@ -361,7 +361,7 @@ struct MarkdownCopyTests {
         for chunk in source.map(String.init) {
             streamed.appendMarkdown(chunk)
         }
-        #expect(await eventually { streamed.currentSnapshot?.displayModel.source == source })
+        await streamed.settled { streamed.currentSnapshot?.displayModel.source == source }
         let starts = try #require(whole.currentSnapshot).blockStarts
         #expect(try #require(streamed.currentSnapshot).blockStarts == starts)
         for index in starts.indices {
@@ -510,7 +510,7 @@ struct MarkdownCopyTests {
         host.layoutSubtreeIfNeeded()
         #endif
         let label = try #require(await settleForLabel(in: host))
-        #expect(await eventually { label.currentSnapshot != nil })
+        await label.settled { label.currentSnapshot != nil }
         let proxy = try #require(captured)
         // Nothing selected yet: both readers report nothing rather than guessing.
         #expect(proxy.renderedSelection == nil)

@@ -150,7 +150,7 @@ struct PlatformSessionWiringTests {
         #expect(first.content.frame.height == firstData.height)
         #expect(first.content.frame.width == firstData.naturalWidth)
         view.setMarkdown("| A | B |\n|---|---|\n| new | value |")
-        #expect(await eventually { view.currentSnapshot?.tableOverlays[0]?.attributedString.string.contains("new") == true })
+        await view.settled { view.currentSnapshot?.tableOverlays[0]?.attributedString.string.contains("new") == true }
         let second = try #require(view._tableOverlays[0])
         #expect(first.scroll === second.scroll)
         #expect(second.data === view.currentSnapshot?.tableOverlays[0])
@@ -186,7 +186,7 @@ struct PlatformSessionWiringTests {
         let token = try #require(view.currentCommitToken)
         let request = RenderImageRequest(token: token, source: "https://example.com/image.png")
         await loader.finish(0, result: .failure(PausedImageLoader.Failure.failed))
-        #expect(await eventually { view.imageRequests[request] == .failed })
+        await view.settled { view.imageRequests[request] == .failed }
         #expect(view.currentCommitToken == token)
         #expect(view.currentSnapshot?.attributedString.string == "🖼 alt")
         #expect(await loader.sources.count == 1)
@@ -308,7 +308,7 @@ struct PlatformSessionWiringTests {
     @Test func programmaticDocumentUsesSessionAndSourceAbsentCopyFallback() async {
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         view.blocks = [.paragraph([.strong([.text("direct")])]), .paragraph([.text("😀")])]
-        #expect(await eventually { view.currentSnapshot?.attributedString.string == "direct\n😀" })
+        await view.settled { view.currentSnapshot?.attributedString.string == "direct\n😀" }
         #expect(view.currentSnapshot?.displayModel.source == nil)
         #expect(view.currentSnapshot?.blockStarts == [0, 7])
         view._selectEntireDocumentForTesting()
@@ -413,7 +413,7 @@ struct PlatformSessionWiringTests {
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         view.setMarkdown("**one**")
         view.appendMarkdown(" two")
-        #expect(await eventually { view.currentSnapshot?.attributedString.string == "one two" })
+        await view.settled { view.currentSnapshot?.attributedString.string == "one two" }
         let prior = try #require(view.currentCommitToken)
         view.frame.size.width = 180
         #if canImport(UIKit)
@@ -421,7 +421,7 @@ struct PlatformSessionWiringTests {
         #else
         view.layout()
         #endif
-        #expect(await eventually { view.currentSnapshot?.displayModel.availableWidth == 180 })
+        await view.settled { view.currentSnapshot?.displayModel.availableWidth == 180 }
         #expect(try #require(view.currentCommitToken).sequence > prior.sequence)
         view.dismantleRenderSession()
         #expect(view.currentSnapshot == nil)

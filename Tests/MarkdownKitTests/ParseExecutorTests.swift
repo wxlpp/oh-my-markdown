@@ -95,7 +95,7 @@ func parseJob(_ source: String, token: ParseSessionToken = .init()) -> ParseJob 
     )
 }
 
-@Suite(.serialized) struct ParseExecutorTests {
+@Suite(.timeLimit(.minutes(5)), .serialized) struct ParseExecutorTests {
     @Test func tokenCopiesShareRevocationAndDictionaryIdentity() {
         let original = ParseSessionToken()
         let copy = original

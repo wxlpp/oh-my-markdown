@@ -54,7 +54,7 @@ struct AllowEverythingPolicy: MarkdownLinkPolicy {
     }
 }
 
-@Suite(.serialized)
+@Suite(.timeLimit(.minutes(5)), .serialized)
 struct MarkdownLinkPolicyTests {
     private func request(_ string: String, generation: UInt64 = 0) throws -> MarkdownLinkRequest {
         try MarkdownLinkRequest(url: #require(URL(string: string)), configurationGeneration: generation)
@@ -110,7 +110,7 @@ struct MarkdownLinkPolicyTests {
         defer { view.dismantleRenderSession() }
         view.linkConfiguration = MarkdownLinkConfiguration.webOnly(handler: handler)
         view.setMarkdown("[web](https://example.com/ok) and [mail](mailto:x@example.com)")
-        #expect(await eventually { view.currentSnapshot != nil })
+        await view.settled { view.currentSnapshot != nil }
 
         #expect(view.activateLink(at: 0))
         #expect(await eventually { handler.opened.count == 1 })
@@ -132,7 +132,7 @@ struct MarkdownLinkPolicyTests {
         defer { view.dismantleRenderSession() }
         view.linkConfiguration = MarkdownLinkConfiguration(policy: AllowEverythingPolicy(), handler: handler)
         view.setMarkdown("[broken](http://[invalid)")
-        #expect(await eventually { view.currentSnapshot?.attributedString.string.contains("broken") == true })
+        await view.settled { view.currentSnapshot?.attributedString.string.contains("broken") == true }
         let text = view.currentSnapshot?.attributedString
         #expect(text?.attribute(.link, at: 0, effectiveRange: nil) == nil)
         #expect(!view.activateLink(at: 0))
@@ -150,7 +150,7 @@ struct MarkdownLinkPolicyTests {
         defer { view.dismantleRenderSession() }
         view.linkConfiguration = MarkdownLinkConfiguration(policy: gated, handler: stale)
         view.setMarkdown("[web](https://example.com/stale)")
-        #expect(await eventually { view.currentSnapshot != nil })
+        await view.settled { view.currentSnapshot != nil }
 
         #expect(view.activateLink(at: 0))
         // The decision is in flight, off the main actor.
@@ -193,7 +193,7 @@ struct MarkdownLinkPolicyTests {
         host.layoutSubtreeIfNeeded()
         #endif
         let label = try #require(await settleForLabel(in: host))
-        #expect(await eventually { label.currentSnapshot != nil })
+        await label.settled { label.currentSnapshot != nil }
 
         // What a host actually writes: the allow list is view state, so tightening
         // it re-evaluates the body with the same policy type and the same handler.
@@ -240,7 +240,7 @@ struct MarkdownLinkPolicyTests {
         host.layoutSubtreeIfNeeded()
         #endif
         let label = try #require(await settleForLabel(in: host))
-        #expect(await eventually { label.currentSnapshot != nil })
+        await label.settled { label.currentSnapshot != nil }
         #expect(label.activateLink(at: 0))
         #expect(await eventually { handler.opened.count == 1 })
 
@@ -283,7 +283,7 @@ struct MarkdownLinkPolicyTests {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }
         view.setMarkdown("[web](https://example.com/gen)")
-        #expect(await eventually { view.currentSnapshot != nil })
+        await view.settled { view.currentSnapshot != nil }
         let before = try #require(view.currentCommitToken)
         view.linkConfiguration = MarkdownLinkConfiguration(policy: AllowEverythingPolicy(), handler: handler)
         #expect(await eventually {
@@ -311,7 +311,7 @@ struct MarkdownLinkPolicyTests {
         host.layoutSubtreeIfNeeded()
         #endif
         let label = try #require(await settleForLabel(in: host))
-        #expect(await eventually { label.currentSnapshot != nil })
+        await label.settled { label.currentSnapshot != nil }
         #expect(label.linkConfiguration.handlerID == configuration.handlerID)
         // A custom scheme activates only because this policy permits it.
         #expect(label.activateLink(at: 0))
@@ -329,7 +329,7 @@ struct MarkdownLinkPolicyTests {
         defer { view.dismantleRenderSession() }
         view.linkConfiguration = MarkdownLinkConfiguration(policy: AllowEverythingPolicy(), handler: handler)
         view.setMarkdown("[web](https://example.com/stable) ![img](https://images.test/a.png)")
-        #expect(await eventually { view.currentSnapshot != nil })
+        await view.settled { view.currentSnapshot != nil }
         let before = try #require(view.currentCommitToken)
         let resourcesBefore = try resourceIdentifiers(of: #require(view.currentSnapshot))
 
@@ -373,7 +373,7 @@ struct MarkdownLinkPolicyTests {
         defer { view.dismantleRenderSession() }
         view.linkConfiguration = .derived(policy: AllowListPolicy(hosts: ["evil.test", "good.test"]), handler: handler)
         view.setMarkdown("[a](https://evil.test/x)")
-        #expect(await eventually { view.currentSnapshot != nil })
+        await view.settled { view.currentSnapshot != nil }
 
         // Same policy type, narrower allow list: the identities are equal by design.
         let tightened = MarkdownLinkConfiguration.derived(policy: AllowListPolicy(hosts: ["good.test"]), handler: handler)
@@ -401,7 +401,7 @@ struct MarkdownLinkPolicyTests {
             policy: gated, handler: stale, policyID: shared, handlerID: shared
         )
         view.setMarkdown("[web](https://example.com/inflight)")
-        #expect(await eventually { view.currentSnapshot != nil })
+        await view.settled { view.currentSnapshot != nil }
         #expect(view.activateLink(at: 0))
         #expect(await Task.detached { gated.waitUntilEntered() }.value)
         view.linkConfiguration = MarkdownLinkConfiguration(
@@ -423,7 +423,7 @@ struct MarkdownLinkPolicyTests {
         defer { view.dismantleRenderSession() }
         view.linkConfiguration = .derived(policy: AllowEverythingPolicy(), handler: handler)
         view.setMarkdown("[web](https://example.com/frames) ![img](https://images.test/a.png)")
-        #expect(await eventually { view.currentSnapshot != nil })
+        await view.settled { view.currentSnapshot != nil }
         let before = try #require(view.currentCommitToken)
         let resourcesBefore = try resourceIdentifiers(of: #require(view.currentSnapshot))
 
@@ -465,7 +465,7 @@ struct MarkdownLinkPolicyTests {
         host.layoutSubtreeIfNeeded()
         #endif
         let label = try #require(await settleForLabel(in: host))
-        #expect(await eventually { label.currentSnapshot != nil })
+        await label.settled { label.currentSnapshot != nil }
         let before = try #require(label.currentCommitToken)
         for chunk in [" one", " two", " three"] {
             source.append(chunk)
@@ -529,7 +529,7 @@ func firstLabel(in root: Any) -> MarkdownLabelView? {
 /// text-view inventory because that view shows raw source, not rendered links.
 /// The exemption is only sound while the storage it displays carries no `.link`
 /// run — a text view opens one by itself, outside the audited handler.
-@Suite(.serialized)
+@Suite(.timeLimit(.minutes(5)), .serialized)
 struct MarkdownEditorLinkAttributeTests {
     @MainActor @Test func theEditorStorageNeverCarriesALinkAttribute() throws {
         let source = """

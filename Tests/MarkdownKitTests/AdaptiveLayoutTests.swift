@@ -13,7 +13,7 @@ import AppKit
 /// Task 11's layout contract. Growing the text must not produce a document that
 /// collapses, overlaps itself, or loses the horizontal escape hatch for tables.
 @MainActor
-@Suite(.serialized)
+@Suite(.serialized, .timeLimit(.minutes(5)))
 struct AdaptiveLayoutTests {
     /// Every shape whose height comes from a different code path: wrapped body
     /// text, a heading, an indented code block, a quote, a list, a wide table,
@@ -232,12 +232,12 @@ struct AdaptiveLayoutTests {
         // pinned here rather than inherited from whatever the simulator was left at.
         view.contentSizeCategory = .large
         view.blocks = Self.blocks()
-        #expect(await eventually { view.currentSnapshot != nil })
+        await view.settled { view.currentSnapshot != nil }
         let before = try #require(view.currentCommitToken)
         let bodyBefore = try #require(view.currentSnapshot?.attributedString.bodyPointSize)
 
         view.contentSizeCategory = .accessibilityExtraExtraExtraLarge
-        #expect(await eventually { view.currentCommitToken?.configurationGeneration == before.configurationGeneration + 1 })
+        await view.settled { view.currentCommitToken?.configurationGeneration == before.configurationGeneration + 1 }
         #expect(try #require(view.currentSnapshot?.attributedString.bodyPointSize) > bodyBefore)
         #expect(view.renderStyle.isSemanticallyEqual(to: style))
 
@@ -260,7 +260,7 @@ struct AdaptiveLayoutTests {
         defer { window.isHidden = true; view.removeFromSuperview() }
         view.layoutIfNeeded()
         view.blocks = Self.blocks()
-        #expect(await eventually { view.currentSnapshot != nil })
+        await view.settled { view.currentSnapshot != nil }
         try #require(view.contentSizeCategory == .large)
         let before = try #require(view.currentCommitToken)
         let bodyBefore = try #require(view.currentSnapshot?.attributedString.bodyPointSize)
@@ -268,8 +268,8 @@ struct AdaptiveLayoutTests {
         window.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
         view.layoutIfNeeded()
         // UIKit delivers the trait change on a later turn, not inside the assignment.
-        #expect(await eventually { view.contentSizeCategory == .accessibilityExtraExtraExtraLarge })
-        #expect(await eventually { view.currentCommitToken?.configurationGeneration == before.configurationGeneration + 1 })
+        await view.settled { view.contentSizeCategory == .accessibilityExtraExtraExtraLarge }
+        await view.settled { view.currentCommitToken?.configurationGeneration == before.configurationGeneration + 1 }
         #expect(try #require(view.currentSnapshot?.attributedString.bodyPointSize) > bodyBefore)
     }
     #endif

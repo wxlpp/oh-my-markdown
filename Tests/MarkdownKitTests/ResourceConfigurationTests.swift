@@ -11,7 +11,7 @@ import AppKit
 #endif
 
 @MainActor
-@Suite(.serialized)
+@Suite(.timeLimit(.minutes(5)), .serialized)
 struct ResourceConfigurationTests {
     private final class HandlerLifetime {}
     actor PausedLoader: MarkdownImageLoading {
@@ -99,7 +99,7 @@ struct ResourceConfigurationTests {
         else { view.onResourceError = { _ in currentCalls += 1 } }
         #expect(oldOwner == nil)
         await loader.finish(.failure(MarkdownResourceError.transport))
-        #expect(await eventually { view.imageRequests.values.contains(.failed) })
+        await view.settled { view.imageRequests.values.contains(.failed) }
         #expect(view.currentCommitToken == token)
         #expect(oldCalls == 0)
         #expect(currentCalls == (removeHandler ? 0 : 1))
@@ -116,7 +116,7 @@ struct ResourceConfigurationTests {
         #expect(await eventually { await loader.calls == 1 }, "View error: \(String(describing: view.lastRenderError))")
         let prior = try #require(view.currentCommitToken)
         view.remoteImages = .disabled
-        #expect(await eventually { view.currentCommitToken?.configurationGeneration == prior.configurationGeneration + 1 })
+        await view.settled { view.currentCommitToken?.configurationGeneration == prior.configurationGeneration + 1 }
         await loader.finish(.success(.init(data: MarkdownImageLoaderTests.png, declaredMIMEType: "image/png")))
         #expect(await eventually { await loader.completed == 1 })
         #expect(view.currentSnapshot?.attributedString.string == "🖼 alt")
@@ -188,7 +188,7 @@ struct ResourceConfigurationTests {
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }
         view.blocks = MarkdownDocument(parsing: "![private alt](https://127.0.0.1:1/private.png?secret=never-send)").blocks
-        #expect(await eventually { view.currentSnapshot != nil })
+        await view.settled { view.currentSnapshot != nil }
         #expect(view.currentSnapshot?.attributedString.string == "🖼 private alt")
         #expect(view.imageRequests.isEmpty)
         #expect(view.sessionDriver?.resourceTaskOwner.count == 0)

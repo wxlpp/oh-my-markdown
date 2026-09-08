@@ -111,7 +111,7 @@ final class ManualRenderClock: RenderSessionClock {
     }
 }
 
-@Suite(.serialized) @MainActor struct MarkdownRenderSessionTests {
+@Suite(.timeLimit(.minutes(5)), .serialized) @MainActor struct MarkdownRenderSessionTests {
     /// Deliberately holds MainActor across teardown and the weak-release assertion.
     /// The detached observer only owns a weak actor box, so it cannot mask a cycle.
     private func releaseOwnersBeforeAllowingQueuedPublication(

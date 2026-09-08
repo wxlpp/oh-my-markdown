@@ -13,7 +13,7 @@ import AppKit
 /// The platform half of Task 10: semantic leaves become real accessibility
 /// elements with real layout frames, and survive streaming without moving focus.
 @MainActor
-@Suite(.serialized)
+@Suite(.timeLimit(.minutes(5)), .serialized)
 struct MarkdownAccessibilityPlatformTests {
     private func view(_ markdown: String, width: Double = 360) async -> MarkdownLabelView {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: width, height: 4000))
@@ -23,7 +23,7 @@ struct MarkdownAccessibilityPlatformTests {
         view.layoutSubtreeIfNeeded()
         #endif
         view.setMarkdown(markdown)
-        _ = await eventually { view.currentSnapshot != nil }
+        await view.settled { view.currentSnapshot != nil }
         return view
     }
 
@@ -300,7 +300,7 @@ struct MarkdownAccessibilityPlatformTests {
             var style = RenderStyle.default
             style.bodyFont = .systemFont(ofSize: size)
             view.renderStyle = style
-            _ = await eventually { view.currentSnapshot != nil }
+            await view.settled { view.currentSnapshot != nil }
             #expect(
                 view.tableOverlayScrollObservers.count == view._tableOverlays.count,
                 "leaked \(view.tableOverlayScrollObservers.count - view._tableOverlays.count) observer(s) on a style change"
@@ -308,7 +308,7 @@ struct MarkdownAccessibilityPlatformTests {
         }
         view.frame = CGRect(x: 0, y: 0, width: 400, height: 4000)
         view.layoutSubtreeIfNeeded()
-        _ = await eventually { view.currentSnapshot != nil }
+        await view.settled { view.currentSnapshot != nil }
         #expect(view.tableOverlayScrollObservers.count == view._tableOverlays.count)
 
         view.dismantleRenderSession()

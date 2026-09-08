@@ -122,10 +122,12 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             self.triggerSVGBlockLoads(in: range, string: table.attributedString)
         }
         withExtendedLifetime(previousSnapshot) {}
+        self._onRenderEvent?()
     }
 
     package func receive(error: RenderSessionError) {
         self.lastRenderError = error
+        self._onRenderEvent?()
     }
 
     package func resolvedResources(for model: RenderDisplayModel, configuration: RenderConfigurationSnapshot) -> ResolvedResourceSnapshot {
@@ -583,9 +585,23 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     /// Every full re-materialization of the display model, including the ones each
     /// coalesced batch of resolved resources triggers. Bounds the cost that
     /// per-arrival resource completion imposes on a long document.
-    package private(set) var _materializationCount = 0
+    package private(set) var _materializationCount = 0 {
+        didSet { self._onRenderEvent?() }
+    }
+
     /// Source URLs currently being fetched (prevents duplicate requests).
-    package private(set) var imageRequests: [RenderImageRequest: RenderImageLoadState] = [:]
+    package private(set) var imageRequests: [RenderImageRequest: RenderImageLoadState] = [:] {
+        didSet { self._onRenderEvent?() }
+    }
+
+    /// Test seam: invoked after every observable render change — a snapshot
+    /// install, an error, a resource state change, a re-materialization. A test
+    /// re-checks its condition here rather than on a timer, so it waits for the
+    /// event it asserts on instead of for time to pass. Extra invocations are
+    /// harmless; a missing one turns a test into a hang, which is why every
+    /// mutation goes through a `didSet` rather than a hand-placed call.
+    package var _onRenderEvent: (@MainActor () -> Void)?
+
     /// Remote images remain placeholders until the host explicitly opts in.
     public var remoteImages: MarkdownRemoteImageConfiguration = .disabled {
         didSet {

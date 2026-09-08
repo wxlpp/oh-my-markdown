@@ -2,7 +2,7 @@ import Foundation
 @testable import MarkdownPlatformView
 import Testing
 
-@Suite(.serialized)
+@Suite(.timeLimit(.minutes(5)), .serialized)
 struct ImageResourceCoordinatorTests {
     @Test func decodingConsumesEncodedReservationAndNormalizesThumbnail() async throws {
         let coordinator = ImageResourceCoordinator()

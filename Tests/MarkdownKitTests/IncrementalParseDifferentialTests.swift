@@ -9,7 +9,7 @@ import UIKit
 import AppKit
 #endif
 
-@Suite("Incremental parsing differential")
+@Suite("Incremental parsing differential", .timeLimit(.minutes(5)))
 struct IncrementalParseDifferentialTests {
     /// `parsedBlocks ==` ignores `sourceAnchor`/`sourceAnchorEnd` by design, so
     /// the other differential tests cannot see a splice that keeps a node whose
@@ -94,7 +94,7 @@ struct IncrementalParseDifferentialTests {
         let text: String
         if publicBlocksSetter {
             view.blocks = blocks
-            #expect(await eventually { view.currentSnapshot != nil })
+            await view.settled { view.currentSnapshot != nil }
             let snapshot = try #require(view.currentSnapshot)
             model = snapshot.displayModel
             text = snapshot.attributedString.string
