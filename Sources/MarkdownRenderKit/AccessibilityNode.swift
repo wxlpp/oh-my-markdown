@@ -35,7 +35,7 @@ public struct AccessibilityNodeID: Hashable, Sendable {
 public enum AccessibilityDetail: Sendable, Equatable {
     case code(language: String?)
     case cell(row: Int, column: Int, columnHeader: String?)
-    case listItem(position: Int, count: Int)
+    case listItem(position: Int, count: Int, checkbox: Bool?)
 }
 
 public enum AccessibilityActivation: Sendable, Equatable {

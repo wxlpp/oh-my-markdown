@@ -35,7 +35,7 @@ public struct RenderPreparer: Sendable {
             let display = DisplayBlock(lineage: builder.lineage, runs: builder.runs, sourceRange: block.sourceRange)
             let accessibility = AccessibilityTreeBuilder.roots(
                 for: block.block, lineage: block.lineage, sourceRange: block.sourceRange,
-                sourceGeneration: self.configuration.generation,
+                sourceGeneration: input.documentGeneration,
                 imageFallback: AccessibilityTreeBuilder.imageFallback,
                 mathFallback: AccessibilityTreeBuilder.mathFallback
             )
@@ -177,8 +177,14 @@ private struct PreparationBuilder {
         try self.checkCancellation()
         var attrs = self.body()
         switch node {
-        case .paragraph(let nodes): return try self.inlines(nodes, attributes: attrs).map(PreparedPiece.run)
+        case .paragraph(let nodes):
+            // Mirrors the tree: every block-level leaf sequence starts a new
+            // ordinal, so two sibling paragraphs in a blockquote or list item
+            // cannot collide.
+            self.nextAccessibilityLeaf()
+            return try self.inlines(nodes, attributes: attrs).map(PreparedPiece.run)
         case .heading(let level, let nodes):
+            self.nextAccessibilityLeaf()
             attrs.role = .heading(level: min(max(level, 1), 6))
             attrs.paragraph = PreparedParagraph(lineSpacing: 2, spacing: level <= 2 ? 8 : 6, before: level <= 2 ? 24 : 20)
             return try self.inlines(nodes, attributes: attrs).map(PreparedPiece.run)
@@ -240,10 +246,13 @@ private struct PreparationBuilder {
         case .bulletList(let items): return try self.list(items, start: nil)
         case .orderedList(let start, let items): return try self.list(items, start: start)
         case .thematicBreak:
+            self.accessibilityLeaf = PreparationBuilder.markerLeaf
             attrs.tinyFont = true; attrs.color = .clear
             attrs.paragraph = PreparedParagraph(lineSpacing: 0, spacing: 12, before: 12, height: 8)
             return [.run(self.text("\u{00A0}", attributes: attrs))]
-        case .htmlBlock(let value): return [.run(self.text(value, attributes: attrs))]
+        case .htmlBlock(let value):
+            self.nextAccessibilityLeaf()
+            return [.run(self.text(value, attributes: attrs))]
         case .mathBlock(let latex):
             self.nextAccessibilityLeaf()
             let id = self.resource { .math(id: $0, latex: latex, display: true) }
@@ -254,8 +263,11 @@ private struct PreparationBuilder {
             var header = attrs; header.traits = [true]
             var preparedHead: [[PreparedRun]] = []
             var preparedRows: [[[PreparedRun]]] = []
+            var headOrdinals: [Int] = []
+            var rowOrdinals: [[Int]] = []
             for cell in head {
                 self.nextAccessibilityLeaf()
+                headOrdinals.append(self.accessibilityLeaf)
                 self.accessibilityCellDepth += 1
                 try preparedHead.append(self.inlines(cell.content, attributes: header))
                 self.accessibilityCellDepth -= 1
@@ -263,15 +275,21 @@ private struct PreparationBuilder {
             for row in rows {
                 try self.checkCancellation()
                 var prepared: [[PreparedRun]] = []
+                var ordinals: [Int] = []
                 for cell in row {
                     self.nextAccessibilityLeaf()
+                    ordinals.append(self.accessibilityLeaf)
                     self.accessibilityCellDepth += 1
                     try prepared.append(self.inlines(cell.content, attributes: attrs))
                     self.accessibilityCellDepth -= 1
                 }
                 preparedRows.append(prepared)
+                rowOrdinals.append(ordinals)
             }
-            return [.table(PreparedTable(overlayEligible: overlayEligible, columns: columns, head: preparedHead, rows: preparedRows, width: self.width))]
+            return [.table(PreparedTable(
+                overlayEligible: overlayEligible, columns: columns, head: preparedHead, rows: preparedRows,
+                width: self.width, headOrdinals: headOrdinals, rowOrdinals: rowOrdinals
+            ))]
         }
     }
 
@@ -289,14 +307,19 @@ private struct PreparationBuilder {
             self.accessibilityLeaf = PreparationBuilder.markerLeaf
             result.append(.run(self.text(marker + checkbox, attributes: attrs)))
             self.accessibilityLeaf = itemLeaf
-            self.nextAccessibilityLeaf()
             var remaining = item.blocks[...]
             if let first = item.blocks.first, case .paragraph(let inlines) = first {
+                // Inlined rather than routed through `block`, so the paragraph's
+                // own leaf has to start here.
+                self.nextAccessibilityLeaf()
                 result += try self.inlines(inlines, attributes: attrs).map(PreparedPiece.run)
                 remaining = item.blocks.dropFirst()
             }
             for child in remaining {
+                let joinLeaf = self.accessibilityLeaf
+                self.accessibilityLeaf = PreparationBuilder.markerLeaf
                 result.append(.run(self.text("\n", attributes: bare)))
+                self.accessibilityLeaf = joinLeaf
                 switch child {
                 case .bulletList(let items): result += try self.list(items, start: nil, depth: depth + 1)
                 case .orderedList(let start, let items): result += try self.list(items, start: start, depth: depth + 1)

@@ -1,2 +1,7 @@
 "markdown.accessibility.image" = "Image";
 "markdown.accessibility.math" = "Formula";
+"markdown.accessibility.row" = "row";
+"markdown.accessibility.column" = "column";
+"markdown.accessibility.of" = "of";
+"markdown.accessibility.checked" = "checked";
+"markdown.accessibility.unchecked" = "unchecked";

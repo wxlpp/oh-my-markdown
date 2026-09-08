@@ -42,6 +42,24 @@ package final class MarkdownAccessibilityElement {
         self.activation = node.activation
     }
 
+    /// What a reader hears after the label. Carrying the detail no further than
+    /// the model would leave "correct table relationships" true only on paper.
+    package var spokenValue: String? {
+        switch self.detail {
+        case .cell(let row, let column, let header):
+            let position = "\(AccessibilityTreeBuilder.rowLabel) \(row + 1), \(AccessibilityTreeBuilder.columnLabel) \(column + 1)"
+            return header.map { $0.isEmpty ? position : "\($0), \(position)" } ?? position
+        case .listItem(let position, let count, let checkbox):
+            let state = checkbox.map { $0 ? AccessibilityTreeBuilder.checkedLabel : AccessibilityTreeBuilder.uncheckedLabel }
+            let position = "\(position) \(AccessibilityTreeBuilder.ofLabel) \(count)"
+            return state.map { "\($0), \(position)" } ?? position
+        case .code(let language):
+            return language
+        case nil:
+            return nil
+        }
+    }
+
     /// Returns whether anything was activated, so a caller can tell "not a link"
     /// from "opened".
     @discardableResult package func activate() -> Bool {
@@ -57,6 +75,12 @@ extension MarkdownLabelView {
     /// Rebuilt whenever a snapshot lands. Elements whose identity survives are
     /// reused in place: replacing the object a reader is focused on moves focus.
     package func rebuildAccessibilityElements() {
+        // Re-entrant by construction: the rebuild lays out the overlay, which can
+        // move its scroll position, which calls back in here. Without this the
+        // Example app hangs on a rotation.
+        guard !self.isRebuildingAccessibilityElements else { return }
+        self.isRebuildingAccessibilityElements = true
+        defer { self.isRebuildingAccessibilityElements = false }
         guard let snapshot = self.currentSnapshot else {
             self.accessibilityElementStore = [:]
             self.orderedAccessibilityElements = []
@@ -110,10 +134,7 @@ extension MarkdownLabelView {
             guard let key = value as? AccessibilityLeafKey else { return }
             ranges[key] = ranges[key].map { NSUnionRange($0, range) } ?? range
         }
-        var result: [AccessibilityLeafKey: CGRect] = [:]
-        for (key, range) in ranges {
-            if let frame = self.accessibilityFrame(forRenderedRange: range) { result[key] = frame }
-        }
+        var result = self.accessibilityFrames(forRenderedRanges: ranges.map { ($0.key, $0.value) })
         // A table too wide for the view keeps only a placeholder character in the
         // main document; its cells live in the overlay's own text stack, so their
         // frames come from there and are converted into this view's space.

@@ -32,6 +32,10 @@ package actor MarkdownRenderSession: ParseResultSink {
     package private(set) var lastWorkMetrics: ParseWorkMetrics?
     private var configuration: RenderConfigurationSnapshot?
     private var suppliedDocument: MarkdownDocument?
+    /// Bumped only when the document is replaced, never by an append and never
+    /// by a width or style change. Accessibility identity is anchored to it, so
+    /// a rotation must not renumber every element.
+    private var documentGeneration: UInt64 = 0
     package private(set) var currentToken: RenderCommitToken?
     package private(set) var submission: ParseSubmission?
     private var retryTask: Task<Void, Never>?
@@ -91,6 +95,11 @@ package actor MarkdownRenderSession: ParseResultSink {
         self.submission = nil
         switch event.mutation {
         case .setSource(let value, let configuration):
+            // A replacement is a new document, so accessibility identities must
+            // not survive it. An append must not bump this, and neither must a
+            // width or style change — that is the whole point of not using the
+            // render generation, which moves on a rotation.
+            self.documentGeneration &+= 1
             self.sourceBuffer = IncrementalSourceBuffer(recorder: self.workRecorder)
             self.pendingWorkMetrics = ParseWorkMetrics()
             do { try self.sourceBuffer.append(value, metrics: &self.pendingWorkMetrics) }
@@ -100,6 +109,7 @@ package actor MarkdownRenderSession: ParseResultSink {
             self.suppliedDocument = nil
             self.placeholderMode = .static
         case .setDocument(let document, let configuration):
+            self.documentGeneration &+= 1
             self.sourceBuffer = IncrementalSourceBuffer(recorder: self.workRecorder)
             self.latestParse = nil
             self.suppliedDocument = document
@@ -214,6 +224,7 @@ package actor MarkdownRenderSession: ParseResultSink {
             let input = RenderInput(
                 document: observedDocument, source: nil, availableWidth: self.availableWidth,
                 configuration: configuration, placeholderMode: self.placeholderMode,
+                documentGeneration: self.documentGeneration,
                 previousModel: base, sourceBuffer: self.suppliedDocument == nil ? self.sourceBuffer.recordingFacades(with: facadeRecorder) : nil,
                 attemptRecorder: self.attempts[received]
             )

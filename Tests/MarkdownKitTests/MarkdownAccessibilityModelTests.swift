@@ -126,7 +126,35 @@ struct MarkdownAccessibilityModelTests {
             [node] + node.children.flatMap(all)
         }
         let items = tree.roots.flatMap(all).filter { $0.role == .listItem }
-        #expect(items.map(\.detail) == [.listItem(position: 1, count: 2), .listItem(position: 2, count: 2)])
+        #expect(items.map(\.detail) == [
+            .listItem(position: 1, count: 2, checkbox: nil), .listItem(position: 2, count: 2, checkbox: nil),
+        ])
+    }
+
+    /// A reader cannot tell a done item from an open one without this.
+    @Test func taskListItemsCarryTheirCheckboxState() throws {
+        let tree = try self.tree("- [x] done\n- [ ] todo\n- plain")
+        func all(_ node: AccessibilityNode) -> [AccessibilityNode] {
+            [node] + node.children.flatMap(all)
+        }
+        let items = tree.roots.flatMap(all).filter { $0.role == .listItem }
+        #expect(items.map(\.detail) == [
+            .listItem(position: 1, count: 3, checkbox: true),
+            .listItem(position: 2, count: 3, checkbox: false),
+            .listItem(position: 3, count: 3, checkbox: nil),
+        ])
+    }
+
+    /// An item that contains a nested list is still a list item: dropping its
+    /// role and position leaves the reader without "1 of 2".
+    @Test func anItemWithNestedContentKeepsItsRoleAndPosition() throws {
+        let tree = try self.tree("- a\n  - b\n- c")
+        func all(_ node: AccessibilityNode) -> [AccessibilityNode] {
+            [node] + node.children.flatMap(all)
+        }
+        let outer = try #require(tree.roots.first { $0.role == .listItem })
+        #expect(outer.detail == .listItem(position: 1, count: 2, checkbox: nil))
+        #expect(!outer.children.isEmpty)
     }
 
     /// An image without alt text still has to say something.
@@ -152,6 +180,15 @@ struct MarkdownAccessibilityModelTests {
             "- [a](https://a.test) and text\n- plain",
             "> quoted [link](https://a.test)\n\n$$\nx\n$$",
             "| a |\n|---|\n| ![alt](https://i.test/p.png) |",
+            // Shapes review found drifting: two lose content, three orphan a tag.
+            "<div>hello</div>",
+            "a\n\n---\n\nb",
+            "- ```\n  code\n  ```",
+            "| a | b |\n|---|---|\n| x |  |",
+            "|  | b |\n|---|---|\n| x | y |",
+            "- [x] done\n- [ ] todo",
+            "# [Home](https://a.test)",
+            "- a\n  - b\n- c",
         ] {
             let configuration = RenderStyle.default.snapshot(generation: 0)
             let input = RenderInput(
@@ -176,8 +213,10 @@ struct MarkdownAccessibilityModelTests {
                     case .blockStart: break
                     case .run(let run): note([run])
                     case .table(let table):
-                        table.head.forEach(note)
-                        table.rows.forEach { $0.forEach(note) }
+                        // Cells carry their ordinal on the table, not on their
+                        // runs: an empty cell has no run.
+                        tagged.formUnion(table.headOrdinals)
+                        table.rowOrdinals.forEach { tagged.formUnion($0) }
                     }
                 }
                 #expect(
@@ -201,5 +240,51 @@ struct MarkdownAccessibilityModelTests {
         let afterIDs = after.roots.flatMap(all).map(\.id)
         #expect(beforeIDs.count > 2)
         #expect(Array(afterIDs.prefix(beforeIDs.count - 1)) == Array(beforeIDs.prefix(beforeIDs.count - 1)))
+    }
+}
+
+/// Regressions found by review of checkpoint 7A.
+@MainActor
+@Suite(.serialized)
+struct MarkdownAccessibilityIdentityTests {
+    private func tree(_ markdown: String, generation: UInt64 = 0) throws -> AccessibilityTree {
+        let configuration = RenderStyle.default.snapshot(generation: generation)
+        let input = RenderInput(
+            document: MarkdownDocument(parsing: markdown), source: markdown,
+            availableWidth: 360, configuration: configuration, placeholderMode: .static
+        )
+        return try RenderPreparer(configuration: configuration).prepare(input).accessibility
+    }
+
+    private func all(_ tree: AccessibilityTree) -> [AccessibilityNode] {
+        func walk(_ node: AccessibilityNode) -> [AccessibilityNode] {
+            [node] + node.children.flatMap(walk)
+        }
+        return tree.roots.flatMap(walk)
+    }
+
+    /// Sibling blocks inside one container share a lineage and a source anchor,
+    /// so without their own ordinal they collide — and a collision is not a
+    /// cosmetic clash: the element store keys on the identity, so one paragraph
+    /// is dropped and its neighbour is spoken twice.
+    @Test(arguments: [
+        "> one\n>\n> two",
+        "- one\n\n  two",
+        "> a\n>\n> b\n>\n> c",
+    ])
+    func siblingBlocksInsideAContainerHaveDistinctIdentities(markdown: String) throws {
+        let ids = try self.all(self.tree(markdown)).map(\.id)
+        #expect(Set(ids).count == ids.count, "duplicate identities in \(markdown.debugDescription)")
+    }
+
+    /// Identity must not move when only the layout does. The render generation
+    /// bumps on width and style changes — a rotation, a split view, a Dynamic
+    /// Type change — so anchoring identity to it would replace every element
+    /// exactly when a reader is least able to recover.
+    @Test func aWidthChangeDoesNotChangeAnyIdentity() throws {
+        let markdown = "# Title\n\nalpha [one](https://a.test) beta"
+        let narrow = try self.all(self.tree(markdown, generation: 1)).map(\.id)
+        let wide = try self.all(self.tree(markdown, generation: 2)).map(\.id)
+        #expect(narrow == wide, "a configuration bump renumbered every element")
     }
 }

@@ -5,7 +5,7 @@ import UIKit
 /// UIKit wrapper around one semantic leaf. `UIAccessibilityElement` wants a
 /// container and a frame in screen space; everything else comes from the leaf.
 final class MarkdownAccessibilityUIElement: UIAccessibilityElement {
-    let element: MarkdownAccessibilityElement
+    var element: MarkdownAccessibilityElement
 
     init(element: MarkdownAccessibilityElement, container: UIView) {
         self.element = element
@@ -19,6 +19,11 @@ final class MarkdownAccessibilityUIElement: UIAccessibilityElement {
 
     override var accessibilityFrameInContainerSpace: CGRect {
         get { self.element.frame }
+        set {}
+    }
+
+    override var accessibilityValue: String? {
+        get { self.element.spokenValue }
         set {}
     }
 
@@ -44,8 +49,18 @@ extension MarkdownLabelView {
     /// would read the whole document before its parts.
     func publishAccessibilityElements() {
         self.isAccessibilityElement = false
-        self.accessibilityElements = self.orderedAccessibilityElements.map {
-            MarkdownAccessibilityUIElement(element: $0, container: self)
+        // The wrapper is the object the accessibility client holds, so replacing
+        // it is the focus change the identity reuse exists to avoid — reusing
+        // only the inner element would leave that unmet.
+        self.accessibilityElements = self.orderedAccessibilityElements.map { element in
+            let wrapper = self.accessibilityWrapperStore[element.id]
+                ?? MarkdownAccessibilityUIElement(element: element, container: self)
+            wrapper.element = element
+            self.accessibilityWrapperStore[element.id] = wrapper
+            return wrapper
+        }
+        self.accessibilityWrapperStore = self.accessibilityWrapperStore.filter { id, _ in
+            self.accessibilityElementStore[id] != nil
         }
     }
 }

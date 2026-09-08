@@ -43,6 +43,9 @@ extension MarkdownLabelView {
             let frame = CGRect(x: 0, y: blockFrame.minY - 8, width: viewWidth, height: data.height)
             #if canImport(UIKit)
             let scroll = UIScrollView(frame: frame)
+            // Cell frames are converted from the overlay's space, so they go
+            // stale the moment the reader scrolls the table sideways.
+            scroll.delegate = self
             scroll.contentSize = CGSize(width: data.naturalWidth, height: data.height)
             scroll.showsHorizontalScrollIndicator = true
             scroll.showsVerticalScrollIndicator = false
@@ -50,6 +53,13 @@ extension MarkdownLabelView {
             scroll.addSubview(content)
             #else
             let scroll = NSScrollView(frame: frame)
+            // Cell frames are converted from the overlay's space, so they go
+            // stale the moment the reader scrolls the table sideways.
+            scroll.contentView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(self.tableOverlayDidScroll),
+                name: NSView.boundsDidChangeNotification, object: scroll.contentView
+            )
             scroll.hasHorizontalScroller = true
             scroll.hasVerticalScroller = false
             scroll.autohidesScrollers = true
@@ -70,3 +80,18 @@ extension MarkdownLabelView {
         self.rebuildAccessibilityElements()
     }
 }
+
+#if canImport(UIKit)
+extension MarkdownLabelView: UIScrollViewDelegate {
+    public func scrollViewDidScroll(_: UIScrollView) {
+        self.rebuildAccessibilityElements()
+    }
+}
+
+#elseif canImport(AppKit)
+extension MarkdownLabelView {
+    @objc func tableOverlayDidScroll() {
+        self.rebuildAccessibilityElements()
+    }
+}
+#endif

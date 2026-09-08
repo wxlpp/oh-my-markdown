@@ -359,13 +359,24 @@ package struct RenderMaterializer {
             var leading = attrs
             leading[.markdownCopySkip] = true
             let line = NSMutableAttributedString(string: "\t", attributes: leading)
+            let ordinals = index == 0 ? table.headOrdinals : (index - 1 < table.rowOrdinals.count ? table.rowOrdinals[index - 1] : [])
             for (cellIndex, value) in row.enumerated() {
+                // The tag spans the separator before the cell as well, so a cell
+                // with no text still has an extent a reader can point at.
+                let cellStart = line.length
                 if cellIndex > 0 { line.append(NSAttributedString(string: "\t", attributes: attrs)) }
                 let content = NSMutableAttributedString(attributedString: value)
                 value.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: value.length)) { existing, range, _ in
                     if existing != nil { content.addAttribute(.paragraphStyle, value: para, range: range) }
                 }
                 line.append(content)
+                if cellIndex < ordinals.count, line.length > cellStart {
+                    line.addAttribute(
+                        .markdownAccessibilityLeaf,
+                        value: AccessibilityLeafKey(block: self.currentBlockIndex, ordinal: ordinals[cellIndex]),
+                        range: NSRange(location: cellStart, length: line.length - cellStart)
+                    )
+                }
             }
             line.addAttributes([.markdownTableSection: index, .markdownTableColumns: count, .markdownTableColumnWidths: widths], range: NSRange(location: 0, length: line.length))
             result.append(line)

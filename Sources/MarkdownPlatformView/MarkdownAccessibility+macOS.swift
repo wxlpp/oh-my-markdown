@@ -16,13 +16,17 @@ final class MarkdownAccessibilityNSElement: NSAccessibilityElement {
     private nonisolated(unsafe) weak var owner: MarkdownLabelView?
 
     @MainActor
-    init(element: MarkdownAccessibilityElement) {
-        super.init()
-        if case .link(let url, _)? = element.activation { self.destination = url }
+    func update(with element: MarkdownAccessibilityElement) {
+        self.destination = if case .link(let url, _)? = element.activation { url } else { nil }
         self.owner = element.owner
         self.setAccessibilityLabel(element.label)
+        self.setAccessibilityValue(element.spokenValue)
         self.setAccessibilityRole(Self.role(for: element.role))
         self.setAccessibilityEnabled(true)
+        if case .cell(let row, let column, _)? = element.detail {
+            self.setAccessibilityRowIndexRange(NSRange(location: row, length: 1))
+            self.setAccessibilityColumnIndexRange(NSRange(location: column, length: 1))
+        }
     }
 
     @MainActor
@@ -47,10 +51,21 @@ extension MarkdownLabelView {
     /// moves through the parts rather than hearing the document as one string.
     func publishAccessibilityElements() {
         let children: [Any] = self.orderedAccessibilityElements.map { element in
-            let wrapper = MarkdownAccessibilityNSElement(element: element)
+            let wrapper = self.accessibilityWrapperStore[element.id] ?? MarkdownAccessibilityNSElement()
+            self.accessibilityWrapperStore[element.id] = wrapper
+            wrapper.update(with: element)
             wrapper.setAccessibilityParent(self)
-            wrapper.setAccessibilityFrameInParentSpace(element.frame)
+            // Parent space is bottom-up even though this view is flipped, so a
+            // top-down TextKit rect published as-is lands mirrored about the
+            // view's midpoint — the first line reported at the bottom.
+            wrapper.setAccessibilityFrameInParentSpace(CGRect(
+                x: element.frame.minX, y: self.bounds.height - element.frame.maxY,
+                width: element.frame.width, height: element.frame.height
+            ))
             return wrapper
+        }
+        self.accessibilityWrapperStore = self.accessibilityWrapperStore.filter { id, _ in
+            self.accessibilityElementStore[id] != nil
         }
         self.setAccessibilityChildren(children)
         self.setAccessibilityRole(.group)

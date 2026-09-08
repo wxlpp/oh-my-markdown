@@ -314,6 +314,11 @@ package struct PreparedTable: Equatable {
     package let head: [[PreparedRun]]
     package let rows: [[[PreparedRun]]]
     package let width: Double
+    /// Accessibility leaf per cell, head row then body rows. Carried here rather
+    /// than read off the cells' runs because an empty cell has no run to hold it,
+    /// and dropping it makes a row shorter than its header.
+    package var headOrdinals: [Int] = []
+    package var rowOrdinals: [[Int]] = []
     package var quoteIndent: Double = 0
 }
 

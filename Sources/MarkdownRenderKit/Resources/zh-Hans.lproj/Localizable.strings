@@ -1,2 +1,7 @@
 "markdown.accessibility.image" = "图像";
 "markdown.accessibility.math" = "公式";
+"markdown.accessibility.row" = "第";
+"markdown.accessibility.column" = "列";
+"markdown.accessibility.of" = "共";
+"markdown.accessibility.checked" = "已完成";
+"markdown.accessibility.unchecked" = "未完成";

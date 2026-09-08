@@ -13,6 +13,21 @@ public enum AccessibilityTreeBuilder {
     public static let imageFallback = NSLocalizedString(
         "markdown.accessibility.image", bundle: .module, comment: "Spoken for an image with no alt text"
     )
+    public static let rowLabel = NSLocalizedString(
+        "markdown.accessibility.row", bundle: .module, comment: "Spoken before a table row number"
+    )
+    public static let columnLabel = NSLocalizedString(
+        "markdown.accessibility.column", bundle: .module, comment: "Spoken before a table column number"
+    )
+    public static let ofLabel = NSLocalizedString(
+        "markdown.accessibility.of", bundle: .module, comment: "Joins a list item's position and count"
+    )
+    public static let checkedLabel = NSLocalizedString(
+        "markdown.accessibility.checked", bundle: .module, comment: "Spoken for a completed task list item"
+    )
+    public static let uncheckedLabel = NSLocalizedString(
+        "markdown.accessibility.unchecked", bundle: .module, comment: "Spoken for an open task list item"
+    )
     public static let mathFallback = NSLocalizedString(
         "markdown.accessibility.math", bundle: .module, comment: "Spoken for a formula with no readable source"
     )
@@ -66,6 +81,11 @@ private struct Builder {
         )
     }
 
+    mutating func nextContainerOrdinal() -> Int {
+        defer { self.containerOrdinal += 1 }
+        return self.containerOrdinal
+    }
+
     mutating func container(_ role: AccessibilityRole, _ children: [AccessibilityNode], detail: AccessibilityDetail? = nil) -> AccessibilityNode {
         defer { self.containerOrdinal += 1 }
         return AccessibilityNode(
@@ -77,9 +97,23 @@ private struct Builder {
     mutating func blockNodes(_ block: BlockNode) -> [AccessibilityNode] {
         switch block {
         case .paragraph(let inlines):
+            // Every block-level leaf sequence starts a new ordinal, or two
+            // sibling paragraphs in one blockquote or list item collide: they
+            // share a lineage and a source anchor, and a collision drops one of
+            // them from the element list and speaks the other twice.
+            self.advance()
             return self.inlineLeaves(inlines)
         case .heading(let level, let content):
-            return self.inlineLeaves(content, plainRole: .heading(level: level))
+            self.advance()
+            let leaves = self.inlineLeaves(content, plainRole: .heading(level: level))
+            // A heading whose whole content is one link would otherwise expose
+            // only a link and vanish from heading navigation.
+            guard leaves.count == 1, leaves[0].role != .heading(level: level) else { return leaves }
+            return [AccessibilityNode(
+                id: leaves[0].id, role: .heading(level: level), label: leaves[0].label,
+                sourceRange: leaves[0].sourceRange, activation: leaves[0].activation,
+                detail: leaves[0].detail
+            )]
         case .codeBlock(let language, let body):
             let trimmed = language?.trimmingCharacters(in: .whitespacesAndNewlines)
             self.advance()
@@ -93,7 +127,13 @@ private struct Builder {
             return self.listNodes(items)
         case .orderedList(_, let items):
             return self.listNodes(items)
-        case .thematicBreak, .htmlBlock:
+        case .htmlBlock(let text):
+            // Rendered as visible text, so a reader has to get it as well.
+            self.advance()
+            return [self.leaf(.text, text.trimmingCharacters(in: .whitespacesAndNewlines))]
+        case .thematicBreak:
+            // Renders a rule and no text; there is nothing to speak. The
+            // preparer emits no tagged run for it either.
             return []
         case .mathBlock(let latex):
             self.advance()
@@ -105,18 +145,35 @@ private struct Builder {
 
     mutating func listNodes(_ items: [ListItem]) -> [AccessibilityNode] {
         items.enumerated().map { position, item in
-            self.advance()
+            let checkbox: Bool? = switch item.checkbox {
+            case .checked: true
+            case .unchecked: false
+            case nil: nil
+            }
+            let detail = AccessibilityDetail.listItem(
+                position: position + 1, count: items.count, checkbox: checkbox
+            )
             let children = item.blocks.flatMap { self.blockNodes($0) }
             // A one-leaf item speaks as itself rather than as a container with a
             // single silent child, so the reader hears one stop, not two.
+            // A one-leaf item speaks as itself rather than as a container with a
+            // single silent child, so the reader hears one stop, not two — but it
+            // keeps the child's role, or an item holding only an image or a code
+            // block would lose what it is.
             if children.count == 1, children[0].children.isEmpty, let label = children[0].label {
                 return AccessibilityNode(
-                    id: children[0].id, role: .listItem, label: label, sourceRange: self.sourceRange,
+                    id: children[0].id, role: children[0].role == .text ? .listItem : children[0].role,
+                    label: label, sourceRange: self.sourceRange,
                     activation: children[0].activation,
-                    detail: .listItem(position: position + 1, count: items.count)
+                    detail: children[0].detail ?? detail
                 )
             }
-            return self.container(.listItem, children, detail: .listItem(position: position + 1, count: items.count))
+            // I6: an item with nested content is still a list item, so it keeps
+            // its role and position rather than becoming an anonymous container.
+            return AccessibilityNode(
+                id: self.identity(.listItem, ordinal: self.nextContainerOrdinal()), role: .listItem,
+                label: nil, sourceRange: self.sourceRange, children: children, detail: detail
+            )
         }
     }
 
@@ -169,7 +226,7 @@ private struct Builder {
                 case .softBreak: pending += " "
                 case .lineBreak: pending += "\n"
                 case .inlineCode(let value): pending += value
-                case .html: break
+                case .html(let value): pending += value
                 case .emphasis(let children), .strong(let children), .strikethrough(let children):
                     walk(children, &builder)
                 case .link(let destination, _, let children):
@@ -207,7 +264,7 @@ private struct Builder {
             case .text(let value), .inlineCode(let value), .math(let value): result += value
             case .softBreak: result += " "
             case .lineBreak: result += "\n"
-            case .html: break
+            case .html(let value): result += value
             case .emphasis(let children), .strong(let children), .strikethrough(let children):
                 result += self.plainText(children)
             case .link(_, _, let children): result += self.plainText(children)

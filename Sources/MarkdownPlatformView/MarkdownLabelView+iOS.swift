@@ -276,24 +276,45 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// Reused platform objects, keyed by the identity that survives streaming.
     var accessibilityElementStore: [AccessibilityNodeID: MarkdownAccessibilityElement] = [:]
     var orderedAccessibilityElements: [MarkdownAccessibilityElement] = []
+    var isRebuildingAccessibilityElements = false
+    /// The objects the accessibility client holds, reused across snapshots so a
+    /// surviving leaf keeps the element a reader is focused on.
+    var accessibilityWrapperStore: [AccessibilityNodeID: MarkdownAccessibilityUIElement] = [:]
 
     /// Public read-only view of what a screen reader would traverse.
     package var markdownAccessibilityElements: [MarkdownAccessibilityElement] {
         self.orderedAccessibilityElements
     }
 
-    /// On-screen extent of a rendered range, from TextKit's own segments.
-    func accessibilityFrame(forRenderedRange range: NSRange) -> CGRect? {
+    /// On-screen extents for leaf ranges, in one pass.
+    ///
+    /// Resolving each range from the document start is O(offset), so doing it
+    /// per leaf is quadratic in document size — measured at 0.4 s for a
+    /// 400-paragraph document, on the main actor, once per streamed chunk. The
+    /// ranges are walked in ascending order with a single advancing cursor
+    /// instead.
+    func accessibilityFrames(forRenderedRanges ranges: [(key: AccessibilityLeafKey, range: NSRange)]) -> [AccessibilityLeafKey: CGRect] {
+        guard !ranges.isEmpty else { return [:] }
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-        guard let textRange = self.decorations.makeTextRange(from: range.location, to: range.location + range.length) else {
-            return nil
+        let start = self.contentStorage.documentRange.location
+        var cursor = start
+        var cursorOffset = 0
+        var result: [AccessibilityLeafKey: CGRect] = [:]
+        for (key, range) in ranges.sorted(by: { $0.range.location < $1.range.location }) {
+            guard
+                let from = self.contentStorage.location(cursor, offsetBy: range.location - cursorOffset),
+                let to = self.contentStorage.location(from, offsetBy: range.length),
+                let textRange = NSTextRange(location: from, end: to) else { continue }
+            cursor = from
+            cursorOffset = range.location
+            var frame = CGRect.null
+            self.layoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, rect, _, _ in
+                frame = frame.isNull ? rect : frame.union(rect)
+                return true
+            }
+            if !frame.isNull, !frame.isEmpty { result[key] = frame }
         }
-        var result = CGRect.null
-        self.layoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, frame, _, _ in
-            result = result.isNull ? frame : result.union(frame)
-            return true
-        }
-        return result.isNull || result.isEmpty ? nil : result
+        return result
     }
 
     func activateAccessibilityLink(_ url: URL) {
