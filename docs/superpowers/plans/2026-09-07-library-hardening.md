@@ -1772,9 +1772,12 @@ xcrun simctl io <device> screenshot out.png
 ```
 A swipe slower than about a second selects text instead of scrolling, and a flick
 overshoots by roughly two screens; the numbers above advance about one screen.
-**Reset `content_size` to `large` when done** — the view seeds itself from the
-device trait, and a simulator left at the maximum makes `AdaptiveLayoutTests`'
-generation-bump assertions fail for an environment reason rather than a code one.
+**Reset both `content_size` to `large` and `appearance` to `light` when done.**
+The view seeds itself from the device trait, so a simulator left at the maximum
+makes `AdaptiveLayoutTests`' generation-bump assertions fail for an environment
+reason rather than a code one — and a simulator left in dark mode fails eight
+`RenderMigrationParityTests` cases, whose frozen fixtures record light-mode
+colours. `xcodebuild` clones the device, so it inherits both.
 
 One earlier obstacle, recorded so it is not re-diagnosed: a `SIGSEGV` in
 `outlined init with copy of RenderStyle` (retaining `0x3ff0000000000000`, the bit
