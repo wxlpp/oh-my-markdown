@@ -185,7 +185,11 @@ func markdownSourceCopy(
     var upperByte: Int?
     if let range = parsedBlocks[upper].sourceRange {
         upperByte = range.upperBound
-    } else if runEnd(upper) == upper, parsedBlocks[upper].documentOrdinal == nil {
+    } else if runEnd(upper) == upper, upper - runStart(upper) == parsedBlocks[upper].splitOrdinal,
+              parsedBlocks[upper].documentOrdinal == nil {
+        // The piece index has to agree with the distance walked, mirroring the
+        // lower boundary's `splitOrdinal == 0`: if grouping ever breaks, both
+        // sides fail closed instead of only one.
         upperByte = parsedBlocks[upper].sourceAnchorEnd
     }
 
@@ -272,6 +276,9 @@ func reconstructedSourceText(from attributed: NSAttributedString, range: NSRange
         /// over [0,10) and copySkip over [0,3), `effectiveRange` at 3 gives
         /// {3,7} where `longestEffectiveRange` gives {0,10}; the longest form
         /// would stop emitting the syntax even for a whole-placeholder selection.
+        /// It follows that a value is emitted once per dictionary run, so an
+        /// attribute that splits a syntax run into two would emit it twice.
+        /// Nothing does today: the only intra-run splitter returns above.
         func covered(_ key: NSAttributedString.Key) -> Bool {
             var effective = NSRange(location: 0, length: 0)
             _ = attributed.attribute(key, at: range.location, effectiveRange: &effective)

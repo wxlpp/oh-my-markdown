@@ -237,7 +237,12 @@ extension IncrementalSourceBuffer {
                 fingerprint: node.fingerprint,
                 sourceAnchor: node.sourceAnchor + start,
                 sourceAnchorEnd: node.sourceAnchorEnd.map { $0 + start },
-                splitOrdinal: node.splitOrdinal
+                splitOrdinal: node.splitOrdinal,
+                // Carried, not defaulted: it is the flag saying this node's
+                // anchor is a placeholder, so dropping it would shift a
+                // placeholder into a real-looking offset that then reads as a
+                // provable copy boundary.
+                documentOrdinal: node.documentOrdinal
             )
         }
         metrics.recordMetadata(raw.count * MemoryLayout<ParsedBlockNode>.stride + 88)

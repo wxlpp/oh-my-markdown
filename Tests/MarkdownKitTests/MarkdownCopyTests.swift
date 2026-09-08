@@ -30,6 +30,20 @@ struct MarkdownCopyTests {
         return view
     }
 
+    /// Blocks installed without a Markdown source: nothing has a `sourceRange`,
+    /// so every copy takes the reconstruction path.
+    private func programmaticView(_ markdown: String) async -> MarkdownLabelView {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 360, height: 10000))
+        #if canImport(UIKit)
+        view.layoutIfNeeded()
+        #else
+        view.layoutSubtreeIfNeeded()
+        #endif
+        view.blocks = MarkdownDocument(parsing: markdown).blocks
+        _ = await eventually { view.currentSnapshot != nil }
+        return view
+    }
+
     private func selectAll(_ view: MarkdownLabelView) {
         view._selectEntireDocumentForTesting()
     }
@@ -248,36 +262,54 @@ struct MarkdownCopyTests {
         #expect(result.granularity == .exact)
     }
 
-    /// A block rebuilt into several pieces shares one anchor and one end, so the
-    /// end may only be used when the selection covers the run's last piece.
-    @Test func selectingPartOfARebuiltRunDoesNotClaimTheWholeRunsBytes() async throws {
-        let view = await self.view("lead $x$ mid\n\n$$\ny\n$$\n\ntail")
+    /// The other half of the run rule: selecting the run's *last* piece must kill
+    /// the lower boundary, or the copy reaches backwards into pieces the reader
+    /// never selected.
+    @Test func selectingTheLastPieceOfARunDoesNotReachBackwards() async throws {
+        let view = await self.view("lead $$x$$ trail")
         defer { view.dismantleRenderSession() }
-        let starts = try #require(view.currentSnapshot).blockStarts
-        let firstOnly = NSRange(location: starts[0], length: starts[1] - 1 - starts[0])
-        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: firstOnly))
-        #expect(!result.text.contains("tail"))
-        #expect(!result.text.contains("$$"), "claimed a later block's bytes: \(result.text.debugDescription)")
+        let snapshot = try #require(view.currentSnapshot)
+        let starts = snapshot.blockStarts
+        #expect(starts.count == 3, "fixture no longer splits, so it stopped testing a run")
+        let lastPiece = NSRange(location: starts[2], length: max(1, snapshot.attributedString.length - starts[2]))
+        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: lastPiece))
+        #expect(result.granularity != .exact, "claimed the whole run's bytes: \(result.text.debugDescription)")
+        #expect(!result.text.contains("lead"))
     }
 
-    /// The reconstruction path must respect the selection inside a block, or a
-    /// three-character selection pastes a whole paragraph including a URL.
     /// Programmatic blocks have no source at all, so they always reconstruct.
+    /// Reconstruction must respect the selection, or a sliver pastes the block.
     @Test func reconstructionIsClampedToTheSelection() async throws {
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 360, height: 10000))
+        let view = await self.programmaticView("first paragraph\n\nsecond block")
         defer { view.dismantleRenderSession() }
-        #if canImport(UIKit)
-        view.layoutIfNeeded()
-        #else
-        view.layoutSubtreeIfNeeded()
-        #endif
-        view.blocks = MarkdownDocument(parsing: "first paragraph\n\nsecond ![alt](https://never-rendered.test/p.png)").blocks
-        _ = await eventually { view.currentSnapshot != nil }
-        let sliver = NSRange(location: 2, length: 3)
-        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: sliver))
+        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: NSRange(location: 2, length: 3)))
         #expect(result.granularity == .renderedFallback)
-        #expect(!result.text.contains("never-rendered.test"), "reconstruction ignored the selection: \(result.text.debugDescription)")
         #expect(result.text == "rst")
+    }
+
+    /// The two directions of the recorded-syntax substitution, which nothing else
+    /// covers: a run the selection contains whole contributes its Markdown
+    /// syntax, and a run the selection only clips must not — otherwise a
+    /// three-character selection pastes an image's URL.
+    @Test func recordedSyntaxIsEmittedOnlyForARunTheSelectionCoversWhole() async throws {
+        let view = await self.programmaticView("![alt](https://never-rendered.test/p.png)")
+        defer { view.dismantleRenderSession() }
+        let rendered = try #require(view.currentSnapshot).attributedString
+        var placeholder = NSRange(location: 0, length: 0)
+        rendered.enumerateAttribute(.markdownCopySource, in: NSRange(location: 0, length: rendered.length)) { value, range, stop in
+            if value != nil { placeholder = range; stop.pointee = true }
+        }
+        #expect(placeholder.length > 1, "fixture no longer produces a multi-character syntax run")
+
+        let whole = try #require(view.markdownSourceSelectionResult(forRenderedRange: placeholder))
+        #expect(whole.text == "![alt](https://never-rendered.test/p.png)", "syntax was not emitted for a whole run")
+
+        let clipped = NSRange(location: placeholder.location, length: placeholder.length - 1)
+        let partial = try #require(view.markdownSourceSelectionResult(forRenderedRange: clipped))
+        #expect(
+            !partial.text.contains("never-rendered.test"),
+            "a clipped run still pasted the image's URL: \(partial.text.debugDescription)"
+        )
     }
 
     /// A partial selection inside a block with provable boundaries returns that

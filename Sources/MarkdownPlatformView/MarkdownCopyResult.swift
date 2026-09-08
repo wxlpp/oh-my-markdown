@@ -11,7 +11,9 @@ public enum MarkdownCopyGranularity: Sendable, Equatable {
     /// code block keeps the indent that makes it one.
     ///
     /// For a rendered copy this is always the granularity: rendered copy has no
-    /// notion of source and always serializes precisely the selection.
+    /// notion of source, and it serializes precisely the selection because every
+    /// run it substitutes whole is one character
+    /// (`everyCopyTextRunIsExactlyOneCharacter`).
     case exact
     /// The selection cut into a block, and the whole block's source is returned
     /// because inline source offsets do not exist. Callers that must not paste
