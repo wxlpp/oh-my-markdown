@@ -409,7 +409,11 @@ private struct AnySchemePolicy: MarkdownLinkPolicy {
 
 /// Records instead of opening, so the demo can show what the policy let through
 /// without leaving the app.
-@MainActor private final class RecordingLinkHandler: MarkdownLinkHandler {
+///
+/// `@Observable`, not a plain class: the view holds it in `@State` and reads
+/// `opened` from its body, and a plain class mutation posts no update — the list
+/// filled up while the label above it kept saying it was empty.
+@MainActor @Observable private final class RecordingLinkHandler: MarkdownLinkHandler {
     private(set) var opened: [String] = []
     func open(_ url: URL) {
         self.opened.append(url.absoluteString)
