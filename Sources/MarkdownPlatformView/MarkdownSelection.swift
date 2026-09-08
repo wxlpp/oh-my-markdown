@@ -26,28 +26,10 @@ private func utf8StringIndex(in source: String, at byteOffset: Int) -> String.In
     return String.Index(scalarIndex, within: source)
 }
 
-/// Bug 4 — read-only copy must yield the *original Markdown source* the user
-/// selected, not the rendered plain text (where math/image collapse to the
-/// object-replacement char `\u{FFFC}` and tables lose their pipes).
-///
-/// Strategy (block-level granularity, first version): the rendered selection
-/// `[selStart, selEnd)` is mapped to the set of blocks it overlaps via
-/// `blockStarts` (the rendered char offset of each block's start, maintained in
-/// `updateContent`/`applyDocument`). The returned string is the *continuous*
-/// original-source substring from the first overlapped block's
-/// `sourceRange.lowerBound` to the last overlapped block's
-/// `sourceRange.upperBound` in `lastParsedSource` — the most faithful form
-/// because it preserves the original inter-block text verbatim (`# `, `- `,
-/// `$$…$$`, `![alt](url)`, `| a | b |`, blank-line separators, …).
-///
-/// Falls back to the rendered-plain-text substring when there is no usable
-/// source mapping (e.g. blocks were set directly without a Markdown source),
-/// so non-Markdown content still copies.
-///
-/// Known limitation: granularity is block-level. A selection touching any part
-/// of a block expands to that block's full original source. Inline-precise
-/// source extraction is intentionally out of scope for this first version; the
-/// core guarantee — formulas/images/tables never lost — holds regardless.
+/// Pre-Task-9 shape of source copy: the source span of every block the selection
+/// overlaps, with no granularity reported and no recovery for blocks the parser
+/// rebuilt. No shipping command calls it; it is kept because the migration parity
+/// tests pin the legacy mapping deliberately. New code wants `markdownSourceCopy`.
 func markdownSourceForRenderedSelection(
     renderedRange: NSRange,
     renderedPlainText: String,
@@ -64,12 +46,27 @@ func markdownSourceForRenderedSelection(
     ).text
 }
 
-/// Same mapping, but it reports how faithful the result is instead of silently
-/// widening a partial selection to whole blocks.
+/// Maps a rendered selection to the Markdown source it covers, and reports how
+/// faithful the result is instead of silently widening a partial selection.
+///
+/// The selection's rendered offsets are mapped to the blocks it overlaps through
+/// `blockStarts` (assigned only in `replaceSnapshot`), then to a single verbatim
+/// byte span in `originalSource` between two *provable* boundaries. Copying one
+/// span rather than joining per-block pieces is what keeps interior bytes —
+/// indentation, list markers, blank-line separators — exactly as written.
+///
+/// A boundary is provable when the block owns a `sourceRange`, or, for a block
+/// the parser rebuilt, from its `sourceAnchor` at the start and from the end of
+/// the document at the end. Nothing else is: source can belong to no block at
+/// all (a link reference definition renders nowhere), so index adjacency does
+/// not imply byte adjacency, and a bracket to a neighbour's bound would hand
+/// over bytes the reader never selected.
 ///
 /// `renderedFallback` supplies the semantic rendered text used when no source
 /// mapping exists; without it the raw plain substring is used, which still
-/// contains object-replacement characters.
+/// contains object-replacement characters. `reconstructedSource` supplies
+/// approximate syntax when no boundary is provable, and is always reported
+/// `.renderedFallback`.
 func markdownSourceCopy(
     renderedRange: NSRange,
     renderedPlainText: String,
@@ -133,21 +130,16 @@ func markdownSourceCopy(
 
     // Blocks the parser produced by transforming the source — a block formula
     // lifted out of a paragraph, a paragraph rebuilt around inline math — carry
-    // no source range. Their bytes are still recoverable at the *edges* of the
-    // selection: consecutive blocks are contiguous in the source, so a run of
-    // source-less blocks that starts exactly where the selection starts begins
-    // where the previous block's range ended.
+    // no source range, but they do carry `sourceAnchor`, which math backfill
+    // preserves from the block they came from. That is the byte the start of the
+    // selection needs, and using it avoids guessing: bracketing to the previous
+    // block's end would swallow source that belongs to no block at all, such as
+    // a link reference definition, which renders nowhere.
     //
     // Only the two boundary bytes are needed. Everything between them is copied
-    // verbatim, which keeps the original inter-block bytes — indentation,
-    // separator lines, list markers — that re-joining pieces would destroy.
-    func upperBoundBefore(_ index: Int) -> Int {
-        (0 ..< index).reversed().lazy.compactMap { parsedBlocks[$0].sourceRange?.upperBound }.first ?? 0
-    }
-    func lowerBoundAfter(_ index: Int) -> Int {
-        ((index + 1) ..< parsedBlocks.count).lazy.compactMap { parsedBlocks[$0].sourceRange?.lowerBound }.first
-            ?? originalSource.utf8.count
-    }
+    // verbatim, so interior bytes — indentation, separator lines, list markers —
+    // survive, where re-joining per-block pieces would destroy them.
+
     /// Start of the maximal run of source-less blocks containing `index`.
     func runStart(_ index: Int) -> Int {
         var start = index
@@ -156,32 +148,37 @@ func markdownSourceCopy(
         }
         return start
     }
-    func runEnd(_ index: Int) -> Int {
-        var end = index
-        while end + 1 < parsedBlocks.count, parsedBlocks[end + 1].sourceRange == nil {
-            end += 1
+    /// A `sourceRange` starts at the block's *content column*, so an indented
+    /// code block's range begins after its indent. Those bytes belong to the
+    /// block and must come with it, or the copy stops parsing as code.
+    func lineStart(before byte: Int) -> Int {
+        let utf8 = Array(originalSource.utf8)
+        var cursor = min(max(0, byte), utf8.count)
+        while cursor > 0, utf8[cursor - 1] == 0x20 || utf8[cursor - 1] == 0x09 {
+            cursor -= 1
         }
-        return end
+        return cursor
     }
 
-    var trimmedLeading = false
-    var trimmedTrailing = false
     var lowerByte: Int?
     if let range = parsedBlocks[lower].sourceRange {
-        lowerByte = range.lowerBound
-    } else if runStart(lower) == lower {
-        // The run starts where the selection starts, so the gap before it is the
-        // selection's own. A run reaching further back would drag in the bytes of
-        // blocks the user did not select.
-        lowerByte = upperBoundBefore(lower)
-        trimmedLeading = true
+        lowerByte = lineStart(before: range.lowerBound)
+    } else if runStart(lower) == lower, parsedBlocks[lower].documentOrdinal == nil {
+        // `documentOrdinal` is non-nil only for programmatic nodes, whose anchor
+        // is a placeholder rather than a real offset.
+        lowerByte = lineStart(before: parsedBlocks[lower].sourceAnchor)
     }
+
+    // The end is only provable when the last selected block owns a range, or when
+    // the selection runs to the end of the document — a source-less block has no
+    // recorded end, and the bytes after it may belong to no block.
+    var trimTrailing = false
     var upperByte: Int?
     if let range = parsedBlocks[upper].sourceRange {
         upperByte = range.upperBound
-    } else if runEnd(upper) == upper {
-        upperByte = lowerBoundAfter(upper)
-        trimmedTrailing = true
+    } else if upper == parsedBlocks.count - 1, parsedBlocks[upper].documentOrdinal == nil {
+        upperByte = originalSource.utf8.count
+        trimTrailing = true
     }
 
     if
@@ -190,13 +187,7 @@ func markdownSourceCopy(
         let endIndex = utf8StringIndex(in: originalSource, at: upperByte),
         startIndex <= endIndex {
         var text = String(originalSource[startIndex ..< endIndex])
-        // Trim only an edge a bracket produced: a block's own range is already
-        // exact, and its leading whitespace can be load-bearing — four spaces
-        // are the difference between a code block and a paragraph.
-        if trimmedLeading {
-            text = String(text.drop(while: { $0.isWhitespace || $0.isNewline }))
-        }
-        if trimmedTrailing {
+        if trimTrailing {
             while let last = text.last, last.isWhitespace || last.isNewline {
                 text.removeLast()
             }
@@ -208,11 +199,10 @@ func markdownSourceCopy(
         }
     }
 
-    // No byte range reaches the selection's edges: either there is no source at
-    // all (programmatic blocks), or a source-less run continues past the
-    // selection so bracketing it would copy blocks the user did not select. The
-    // runs can still name their own syntax, but rendered text cannot be proven
-    // to be source, so this is never reported as source.
+    // No boundary byte is provable: programmatic blocks, a source-less run that
+    // starts before the selection, or a source-less block with more document
+    // after it. Reconstructing the selected blocks returns only what they render,
+    // never bytes belonging to something else, and is never called source.
     guard let reconstructedSource else { return fallback() }
     let pieces = (lower ... upper).map { block in
         reconstructedSource(NSRange(

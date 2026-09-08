@@ -173,18 +173,21 @@ struct RenderMigrationParityTests {
         #expect(markdownSourceForRenderedSelection(renderedRange: NSRange(location: 1, length: 2), renderedPlainText: snapshot.attributedString.string, blockStarts: snapshot.blockStarts, parsedBlocks: document.parsedBlocks, renderedLength: snapshot.attributedString.length, originalSource: "") == "😀")
     }
 
-    /// Task 9 replaced the all-or-nothing fallback this used to pin: a block the
-    /// math transform rebuilt carries no source range, but its bytes still lie
-    /// between the ranges of the blocks around it, so they are recoverable.
+    /// The legacy mapping keeps its all-or-nothing fallback. Task 9's replacement
+    /// recovers a source-less block's bytes only where a boundary is *provable*
+    /// — from `sourceAnchor` at the start, from a real range or the end of the
+    /// document at the end — and a block with more document after it has no
+    /// recorded end, so this shape stays on the fallback. `MarkdownCopyTests`
+    /// covers the shapes that do recover.
     @Test
-    func mathBackfillWithoutSourceRangesRecoversBytesBetweenNeighbouringRanges() async throws {
+    func mathBackfillWithoutSourceRangesKeepsLegacyCopyFallback() async throws {
         let source = "**A😀**\n\n$$\nx\n$$\n\nlast"
         let pair = try await render(source, width: 120, mode: .static)
         let blocks = try #require(pair.snapshot.displayModel.preparedBlocks)
         #expect(blocks[1].sourceRange == nil)
         #expect(pair.snapshot.blockStarts == [0, 4, 6])
         let text = pair.snapshot.attributedString
-        #expect(markdownSourceForRenderedSelection(renderedRange: NSRange(location: 1, length: 4), renderedPlainText: text.string, blockStarts: [0, 4, 6], parsedBlocks: blocks, renderedLength: text.length, originalSource: source) == "**A😀**\n\n$$\nx\n$$")
+        #expect(markdownSourceForRenderedSelection(renderedRange: NSRange(location: 1, length: 4), renderedPlainText: text.string, blockStarts: [0, 4, 6], parsedBlocks: blocks, renderedLength: text.length, originalSource: source) == "😀\n\u{FFFC}")
     }
 
     @Test

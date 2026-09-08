@@ -312,7 +312,12 @@ struct PlatformSessionWiringTests {
         #expect(view.currentSnapshot?.displayModel.source == nil)
         #expect(view.currentSnapshot?.blockStarts == [0, 7])
         view._selectEntireDocumentForTesting()
-        #expect(view._copiedStringForCurrentSelectionForTesting() == "direct\n😀")
+        // Source-less blocks are reconstructed, so the separator is a blank line:
+        // a single newline is one paragraph in Markdown, and the copied text has
+        // to round-trip as the two blocks it came from.
+        let fallback = view.markdownSourceSelectionResult()
+        #expect(fallback?.text == "direct\n\n😀")
+        #expect(fallback?.granularity == .renderedFallback)
         view.dismantleRenderSession()
     }
 
@@ -362,9 +367,9 @@ struct PlatformSessionWiringTests {
         #expect(registry.withAuthorizedSink(for: second) { $0.replaceSnapshot(current, token: second) })
         #expect(view.currentSnapshot === current)
         #expect(view.currentCommitToken == second)
-        #expect(view._copiedStringForCurrentSelectionForTesting() == "**new**")
+        #expect((view.markdownSourceSelectionResult()?.text ?? "") == "**new**")
         view._selectEntireDocumentForTesting()
-        #expect(view._copiedStringForCurrentSelectionForTesting() == "**new**\n\nnext")
+        #expect((view.markdownSourceSelectionResult()?.text ?? "") == "**new**\n\nnext")
         registry.revokeAndUnregister(id)
         view.dismantleRenderSession()
         #expect(view.currentSnapshot == nil)

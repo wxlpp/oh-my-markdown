@@ -193,6 +193,9 @@ package struct RenderMaterializer {
         return result
     }
 
+    /// One character wide, which is what makes `.markdownCopyText` safe to
+    /// substitute whole: a longer run would paste entirely for a selection that
+    /// only touched part of it.
     private func attachment(image: PlatformImage?, bounds: CGRect, attributes: [NSAttributedString.Key: Any] = [:]) -> NSAttributedString {
         let attachment = NSTextAttachment()
         attachment.image = image

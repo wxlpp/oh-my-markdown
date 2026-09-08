@@ -189,6 +189,44 @@ struct MarkdownCopyTests {
         #expect(result.text == source)
     }
 
+    /// A block's `sourceRange` starts at its *content column*, not its line
+    /// start — `IncrementalParseState` records the same fact and reparses the
+    /// indentation. Taking the range's lower bound as the boundary byte drops an
+    /// indented code block's indent, and the result no longer parses as code.
+    /// The whole-document case cannot catch this: there the indent is interior.
+    @Test func selectingFromAnIndentedCodeBlockKeepsItsIndent() async throws {
+        let view = await self.view("para\n\n    indented code\n    second line\n\n$$\nx\n$$")
+        defer { view.dismantleRenderSession() }
+        let starts = try #require(view.currentSnapshot).blockStarts
+        let selection = try NSRange(location: starts[1], length: #require(view.currentSnapshot).attributedString.length - starts[1])
+        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: selection))
+        #expect(result.text.hasPrefix("    indented code"), "lost the indent: \(result.text.debugDescription)")
+        #expect(MarkdownDocument(parsing: result.text).blocks.first.map { if case .codeBlock = $0 { true } else { false } } == true)
+    }
+
+    /// Link reference definitions produce no block, so consecutive blocks are
+    /// adjacent in *index* without being adjacent in *bytes*. Bracketing to a
+    /// neighbour's bound therefore hands over source that belongs to no block —
+    /// here a URL the document renders nowhere.
+    @Test func sourceOwnedByNoBlockIsNotHandedOverAsExact() async throws {
+        let view = await self.view("alpha\n\n[ref]: https://never-rendered.test/secret\n\n$$\nx\n$$")
+        defer { view.dismantleRenderSession() }
+        let starts = try #require(view.currentSnapshot).blockStarts
+        let mathOnly = NSRange(location: starts[1], length: 1)
+        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: mathOnly))
+        #expect(!result.text.contains("never-rendered.test"), "copied source no block owns: \(result.text.debugDescription)")
+    }
+
+    @Test func sourceOwnedByNoBlockDoesNotLeakPastTheTrailingEdgeEither() async throws {
+        let view = await self.view("alpha $x$ one\n\n[ref]: https://never-rendered.test/secret\n\ntail")
+        defer { view.dismantleRenderSession() }
+        let starts = try #require(view.currentSnapshot).blockStarts
+        let firstBlock = NSRange(location: starts[0], length: starts[1] - 1 - starts[0])
+        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: firstBlock))
+        #expect(!result.text.contains("never-rendered.test"), "copied source no block owns: \(result.text.debugDescription)")
+        #expect(!result.text.contains("tail"))
+    }
+
     // MARK: Commands and resources
 
     /// Pins both the `resources:` wiring and the two `.strings` files: without

@@ -238,40 +238,20 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// hosts reach the command through `MarkdownSelectionProxy` instead.
     override public func buildMenu(with builder: any UIMenuBuilder) {
         super.buildMenu(with: builder)
+        // Explicit identifiers: UIKit builds the menu once per responder in the
+        // chain, so anonymous ones would append a duplicate item per Markdown
+        // view rather than replace.
         let command = UICommand(
-            title: MarkdownCopyCommandTitle.markdownSource, action: #selector(self.copyMarkdownSource(_:))
+            title: MarkdownCopyCommandTitle.markdownSource,
+            action: #selector(self.copyMarkdownSource(_:)),
+            propertyList: nil,
+            alternates: []
         )
-        builder.insertSibling(UIMenu(options: .displayInline, children: [command]), afterMenu: .standardEdit)
-    }
-
-    /// Single source of truth for "current selection → copied original-source
-    /// string": resolve the active TextKit2 selection, convert it to a
-    /// rendered-plain-text offset range, and map that range back to the
-    /// original Markdown source via `copyString`. Returns `nil` when there is
-    /// no usable selection (no selection / empty range) so callers can no-op.
-    /// Production `copy(_:)` writes the result to the pasteboard; the
-    /// test seam returns it — keeping both paths on identical logic so they
-    /// cannot drift.
-    private func _copiedStringForCurrentSelection() -> String? {
-        guard
-            let sel = layoutManager.textSelections.first,
-            let range = sel.textRanges.first,
-            let str = contentStorage.attributedString?.string else {
-            return nil
-        }
-        let start = self.contentStorage.offset(
-            from: self.contentStorage.documentRange.location, to: range.location
+        let menu = UIMenu(
+            title: "", identifier: UIMenu.Identifier("MarkdownKit.copyMarkdownSource"),
+            options: .displayInline, children: [command]
         )
-        let end = self.contentStorage.offset(
-            from: self.contentStorage.documentRange.location, to: range.endLocation
-        )
-        guard start < end else {
-            return nil
-        }
-        return self.copyString(
-            forRenderedRange: NSRange(location: start, length: end - start),
-            renderedPlainText: str
-        )
+        builder.insertSibling(menu, afterMenu: .standardEdit)
     }
 
     /// Rendered offsets of the active selection, or `nil` when nothing is
@@ -302,16 +282,6 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
                 granularity: .character
             ),
         ]
-    }
-
-    /// Test-support: the original-source string that the production copy path
-    /// (`copy(_:)`) would put on the pasteboard for the *current* selection,
-    /// without touching the system pasteboard (avoids a global side effect /
-    /// headless-CI flakiness). Shares the exact production
-    /// selection→range→`copyString` logic via `_copiedStringForCurrentSelection`
-    /// so the regression coverage is not narrowed. Mirrors the AppKit seam.
-    func _copiedStringForCurrentSelectionForTesting() -> String {
-        self._copiedStringForCurrentSelection() ?? ""
     }
 
     /// Test-support: the laid-out frame union of the block at `index` in the
@@ -390,9 +360,9 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         return found
     }
 
-    /// Maps a rendered selection range to the original Markdown source it
-    /// covers (block-level). Shared between platforms via the file-scope
-    /// `markdownSourceForRenderedSelection`.
+    /// Maps a rendered selection to the Markdown source it covers, reporting how
+    /// faithful the result is. Symmetric with the other platform; the mapping
+    /// itself is the file-scope `markdownSourceCopy`.
     func markdownSourceCopy(
         forRenderedRange range: NSRange, renderedPlainText: String,
         renderedFallback: @escaping (NSRange) -> String,
@@ -407,17 +377,6 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             originalSource: self.lastParsedSource,
             renderedFallback: renderedFallback,
             reconstructedSource: reconstructedSource
-        )
-    }
-
-    func copyString(forRenderedRange range: NSRange, renderedPlainText: String) -> String {
-        markdownSourceForRenderedSelection(
-            renderedRange: range,
-            renderedPlainText: renderedPlainText,
-            blockStarts: self.blockStarts,
-            parsedBlocks: self.parsedBlocks,
-            renderedLength: self._liveString.length,
-            originalSource: self.lastParsedSource
         )
     }
 

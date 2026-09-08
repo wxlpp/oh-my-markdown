@@ -323,9 +323,13 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         NSPasteboard.general.setString(result.text, forType: .string)
     }
 
+    /// Adds the copy commands to whatever the host installed rather than
+    /// replacing it, and stays out of the way when there is no selection.
     override public func menu(for event: NSEvent) -> NSMenu? {
-        guard self.currentRenderedSelectionRange() != nil else { return nil }
-        let menu = NSMenu()
+        let hostMenu = super.menu(for: event) ?? self.menu
+        guard self.currentRenderedSelectionRange() != nil else { return hostMenu }
+        let menu = (hostMenu?.copy() as? NSMenu) ?? NSMenu()
+        if !menu.items.isEmpty { menu.addItem(.separator()) }
         menu.addItem(withTitle: MarkdownCopyCommandTitle.copy, action: #selector(self.copy(_:)), keyEquivalent: "")
         menu.addItem(withTitle: MarkdownCopyCommandTitle.markdownSource, action: #selector(self.copyMarkdownSource(_:)), keyEquivalent: "")
         menu.items.forEach { $0.target = self }
@@ -365,16 +369,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     /// headless copy regression test drives both platforms symmetrically.
     func _selectEntireDocumentForTesting() {
         self.selectAll(nil)
-    }
-
-    /// Test-support: the original-source string that the production copy path
-    /// (`performCopy()`) would put on the pasteboard for the *current*
-    /// selection, without touching the system pasteboard (avoids a global side
-    /// effect / headless-CI flakiness). Shares the exact production
-    /// selection→range→`copyString` logic via `_copiedStringForCurrentSelection`
-    /// so the regression coverage is not narrowed. Mirrors the iOS seam.
-    func _copiedStringForCurrentSelectionForTesting() -> String {
-        self._copiedStringForCurrentSelection() ?? ""
     }
 
     /// Test-support: the laid-out frame union of the block at `index` in the
@@ -788,39 +782,9 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         }
     }
 
-    /// Single source of truth for "current selection → copied original-source
-    /// string": resolve the active TextKit2 selection, convert it to a
-    /// rendered-plain-text offset range, and map that range back to the
-    /// original Markdown source via `copyString`. Returns `nil` when there is
-    /// no usable selection (no selection / empty range) so callers can no-op.
-    /// Production `performCopy()` writes the result to the pasteboard; the
-    /// test seam returns it — keeping both paths on identical logic so they
-    /// cannot drift. Symmetric with the iOS implementation.
-    private func _copiedStringForCurrentSelection() -> String? {
-        guard
-            let sel = layoutManager.textSelections.first,
-            let range = sel.textRanges.first,
-            let str = contentStorage.attributedString?.string else {
-            return nil
-        }
-        let start = self.contentStorage.offset(
-            from: self.contentStorage.documentRange.location, to: range.location
-        )
-        let end = self.contentStorage.offset(
-            from: self.contentStorage.documentRange.location, to: range.endLocation
-        )
-        guard start < end else {
-            return nil
-        }
-        return self.copyString(
-            forRenderedRange: NSRange(location: start, length: end - start),
-            renderedPlainText: str
-        )
-    }
-
-    /// Maps a rendered selection range to the original Markdown source it
-    /// covers (block-level). Symmetric with the iOS implementation; shared
-    /// logic lives in the file-scope `markdownSourceForRenderedSelection`.
+    /// Maps a rendered selection to the Markdown source it covers, reporting how
+    /// faithful the result is. Symmetric with the other platform; the mapping
+    /// itself is the file-scope `markdownSourceCopy`.
     func markdownSourceCopy(
         forRenderedRange range: NSRange, renderedPlainText: String,
         renderedFallback: @escaping (NSRange) -> String,
@@ -835,17 +799,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             originalSource: self.lastParsedSource,
             renderedFallback: renderedFallback,
             reconstructedSource: reconstructedSource
-        )
-    }
-
-    func copyString(forRenderedRange range: NSRange, renderedPlainText: String) -> String {
-        markdownSourceForRenderedSelection(
-            renderedRange: range,
-            renderedPlainText: renderedPlainText,
-            blockStarts: self.blockStarts,
-            parsedBlocks: self.parsedBlocks,
-            renderedLength: self._liveString.length,
-            originalSource: self.lastParsedSource
         )
     }
 }
