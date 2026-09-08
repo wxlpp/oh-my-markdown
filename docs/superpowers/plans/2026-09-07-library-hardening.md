@@ -1663,6 +1663,62 @@ git commit -m "feat: support adaptive markdown typography"
 
 Dispatch `superpowers-reviewer` over Task 11 after visual findings are resolved. Require Dynamic Type through accessibility sizes, preserved custom-style semantics, and layout/screenshot evidence.
 
+#### Task 11 in-progress state (2026-09-09)
+
+Steps 1–3 are done and committed as `9ba8020` ("feat: support adaptive markdown
+typography"). Steps 4–6 remain.
+
+Evidence already gathered:
+- `swift test` — 506 tests, all passing on macOS.
+- `swift build -c release -Xswiftc -warnings-as-errors` — clean.
+- `xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:MarkdownKitTests/DynamicTypeTests -only-testing:MarkdownKitTests/AdaptiveLayoutTests` — 15 tests passing.
+- Screenshots captured on the iOS 18 simulator (light/dark × `large`/`accessibility-extra-extra-extra-large`) in the session scratchpad. They exposed the h1 defect that led to the `UIFontMetrics` per-role curve; **they must be recaptured** because they predate that fix.
+
+What is left in Task 11:
+1. Recapture the Example screenshots at both sizes and appearances, including the
+   wide table, loading image, math, and SVG sections (the captures so far only
+   reached the top of the render tab), then dispatch `ios-visual-reviewer`.
+2. Add a Dynamic Type case to `Example/ExampleUITests/ExampleUITests.swift`.
+3. Add the `ios18-dynamic-type` section to `Tests/runtime-test-manifest.json` and
+   run `Scripts/assert-xcresult-tests.sh` against a fresh result bundle.
+4. Review checkpoint 7B (`superpowers-reviewer` over Task 11).
+
+Reproducing the screenshot setup:
+```bash
+xcodebuild build -project Example/Example.xcodeproj -scheme Example \
+  -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -derivedDataPath <dd>
+xcrun simctl boot 8F2781CA-A58C-4B2B-96A1-59448E08BE78   # iPhone 16 Pro, iOS 18.0
+xcrun simctl install <device> <dd>/Build/Products/Debug-iphonesimulator/Example.app
+xcrun simctl ui <device> appearance light|dark
+xcrun simctl ui <device> content_size large|accessibility-extra-extra-extra-large
+xcrun simctl launch <device> com.evan.Example
+xcrun simctl io <device> screenshot out.png
+```
+**Reset `content_size` to `large` when done** — the view seeds itself from the
+device trait, and a simulator left at AX5 makes `AdaptiveLayoutTests`'
+generation-bump assertions fail for an environment reason, not a code one.
+
+Deviations from the plan's Task 11 file list, deliberate:
+- `Sources/MarkdownKit/Exports.swift` re-exports `MarkdownContentSizeCategory` and
+  `MarkdownScaledFont`; without it the new public types are unreachable from the
+  umbrella module.
+- `Sources/MarkdownRenderKit/MarkdownContentSizeCategory.swift` is a new file
+  rather than an addition to `RenderStyle.swift`.
+- `Tests/MarkdownKitTests/MaterializationFixture.swift` gained a
+  `contentSizeCategory` field so the layout tests can drive the real
+  prepare/materialize boundary.
+- `RenderPreparer.swift`, `RenderMaterializer.swift` and `MarkdownTableOverlay.swift`
+  needed no change: both attachment bounds and table natural widths already derive
+  from `configuration.typography`, so they scale once the configuration does. That
+  is asserted by `attachmentPlaceholdersScaleWithTheCategory` and
+  `theTableOverflowWidensWithTheCategory`.
+
+One earlier obstacle, recorded so it is not re-diagnosed: a `SIGSEGV` in
+`outlined init with copy of RenderStyle` (retaining `0x3ff0000000000000`, the bit
+pattern of `Double` 1.0) came from stale incremental build artifacts after the new
+stored property changed the struct's layout. `rm -rf .build` fixed it; partial
+cleans of the individual `.build` module directories did not.
+
 ### Task 12: Finish deterministic tests, documentation, migration, and release gates
 
 **Carried from Task 7 (checkpoint 5B), disclosed rather than fixed there:**
