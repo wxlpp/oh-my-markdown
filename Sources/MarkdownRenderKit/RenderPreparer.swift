@@ -191,12 +191,19 @@ private struct PreparationBuilder {
         case .heading(let level, let nodes):
             self.nextAccessibilityLeaf()
             attrs.role = .heading(level: min(max(level, 1), 6))
-            attrs.paragraph = PreparedParagraph(lineSpacing: 2, spacing: level <= 2 ? 8 : 6, before: level <= 2 ? 24 : 20)
+            // The air above a heading is what makes it read as a section break, so
+            // it follows the type: unscaled, a maximum-category heading gets less
+            // space above it than its own cap height.
+            let chrome = self.configuration.spacing.chromeScale
+            attrs.paragraph = PreparedParagraph(
+                lineSpacing: 2 * chrome, spacing: (level <= 2 ? 8 : 6) * chrome, before: (level <= 2 ? 24 : 20) * chrome
+            )
             return try self.inlines(nodes, attributes: attrs).map(PreparedPiece.run)
         case .codeBlock(let language, let body):
             self.nextAccessibilityLeaf()
             attrs.role = .code; attrs.color = .code
-            attrs.paragraph = PreparedParagraph(lineSpacing: 4, head: 16, first: 16, tail: -16)
+            let insets = self.configuration.spacing.codeInsets
+            attrs.paragraph = PreparedParagraph(lineSpacing: 4 * self.configuration.spacing.chromeScale, head: insets, first: insets, tail: -insets)
             let trimsNewline = body.hasSuffix("\n")
             try self.payload(min(body.utf8.count, 1))
             let trimmed = trimsNewline ? String(body.dropLast()) : body
@@ -242,6 +249,7 @@ private struct PreparationBuilder {
                 case .run(var run):
                     var paragraph = run.attributes.paragraph ?? PreparedParagraph(lineSpacing: 0)
                     paragraph.head += indent; paragraph.first += indent
+                    if let tab = paragraph.tab { paragraph.tab = tab + indent }
                     run.attributes.paragraph = paragraph
                     return .run(run)
                 case .table(var table): table.quoteIndent += indent; return .table(table)
@@ -255,7 +263,8 @@ private struct PreparationBuilder {
             self.accessibilityLeaf = PreparationBuilder.markerLeaf
             defer { self.accessibilityLeaf = restore }
             attrs.tinyFont = true; attrs.color = .clear
-            attrs.paragraph = PreparedParagraph(lineSpacing: 0, spacing: 12, before: 12, height: 8)
+            let chrome = self.configuration.spacing.chromeScale
+            attrs.paragraph = PreparedParagraph(lineSpacing: 0, spacing: 12 * chrome, before: 12 * chrome, height: 8 * chrome)
             return [.run(self.text("\u{00A0}", attributes: attrs))]
         case .htmlBlock(let value):
             self.nextAccessibilityLeaf()

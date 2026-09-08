@@ -152,16 +152,41 @@ struct AdaptiveLayoutTests {
         }
     }
 
+    /// An item's first line starts at its tab stop and its wrapped lines at its
+    /// head indent, so the two have to be the same number. Inside a quote the
+    /// indents are shifted and the stop has to shift with them — and now that the
+    /// stop is also the paragraph's tab interval, a stop left behind puts a wide
+    /// marker's text past the text it introduces rather than in line with it.
+    @Test(arguments: [MarkdownContentSizeCategory.large, .accessibilityExtraExtraExtraLarge])
+    func aQuotedListsTabStopFollowsItsIndent(category: MarkdownContentSizeCategory) {
+        let source = Self.orderedListSource.split(separator: "\n").map { "> " + $0 }.joined(separator: "\n")
+        var fixture = MaterializationFixture(availableWidth: Self.width, placeholderMode: .static)
+        fixture.contentSizeCategory = category
+        let string = fixture.render(MarkdownDocument(parsing: source).blocks)
+        let placed = Self.laidOutText(string, width: Self.width)
+        #expect(placed.contains("further line here"), "a quoted item lost its tail at \(category): \(placed.debugDescription)")
+        #expect(placed.contains("tenth"))
+        var stops: [(CGFloat, CGFloat)] = []
+        string.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: string.length)) { value, _, _ in
+            guard let paragraph = value as? NSParagraphStyle, let stop = paragraph.tabStops.first,
+                  paragraph.tabStops.count == 1 else { return }
+            stops.append((stop.location, paragraph.headIndent))
+        }
+        #expect(!stops.isEmpty)
+        for (location, head) in stops {
+            #expect(location == head, "a quoted item tabs to \(location) but wraps to \(head) at \(category)")
+        }
+    }
+
     /// A table that already overflows must keep overflowing rather than being
     /// squeezed into the main flow, or the horizontal scroll overlay disappears
     /// exactly when the reader most needs it.
     @Test(arguments: [MarkdownContentSizeCategory.large, .accessibilityExtraExtraExtraLarge])
-    func wideTablesKeepTheirHorizontalOverflow(category: MarkdownContentSizeCategory) {
+    func wideTablesKeepTheirHorizontalOverflow(category: MarkdownContentSizeCategory) throws {
         var fixture = MaterializationFixture(availableWidth: Self.width, placeholderMode: .static)
         fixture.contentSizeCategory = category
         let snapshot = fixture.snapshot(Self.blocks())
-        let overlay = try? #require(snapshot.tableOverlays.values.first)
-        guard let overlay else { return }
+        let overlay = try #require(snapshot.tableOverlays.values.first)
         #expect(overlay.naturalWidth > Self.width)
         #expect(overlay.height > 0)
     }

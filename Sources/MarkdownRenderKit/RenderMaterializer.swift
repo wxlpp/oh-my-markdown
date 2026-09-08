@@ -164,7 +164,9 @@ package struct RenderMaterializer {
         result.minimumLineHeight = value.height
         result.maximumLineHeight = value.height
         if value.centered { result.alignment = .center }
-        if let tab = value.tab {
+        // A snapshot is publicly constructible, and a stop at or before the
+        // margin is not a stop; `defaultTabInterval` is documented non-negative.
+        if let tab = value.tab, tab > 0 {
             result.tabStops = [NSTextTab(textAlignment: .natural, location: tab)]
             // Past its last tab stop a paragraph has nowhere to put a tab, and
             // TextKit drops the rest of the line instead of wrapping it: `10.` at

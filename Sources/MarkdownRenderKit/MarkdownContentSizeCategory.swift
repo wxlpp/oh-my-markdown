@@ -43,10 +43,6 @@ public enum MarkdownContentSizeCategory: String, Sendable, Equatable, CaseIterab
     public var chromeScale: Double {
         1 + (self.scale - 1) * 0.5
     }
-
-    public var isAccessibilityCategory: Bool {
-        self.scale >= MarkdownContentSizeCategory.accessibilityMedium.scale
-    }
 }
 
 #if canImport(UIKit)
@@ -103,13 +99,13 @@ func resized(_ font: PlatformFont, to size: CGFloat) -> PlatformFont {
 
 /// A custom font that follows the reader's text-size setting.
 ///
-/// A font set directly on `RenderStyle` is a fixed size by design — a host that
-/// wrote 19 pt meant 19 pt. Wrapping it here is how a host asks for the other
-/// behaviour, and the wrapper keeps the face, weight and traits it was given.
-/// Stores a platform font, like `RenderStyle` itself, so it carries the same
-/// isolation as the style it lives in rather than a stricter one.
+/// Pass one to `RenderStyle.setFont(_:for:)` to give a role a scaling font, or
+/// call `resolve(contentSizeCategory:)` to size it directly. Either way the
+/// face, weight and traits it was built with are kept. Stores a platform font,
+/// like `RenderStyle` itself, so it carries the same isolation as the style it
+/// lives in rather than a stricter one.
 public struct MarkdownScaledFont {
-    private let base: PlatformFont
+    let base: PlatformFont
     private let role: MarkdownTextRole
 
     public init(base: PlatformFont, relativeTo role: MarkdownTextRole) {

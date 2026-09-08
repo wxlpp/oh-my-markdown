@@ -140,9 +140,10 @@ public struct MarkdownRenderConfiguration {
     public let configurationID: MarkdownConfigurationID
     private let usesPreferredMetrics: Bool
     private let resolvedDefault: RenderConfigurationSnapshot?
-    private var contentSizeCategory: MarkdownContentSizeCategory = .large
+    private let contentSizeCategory: MarkdownContentSizeCategory
 
-    /// Custom fonts retain fixed metrics until explicitly opted into a scaling policy.
+    /// Only the roles the style registered as scalable follow the reader's text
+    /// size; see `RenderStyle.pinFont(for:)` for pinning one that does.
     public init(style: RenderStyle, configurationID: MarkdownConfigurationID = .uniqueInstance()) {
         self.init(style: style, configurationID: configurationID, contentSizeCategory: .large)
     }
@@ -168,6 +169,7 @@ public struct MarkdownRenderConfiguration {
         )
         self.configurationID = resolved.id
         self.resolvedDefault = resolved
+        self.contentSizeCategory = contentSizeCategory
     }
 
     /// Captures the current appearance together with its semantic identity.

@@ -16,7 +16,8 @@ public struct RenderStyle {
     // MARK: - Default
 
     /// Follows the reader's text-size setting: every default font is registered
-    /// as scalable, which is what a host opts *out* of by assigning its own.
+    /// as scalable. A host opts a role out by assigning a font at a different
+    /// size, or at the same size followed by `pinFont(for:)`.
     public static var `default`: RenderStyle {
         var style = Self.fixedDefault
         style.scaleFontWithContentSize(for: .body)
@@ -252,9 +253,42 @@ public struct RenderStyle {
     }
 
     /// Opts one role into following the reader's setting, keeping the face and
-    /// weight already set for it. The inverse of assigning a plain font.
+    /// weight already set for it.
     public mutating func scaleFontWithContentSize(for role: MarkdownTextRole) {
         self.scaledBaseSizes[role] = Double(self.font(for: role).pointSize)
+    }
+
+    /// Pins one role at the size it currently holds.
+    ///
+    /// Assigning a font is normally enough, because a role stops following the
+    /// reader once its stored size differs from the size it was registered at.
+    /// A font assigned at exactly the registered size is indistinguishable from
+    /// the registered one, so pinning is how a host says it meant that size.
+    public mutating func pinFont(for role: MarkdownTextRole) {
+        self.scaledBaseSizes[role] = nil
+    }
+
+    /// Assigns a font that follows the reader's setting, keeping the face,
+    /// weight and traits it was built with.
+    public mutating func setFont(_ font: MarkdownScaledFont, for role: MarkdownTextRole) {
+        self.setFont(font.base, for: role)
+        self.scaleFontWithContentSize(for: role)
+    }
+
+    mutating func setFont(_ font: PlatformFont, for role: MarkdownTextRole) {
+        switch role {
+        case .code: self.codeFont = font
+        case .heading(let level):
+            switch min(max(level, 1), 6) {
+            case 1: self.h1Font = font
+            case 2: self.h2Font = font
+            case 3: self.h3Font = font
+            case 4: self.h4Font = font
+            case 5: self.h5Font = font
+            default: self.h6Font = font
+            }
+        default: self.bodyFont = font
+        }
     }
 
     func font(for role: MarkdownTextRole) -> PlatformFont {
@@ -286,7 +320,8 @@ public struct RenderStyle {
         /// at the default size, damped but never collapsed at the largest.
         func hierarchical(_ role: MarkdownTextRole, _ resolved: PlatformFont) -> PlatformFont {
             guard let declared = self.scaledBaseSizes[role], Double(self.font(for: role).pointSize) == declared,
-                  let declaredBody = self.scaledBaseSizes[.body], Double(self.bodyFont.pointSize) == declaredBody
+                  let declaredBody = self.scaledBaseSizes[.body], Double(self.bodyFont.pointSize) == declaredBody,
+                  declaredBody > 0
             else { return resolved }
             let ratio = declared / declaredBody
             let floor = Double(body.pointSize) * min(ratio, ratio.squareRoot())
@@ -328,7 +363,7 @@ public struct RenderStyle {
         let chrome = contentSizeCategory.chromeScale
         let spacing = SpacingTokens(
             paragraph: Double(self.paragraphSpacing) * chrome, block: Double(self.paragraphSpacing) * chrome,
-            codeInsets: 8 * chrome, quoteIndent: Double(self.quoteIndent) * chrome,
+            codeInsets: 16 * chrome, quoteIndent: Double(self.quoteIndent) * chrome,
             listIndent: 24 * chrome, chromeScale: chrome
         )
         /// The built-in identity includes every normalized token. Length-prefixed

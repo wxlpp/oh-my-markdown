@@ -31,6 +31,9 @@
     ],
     "requiredTests": [
       "defaultMetricsGrowMonotonicallyWithTheCategory(role:)",
+      "headingsNeverFallBelowTheirDampedDeclaredRatio(category:)",
+      "aCategoryChangeReplacesTheConfigurationExactlyOnce()",
+      "theCategoryParticipatesInConfigurationIdentity()",
       "aFixedCustomFontDoesNotScale()",
       "aScaledCustomFontFollowsTheCategory()",
       "theSystemTraitDrivesTheCategory()",

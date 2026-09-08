@@ -63,11 +63,16 @@ struct DynamicTypeTests {
 
     /// Ordering alone is not hierarchy: on iOS each heading follows its own text
     /// style's curve, which damps where `.body`'s does not, and the default h2
-    /// fell to 1.07x body at the maximum category while h4 fell below it. A
-    /// scaled heading keeps at least the square root of the ratio it was declared
-    /// at, which is the declared ratio itself at the default size.
+    /// fell to 1.07x body at the maximum category while h4 fell below it. The
+    /// floor is `min(ratio, sqrt(ratio))` — the square root where a heading is
+    /// larger than body, the ratio itself where it is smaller, so h5 and h6 are
+    /// not pushed up.
+    ///
+    /// Inert on macOS by construction: AppKit has no per-style metrics table, so
+    /// every role scales by the same factor and the declared ratios hold exactly.
+    /// The iOS run in `ios18-dynamic-type` is what enforces this.
     @Test(arguments: MarkdownContentSizeCategory.allCases)
-    func headingsKeepAtLeastTheSquareRootOfTheirDeclaredRatio(category: MarkdownContentSizeCategory) {
+    func headingsNeverFallBelowTheirDampedDeclaredRatio(category: MarkdownContentSizeCategory) {
         let declaredBody = self.sizes(.large, role: .body)
         let body = self.sizes(category, role: .body)
         for level in 1 ... 6 {
@@ -77,6 +82,34 @@ struct DynamicTypeTests {
             let resolved = self.sizes(category, role: role)
             #expect(resolved >= floor - 0.001, "h\(level) is \(resolved) at \(category), under its floor of \(floor)")
         }
+    }
+
+    /// Opting out is detected from the stored size, so a font assigned at exactly
+    /// the registered size is indistinguishable from the registered one and keeps
+    /// scaling. `pinFont(for:)` is how a host says it meant that size.
+    @Test func aCustomFontAtTheRegisteredSizeIsPinnedOnRequest() {
+        var scaling = RenderStyle.default
+        // The registered size, not a literal: it differs between the platforms.
+        let size = scaling.bodyFont.pointSize
+        scaling.bodyFont = .systemFont(ofSize: size, weight: .bold)
+        #expect(self.body(of: scaling, at: .accessibilityExtraExtraExtraLarge) > Double(size))
+        var pinned = scaling
+        pinned.pinFont(for: .body)
+        #expect(self.body(of: pinned, at: .extraSmall) == Double(size))
+        #expect(self.body(of: pinned, at: .accessibilityExtraExtraExtraLarge) == Double(size))
+    }
+
+    private func body(of style: RenderStyle, at category: MarkdownContentSizeCategory) -> Double {
+        style.snapshot(generation: 0, contentSizeCategory: category).typography.pointSizes[.body] ?? 0
+    }
+
+    /// The wrapper is a host-facing opt-in, not only a resolution helper: handing
+    /// one to the style has to leave the role following the reader.
+    @Test func aScaledFontAssignedToARoleFollowsTheCategory() {
+        var style = RenderStyle.fixedDefault
+        style.setFont(MarkdownScaledFont(base: .systemFont(ofSize: 19, weight: .medium), relativeTo: .body), for: .body)
+        #expect(self.body(of: style, at: .extraSmall) < 19)
+        #expect(self.body(of: style, at: .accessibilityExtraExtraExtraLarge) > 19)
     }
 
     /// A host that set an exact font is documenting an exact size. It must not
