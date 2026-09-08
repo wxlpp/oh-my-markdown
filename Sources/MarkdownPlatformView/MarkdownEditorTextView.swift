@@ -175,6 +175,14 @@ public final class MarkdownEditorTextView: UITextView, UITextViewDelegate {
         self.onSelectionChange?(MarkdownEditorSelection(selectedRange))
     }
 
+    /// Suppresses the system action for a `.link` run, the iOS counterpart of the
+    /// AppKit `clickedOnLink` backstop. This class *is* the text view on iOS, so a
+    /// host can set `dataDetectorTypes` on it directly; that plus
+    /// `isEditable = false` is system link activation with no policy behind it.
+    public func textView(_: UITextView, primaryActionFor _: UITextItem, defaultAction _: UIAction) -> UIAction? {
+        nil
+    }
+
     public func textView(
         _ textView: UITextView,
         shouldChangeTextIn range: NSRange,
@@ -276,6 +284,8 @@ public final class MarkdownEditorTextView: UITextView, UITextViewDelegate {
             self.performWithoutUndoRegistration {
                 self.textStorage.beginEditing()
                 highlighted.enumerateAttributes(in: NSRange(location: 0, length: highlighted.length)) { attributes, range, _ in
+                    // `setAttributes`, not `addAttributes`: replacing wipes any
+                    // `.link` a detector or a paste left behind. Don't relax it.
                     self.textStorage.setAttributes(attributes, range: range)
                 }
                 self.textStorage.endEditing()
@@ -936,6 +946,8 @@ public final class MarkdownEditorTextView: NSView, NSTextViewDelegate {
             self.performWithoutUndoRegistration {
                 self.textView.textStorage?.beginEditing()
                 highlighted.enumerateAttributes(in: NSRange(location: 0, length: highlighted.length)) { attributes, range, _ in
+                    // `setAttributes`, not `addAttributes`: replacing wipes any
+                    // `.link` a detector or a paste left behind. Don't relax it.
                     self.textView.textStorage?.setAttributes(attributes, range: range)
                 }
                 self.textView.textStorage?.endEditing()

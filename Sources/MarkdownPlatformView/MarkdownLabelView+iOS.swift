@@ -205,6 +205,9 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
 
     // MARK: Copy action
 
+    /// Don't widen this to `super` for the default menu: returning `false` for
+    /// everything but copy is what keeps Share, Look Up and Translate — each of
+    /// which can hand a URL to the system — off a rendered link.
     override public func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(self.copy(_:)) {
             return !(self.layoutManager.textSelections.first?.textRanges.first?.isEmpty ?? true)
@@ -525,6 +528,9 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     public var onResourceError: MarkdownResourceErrorHandler?
 
     /// Web-only policy and the platform opener until a host replaces them.
+    /// Non-optional: a UIKit/AppKit host revokes by assigning `.platformDefault`,
+    /// there being nothing to clear. Only the SwiftUI environment entry reverts on
+    /// its own, and only on the edge where a configuration is taken away.
     public var linkConfiguration: MarkdownLinkConfiguration = .platformDefault {
         didSet {
             // Always forwarded: the driver decides what counts as a replacement.

@@ -483,6 +483,9 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     public var onResourceError: MarkdownResourceErrorHandler?
 
     /// Web-only policy and the platform opener until a host replaces them.
+    /// Non-optional: a UIKit/AppKit host revokes by assigning `.platformDefault`,
+    /// there being nothing to clear. Only the SwiftUI environment entry reverts on
+    /// its own, and only on the edge where a configuration is taken away.
     public var linkConfiguration: MarkdownLinkConfiguration = .platformDefault {
         didSet {
             // Always forwarded: the driver decides what counts as a replacement.

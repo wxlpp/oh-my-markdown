@@ -260,6 +260,21 @@ struct MarkdownLinkPolicyTests {
             await Task.yield()
         }
         #expect(handler.opened.count == 1, "the revoked policy still opened a custom scheme")
+        #expect(driver.linkConfiguration.handlerID == MarkdownLinkConfiguration.platformDefault.handlerID)
+
+        // Re-installing after a revert must work too: the edge flag has to have
+        // been reset, or the second install is the only one that ever lands.
+        host.rootView = content(installing: permissive)
+        #if canImport(UIKit)
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        #else
+        host.needsLayout = true
+        host.layoutSubtreeIfNeeded()
+        #endif
+        #expect(await eventually { driver.linkConfiguration.handlerID == permissive.handlerID })
+        #expect(label.activateLink(at: 0))
+        #expect(await eventually { handler.opened.count == 2 })
         withExtendedLifetime(host) {}
     }
 
@@ -532,6 +547,11 @@ struct MarkdownEditorLinkAttributeTests {
         #expect(editor.dataDetectorTypes.isEmpty)
         // Rich-text editing would let a paste carry a `.link` run into the storage.
         #expect(!editor.allowsEditingTextAttributes)
+        // However a run got there, the system action for it is suppressed. This
+        // class is the text view on iOS, so a host can set dataDetectorTypes on it.
+        // UIKit dispatches this optional delegate method through respondsToSelector,
+        // so implementing it is exactly what the assertion needs to pin.
+        #expect(editor.responds(to: #selector(UITextViewDelegate.textView(_:primaryActionFor:defaultAction:))))
         #else
         let editor = MarkdownEditorTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
         editor.setMarkdown(source)
