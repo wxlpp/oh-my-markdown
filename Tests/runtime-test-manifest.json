@@ -11,7 +11,8 @@
       "合法公式 → .rendered，尺寸为正",
       "Smoke markdown parses one heading",
       "testRootDemoIsAccessible()",
-      "testRenderedMarkdownReachesTheAccessibilityTree()"
+      "testRenderedMarkdownReachesTheAccessibilityTree()",
+      "testTheRenderedDocumentGrowsWithTheTextSize()"
     ]
   },
   "macos15": {
@@ -22,6 +23,20 @@
     "requiredTests": [
       "Parsed blocks include stable source fingerprints",
       "合法公式 → .rendered，尺寸为正"
+    ]
+  },
+  "ios18-dynamic-type": {
+    "requiredTargets": [
+      "MarkdownKitTests"
+    ],
+    "requiredTests": [
+      "defaultMetricsGrowMonotonicallyWithTheCategory(role:)",
+      "aFixedCustomFontDoesNotScale()",
+      "aScaledCustomFontFollowsTheCategory()",
+      "theSystemTraitDrivesTheCategory()",
+      "everyLineHasPositiveHeightAndNoneOverlap(category:)",
+      "anOrderedItemKeepsItsTextAtEveryCategory(category:)",
+      "wideTablesKeepTheirHorizontalOverflow(category:)"
     ]
   },
   "ios18-accessibility": {
