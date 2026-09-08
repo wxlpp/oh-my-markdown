@@ -1608,13 +1608,13 @@ Dispatch `superpowers-reviewer` for semantic correctness and focus stability. Re
 - Consumes: immutable typography roles and session configuration replacement.
 - Produces: preferred-style default typography, custom-font scaling helper, trait-driven snapshot rebuilds, and non-overlapping maximum-size layouts.
 
-- [ ] **Step 1: Write scaling and maximum-layout failures**
+- [x] **Step 1: Write scaling and maximum-layout failures**
 
 Assert default body/code/h1–h6 metrics grow monotonically from `.large` to accessibility categories; custom fixed fonts remain fixed unless wrapped by the scaling helper. At maximum category, render long paragraphs, code, wide tables, image/math attachments, and assert positive/non-overlapping fragment bounds with horizontal table scrolling retained.
 
 Run `swift test --filter 'DynamicTypeTests|AdaptiveLayoutTests'`. Expected: FAIL because current fixed default point sizes do not scale.
 
-- [ ] **Step 2: Define semantic typography tokens and scaling helper**
+- [x] **Step 2: Define semantic typography tokens and scaling helper**
 
 ```swift
 public enum MarkdownContentSizeCategory: Sendable, Equatable {
@@ -1634,17 +1634,17 @@ Build default iOS fonts from preferred text styles/metrics. Scale line spacing, 
 
 Run `swift test --filter DynamicTypeTests`; expected PASS for default monotonic metrics and custom-font opt-in behavior.
 
-- [ ] **Step 3: Rebuild through session configuration on trait changes**
+- [x] **Step 3: Rebuild through session configuration on trait changes**
 
 Observe iOS content-size-category and relevant display-scale/color traits. Produce a new immutable render configuration generation and send one replacement event; do not mutate cached renderers or replace host custom style objects. On macOS, respond to accessibility text/display changes supported by the target runtime.
 
 Run `swift test --filter 'DynamicTypeTests|AdaptiveLayoutTests'`; expected PASS for generation replacement and non-overlapping maximum-size layout.
 
-- [ ] **Step 4: Capture and inspect required screenshots**
+- [x] **Step 4: Capture and inspect required screenshots**
 
 Run the Example on the iOS 18 simulator at normal and maximum Dynamic Type in light/dark modes and capture normal content, wide table, loading image, math, and SVG screens. Dispatch the configured `ios-visual-reviewer` with screenshot paths and source files; fix clipping, overlap, hierarchy, or polish findings before proceeding.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 swift test --filter 'DynamicTypeTests|AdaptiveLayoutTests'
@@ -1659,29 +1659,104 @@ git add Sources/MarkdownRenderKit Sources/MarkdownPlatformView Tests/MarkdownKit
 git commit -m "feat: support adaptive markdown typography"
 ```
 
-- [ ] **Step 6: Review checkpoint 7B**
+- [x] **Step 6: Review checkpoint 7B**
 
 Dispatch `superpowers-reviewer` over Task 11 after visual findings are resolved. Require Dynamic Type through accessibility sizes, preserved custom-style semantics, and layout/screenshot evidence.
 
-#### Task 11 in-progress state (2026-09-09)
+#### Task 11 record (2026-09-09)
 
-Steps 1–3 are done and committed as `9ba8020` ("feat: support adaptive markdown
-typography"). Steps 4–6 remain.
+Steps 1–3 are `9ba8020`; steps 4–6 are `4e61dd4`, `46c9adc`, `1eec457`, `ff7df32`.
 
-Evidence already gathered:
-- `swift test` — 506 tests, all passing on macOS.
-- `swift build -c release -Xswiftc -warnings-as-errors` — clean.
-- `xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:MarkdownKitTests/DynamicTypeTests -only-testing:MarkdownKitTests/AdaptiveLayoutTests` — 15 tests passing.
-- Screenshots captured on the iOS 18 simulator (light/dark × `large`/`accessibility-extra-extra-extra-large`) in the session scratchpad. They exposed the h1 defect that led to the `UIFontMetrics` per-role curve; **they must be recaptured** because they predate that fix.
+Step 4's screenshots found two defects, both fixed and both covered by tests that
+fail without the fix:
 
-What is left in Task 11:
-1. Recapture the Example screenshots at both sizes and appearances, including the
-   wide table, loading image, math, and SVG sections (the captures so far only
-   reached the top of the render tab), then dispatch `ios-visual-reviewer`.
-2. Add a Dynamic Type case to `Example/ExampleUITests/ExampleUITests.swift`.
-3. Add the `ios18-dynamic-type` section to `Tests/runtime-test-manifest.json` and
-   run `Scripts/assert-xcresult-tests.sh` against a fresh result bundle.
-4. Review checkpoint 7B (`superpowers-reviewer` over Task 11).
+- **An ordered list lost its item text at the accessibility categories.** The item
+  tab stop was a fixed 24 pt while the marker is set in the reader's type — `1.`
+  is 28 pt wide at the maximum category and `10.` is wider than 24 pt already at
+  `accessibilityMedium`. Past its last tab stop a paragraph has nowhere to put a
+  tab and TextKit drops the rest of the line rather than wrapping it, so each item
+  kept its height and rendered as a bare number. The indent is now
+  `24 * chromeScale` and the item paragraph carries it as `defaultTabInterval`.
+- **Heading hierarchy collapsed.** Each heading follows its own text style's
+  metrics and those damp where `.body`'s do not: measured on iOS 18 at the maximum
+  category, h1/h2/h3 were 1.21/1.07/1.04x body against the 2.00/1.50/1.25x they
+  are declared at, and h4 was 0.93x. A scaled heading now keeps at least
+  `min(ratio, sqrt(ratio))` of body — 1.41/1.22/1.12/1.00x at the maximum, and
+  exactly the declared ratios at `.large`.
+
+The visual re-review then found that heading space-before, code-block insets and
+the thematic break were still at their default-size point values, so a maximum-
+category heading had less air above it than its own cap height. Those take
+`chromeScale` too, and `spacing.codeInsets` — a token nothing read — is now the
+code block's inset, corrected from 8 to the 16 pt the preparer was hardcoding.
+The `.large` render is pixel-identical before and after all of this: the only
+differing pixels between the two captures are the status-bar clock and the home
+indicator.
+
+**Golden fixtures.** Four files (two IDs × two platforms) gained
+`defaultTabInterval` on their list-item paragraph rows. It is the only field that
+changed, their layout frames were not re-exported and still match, and
+`Tests/MarkdownKitTests/Fixtures/RenderGolden/README.md` records why.
+
+**Deviations from the task's file list, deliberate:**
+- `Sources/MarkdownKit/Exports.swift` re-exports `MarkdownContentSizeCategory` and
+  `MarkdownScaledFont`; without it the new public types are unreachable from the
+  umbrella module.
+- `Sources/MarkdownRenderKit/MarkdownContentSizeCategory.swift` is a new file
+  rather than an addition to `RenderStyle.swift`.
+- `Tests/MarkdownKitTests/MaterializationFixture.swift` gained a
+  `contentSizeCategory` field so the layout tests drive the real
+  prepare/materialize boundary.
+- `RenderMaterializer.swift` needed no change for attachment bounds or table
+  widths — both already derive from `configuration.typography` — but did need the
+  `defaultTabInterval` above.
+- `MarkdownScaledFont` is not `@MainActor` as Step 2's sketch shows: it stores a
+  platform font, so it carries the same isolation as the `RenderStyle` it lives in
+  rather than a stricter one.
+- `RenderStyle` gained `pinFont(for:)` and `setFont(_:for:)` beyond the sketch.
+  Opting out is detected from the stored size, so a custom font assigned at
+  exactly the registered size kept scaling with no way for a host to say it meant
+  that size; and the sketch's `MarkdownScaledFont` had no way into a style at all.
+- Step 3's macOS half is not implemented: macOS 15 exposes no system text-size
+  setting to observe, so the macOS label view only mirrors what the host assigns.
+
+**Carried to Task 12:**
+- A resolved SVG block attachment does not follow the category, while math does.
+  The rasteriser's contract is `fit-width.no-upscale` and `SVGBlockRendering` is a
+  public protocol, so scaling it needs a protocol change and a cache-key change
+  with a migration story.
+- Table chrome (cell padding 24, outer 28, tab offsets, row spacing) and hairlines
+  (heading rule, quote bar width) are not scaled. Judgement calls, not oversights:
+  a hairline is a hairline, and scaling cell padding widens an overflow overlay
+  that is already the reader's escape hatch.
+- Migration notes for 0.1.x → 0.2.0: `RenderStyle.default` now follows Dynamic
+  Type, so a host that shipped a fixed-size document sees a behaviour change; and
+  `MarkdownRenderConfiguration.default`'s semantic id string gained the category
+  and two spacing fields, invalidating anything keyed on it across the upgrade.
+- Appearance findings that are present at the default size too, so not Dynamic
+  Type regressions: an overflowing table is cut with no scroll affordance; quote
+  body text is 3.34:1 against its panel and nested quotes draw no second bar; a
+  task-list item draws a bullet *and* a checkbox; inline-code background is a
+  square-cornered box with no horizontal padding that breaks into slabs when the
+  span wraps; `<hr>` is pixel-identical to the heading rule; an h2 rule is missing
+  whenever the next block has a background panel.
+- At the maximum category the h1 "MarkdownKit" breaks mid-word to a one-glyph
+  orphan — it misses fitting by about 1% of the column. A hyphenation or
+  tightening factor on the heading paragraph would absorb it; lowering the ratio
+  floor would not, it would undo the hierarchy fix.
+
+**Evidence:**
+- `Scripts/run-static-gates.sh` — every gate passed at `ff7df32`'s tree:
+  platform-floors, image-ownership, link-activation, `swift test` (511 tests),
+  `swift build -c release -Xswiftc -warnings-as-errors`, `swiftformat --lint .`.
+- `xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:MarkdownKitTests/DynamicTypeTests -only-testing:MarkdownKitTests/AdaptiveLayoutTests` — 20 tests passed, and `Scripts/assert-xcresult-tests.sh ios18-dynamic-type` passed against that bundle.
+- `xcodebuild test -project Example/Example.xcodeproj -scheme Example -only-testing:ExampleUITests` — 3 tests plus the launch measurements passed.
+- Screenshots of the whole Example render tab at `large` and
+  `accessibility-extra-extra-extra-large`, light and dark, reviewed by
+  `ios-visual-reviewer` twice.
+
+The Example has no image block, so Step 4's "loading image" screen does not exist
+there; the image transport is opt-in and the Example does not opt in.
 
 Reproducing the screenshot setup:
 ```bash
@@ -1692,26 +1767,14 @@ xcrun simctl install <device> <dd>/Build/Products/Debug-iphonesimulator/Example.
 xcrun simctl ui <device> appearance light|dark
 xcrun simctl ui <device> content_size large|accessibility-extra-extra-extra-large
 xcrun simctl launch <device> com.evan.Example
+axe swipe --start-x 200 --start-y 650 --end-x 200 --end-y 360 --duration 0.5 --udid <device>
 xcrun simctl io <device> screenshot out.png
 ```
+A swipe slower than about a second selects text instead of scrolling, and a flick
+overshoots by roughly two screens; the numbers above advance about one screen.
 **Reset `content_size` to `large` when done** — the view seeds itself from the
-device trait, and a simulator left at AX5 makes `AdaptiveLayoutTests`'
-generation-bump assertions fail for an environment reason, not a code one.
-
-Deviations from the plan's Task 11 file list, deliberate:
-- `Sources/MarkdownKit/Exports.swift` re-exports `MarkdownContentSizeCategory` and
-  `MarkdownScaledFont`; without it the new public types are unreachable from the
-  umbrella module.
-- `Sources/MarkdownRenderKit/MarkdownContentSizeCategory.swift` is a new file
-  rather than an addition to `RenderStyle.swift`.
-- `Tests/MarkdownKitTests/MaterializationFixture.swift` gained a
-  `contentSizeCategory` field so the layout tests can drive the real
-  prepare/materialize boundary.
-- `RenderPreparer.swift`, `RenderMaterializer.swift` and `MarkdownTableOverlay.swift`
-  needed no change: both attachment bounds and table natural widths already derive
-  from `configuration.typography`, so they scale once the configuration does. That
-  is asserted by `attachmentPlaceholdersScaleWithTheCategory` and
-  `theTableOverflowWidensWithTheCategory`.
+device trait, and a simulator left at the maximum makes `AdaptiveLayoutTests`'
+generation-bump assertions fail for an environment reason rather than a code one.
 
 One earlier obstacle, recorded so it is not re-diagnosed: a `SIGSEGV` in
 `outlined init with copy of RenderStyle` (retaining `0x3ff0000000000000`, the bit
