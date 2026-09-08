@@ -69,8 +69,8 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         }
     }
 
-    // Written directly during init: going through the setter there would build
-    // the render session before a `package` caller can supply its own driver.
+    /// Written directly during init: going through the setter there would build
+    /// the render session before a `package` caller can supply its own driver.
     private var contentSizeCategoryStorage: MarkdownContentSizeCategory = .large
 
     /// Table overlays carry the metrics they were built with, so a typography
