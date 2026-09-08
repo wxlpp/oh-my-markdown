@@ -291,6 +291,12 @@ public final class MarkdownEditorTextView: UITextView, UITextViewDelegate {
         if self.window == nil { self.cancelSyntaxHighlighting() }
     }
 
+    /// What makes this file's exemption from `check-link-activation.sh`'s text-view
+    /// inventory safe: the highlighter styles links with `.foregroundColor` and
+    /// never emits `.link`, so this storage holds nothing a text view would open.
+    /// `isRichText = false` does *not* provide that — it governs user-applied
+    /// attributes, not `setAttributedString`. Pinned by
+    /// `theEditorStorageNeverCarriesALinkAttribute`.
     private func applyCurrentHighlighting(preserving selection: NSRange? = nil) {
         self.scheduleSyntaxHighlighting()
         let highlighted = MarkdownSourceHighlighter(style: renderStyle).highlight(text)
@@ -840,9 +846,6 @@ public final class MarkdownEditorTextView: NSView, NSTextViewDelegate {
         self.textView.owner = self
         self.textView.delegate = self
         self.textView.drawsBackground = false
-        // Don't enable rich text: a `.link` run in the storage would let this view
-        // open URLs itself, and this is the one file check-link-activation.sh
-        // exempts from the text-view inventory.
         self.textView.isRichText = false
         self.textView.isHorizontallyResizable = false
         self.textView.isVerticallyResizable = true
@@ -938,6 +941,12 @@ public final class MarkdownEditorTextView: NSView, NSTextViewDelegate {
         if self.window == nil { self.cancelSyntaxHighlighting() }
     }
 
+    /// What makes this file's exemption from `check-link-activation.sh`'s text-view
+    /// inventory safe: the highlighter styles links with `.foregroundColor` and
+    /// never emits `.link`, so this storage holds nothing a text view would open.
+    /// `isRichText = false` does *not* provide that — it governs user-applied
+    /// attributes, not `setAttributedString`. Pinned by
+    /// `theEditorStorageNeverCarriesALinkAttribute`.
     private func applyCurrentHighlighting(preserving selection: NSRange? = nil) {
         self.scheduleSyntaxHighlighting()
         let highlighted = MarkdownSourceHighlighter(style: renderStyle).highlight(self.textView.string)

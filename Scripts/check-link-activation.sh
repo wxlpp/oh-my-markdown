@@ -27,9 +27,12 @@ for required in "$handler" "$editor" "$markup"; do
     fi
 done
 
-openers='\b(?:UIApplication|NSWorkspace|LSApplicationWorkspace|LSOpen\w*|SFSafariViewController|SFAuthenticationSession|ASWebAuthenticationSession|WKWebView|UIWindowScene|UIScene|OpenURLAction|openURL|UIDocumentInteractionController|UIActivityViewController|NSSharingService\w*|NSTask|Process|posix_spawn\w*|execv\w*)\b'
+openers='(?:^|[^A-Za-z0-9])(?:UIApplication|NSWorkspace|LSApplicationWorkspace|LSOpen\w*|SFSafariViewController|SFAuthenticationSession|ASWebAuthenticationSession|WKWebView|UIWindowScene|UIScene|OpenURLAction|openURL|UIDocumentInteractionController|UIActivityViewController|NSSharingService\w*|NSTask|Process|posix_spawn\w*|execv\w*|NSAppleScript|NSDocumentController|NSHelpManager|SKStoreProductViewController|MFMailComposeViewController|dataDetectorTypes)\b'
 # A text view opens a `.link` run by itself. `NSTextField` is the same mechanism
 # reached under another name: it vends an `NSTextView` as its field editor.
+# Not a leading `\b`: `\bLSOpen` does not match `_LSOpenURLsWithRole`, and
+# leading-underscore identifiers are house style here. Written without
+# look-behind so it works on an rg built without PCRE2.
 text_views='\b(?:UITextView|NSTextView|NSTextField)\b'
 # SwiftUI renders a `.link` run in an AttributedString through the environment's
 # OpenURLAction, with no opener name anywhere in the source. Confining the views
@@ -49,9 +52,11 @@ while IFS= read -r -d '' file; do
     [[ "$relative" == "$markup" ]] || patterns+=(-e "$swiftui_views")
 
     # Ordered blanking, strings before comments, newlines preserved: prose may
-    # name these types, code may not, and line numbers stay real. The limit of
-    # that is real and worth knowing: code inside a string interpolation, or a
-    # name reached through NSClassFromString, is invisible here.
+    # name these types, code may not, and line numbers stay real. The limits are
+    # real and worth knowing: code inside a string interpolation, a name reached
+    # through NSClassFromString, and a function-typed indirection such as
+    # `var open: ((URL) -> Void)?` — which names nothing at all — are invisible
+    # here. This is a regression tripwire, not a proof.
     blanked="$(perl -0777 -e '
         open(my $handle, "<", $ARGV[0]) or exit 1;
         my $text = do { local $/; <$handle> };

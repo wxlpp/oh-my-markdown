@@ -33,9 +33,7 @@ run_gate swift-release "$swift_bin" build -c release -Xswiftc -warnings-as-error
 run_gate swiftformat "$swiftformat_bin" --lint .
 
 if ((${#failed[@]})); then
-    # The repository still carries one known SwiftFormat debt file assigned to
-    # Task 12, so `swiftformat` alone failing is the expected state today; any
-    # other name here, or swiftformat plus another, is new.
+    # Every gate is expected to pass; any name printed here is a regression.
     printf 'FAIL: %d gate(s) failed: %s\n' "${#failed[@]}" "${failed[*]}" >&2
     exit 1
 fi

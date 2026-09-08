@@ -32,12 +32,12 @@ public enum MarkdownLinkDisposition: Sendable, Equatable {
 }
 
 /// Pure and `Sendable`: it decides, it never opens anything and never touches
-/// platform state.
+/// platform state. Activation belongs to the `@MainActor` handler.
 ///
 /// The decision runs on the cooperative pool, which is as wide as the core count
 /// and is shared with the rest of the app. Do not block in it and do not perform
 /// I/O: a policy that waits on a lock, a file, or the network holds a pool thread
-/// for that whole time, and a handful of taps can stall unrelated async work. Activation belongs to the `@MainActor` handler.
+/// for that whole time, and a handful of taps can stall unrelated async work.
 public protocol MarkdownLinkPolicy: Sendable {
     func disposition(for request: MarkdownLinkRequest) -> MarkdownLinkDisposition
 }

@@ -167,12 +167,18 @@ struct MarkdownLinkPolicyTests {
     /// The same requirement as `tighteningAStatefulPolicyReachesTheDriverAndIsEnforced`,
     /// one layer up. Every documented entry point is the modifier, so a guard in
     /// the representable that suppresses propagation on equal identities keeps the
-    /// old policy deciding no matter what the driver and the view do.
-    @Test @MainActor func tighteningAStatefulPolicyThroughTheModifierIsEnforced() async throws {
+    /// old policy deciding no matter what the driver and the view do. Both views
+    /// carry that forward independently, and streaming updates far more often.
+    @Test(arguments: [false, true]) @MainActor
+    func tighteningAStatefulPolicyThroughTheModifierIsEnforced(streaming: Bool) async throws {
         let handler = RecordingLinkHandler()
+        let source = "[a](https://evil.test/x)"
+        let streamingSource = MarkdownStreamingSource(source)
         func content(allowing hosts: Set<String>) -> some View {
-            MarkdownText("[a](https://evil.test/x)")
-                .markdownLinkPolicy(AllowListPolicy(hosts: hosts), handler: handler)
+            Group {
+                if streaming { MarkdownStreamingText(streamingSource) } else { MarkdownText(source) }
+            }
+            .markdownLinkPolicy(AllowListPolicy(hosts: hosts), handler: handler)
         }
         #if canImport(UIKit)
         let host = UIHostingController(rootView: content(allowing: ["evil.test", "good.test"]))
@@ -455,4 +461,43 @@ private func firstLabel(in root: Any) -> MarkdownLabelView? {
     }
     #endif
     return nil
+}
+
+/// `check-link-activation.sh` exempts `MarkdownEditorTextView.swift` from the
+/// text-view inventory because that view shows raw source, not rendered links.
+/// The exemption is only sound while the storage it displays carries no `.link`
+/// run — a text view opens one by itself, outside the audited handler.
+@Suite(.serialized)
+struct MarkdownEditorLinkAttributeTests {
+    @MainActor @Test func theEditorStorageNeverCarriesALinkAttribute() throws {
+        let source = """
+        [inline](https://evil.test/a) and <https://evil.test/autolink>
+        https://evil.test/bare and [ref][r] and ![img](https://evil.test/i.png)
+
+        [r]: https://evil.test/ref
+        `https://evil.test/code`
+        """
+        #if canImport(UIKit)
+        let editor = MarkdownEditorTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        editor.setMarkdown(source)
+        let storage = editor.textStorage
+        // Nothing sets this today; a text view with it linkifies raw source itself.
+        #expect(editor.dataDetectorTypes.isEmpty)
+        // Rich-text editing would let a paste carry a `.link` run into the storage.
+        #expect(!editor.allowsEditingTextAttributes)
+        #else
+        let editor = MarkdownEditorTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+        editor.setMarkdown(source)
+        let scrollView = try #require(editor.subviews.first as? NSScrollView)
+        let textView = try #require(scrollView.documentView as? NSTextView)
+        let storage = try #require(textView.textStorage)
+        #expect(!textView.isRichText)
+        #endif
+        #expect(storage.length > 0)
+        var found: [NSRange] = []
+        storage.enumerateAttribute(.link, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            if value != nil { found.append(range) }
+        }
+        #expect(found.isEmpty, "the editor's storage carries a .link run, which a text view opens by itself")
+    }
 }

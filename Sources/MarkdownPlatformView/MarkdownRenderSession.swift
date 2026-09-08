@@ -446,8 +446,13 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
     /// which would silently void a tap during a rotation or a window resize.
     ///
     /// SwiftUI forwards on every body evaluation, so an evaluation landing inside
-    /// a decision voids that tap. Fail-closed and narrow: the decision takes 30 µs
-    /// at the median, 197 µs at the worst of 200 samples.
+    /// a decision voids that tap, silently. Fail-closed; the decision takes 30 µs
+    /// at the median and 197 µs at the worst of 200 samples, but the two events
+    /// are not independent — a streaming chunk or a scroll can update the body
+    /// precisely while the main actor is free, which is the window. Re-deciding
+    /// against the current configuration instead of returning would drop nothing;
+    /// it is deliberately not done here because a replacement voiding an in-flight
+    /// decision is the specified behaviour.
     package private(set) var linkConfigurationRevision: UInt64 = 0
     private let session: MarkdownRenderSession
     private let continuation: AsyncStream<RenderSessionEvent>.Continuation
