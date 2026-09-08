@@ -76,7 +76,7 @@ struct MarkdownAccessibilityPlatformTests {
         view.linkConfiguration = .derived(policy: AllowEverythingPolicy(), handler: handler)
         let link = try #require(self.elements(view).first { $0.label == "one" })
         #expect(link.activate())
-        #expect(await eventually { handler.opened.map(\.absoluteString) == ["https://a.test"] })
+        await handler.events.settled { handler.opened.map(\.absoluteString) == ["https://a.test"] }
         #expect(self.elements(view).first { $0.label == "alpha " }?.activate() == false)
     }
 
@@ -225,7 +225,7 @@ struct MarkdownAccessibilityPlatformTests {
         let link = try #require(wrappers.first { $0.accessibilityLabel() == "one" })
         #expect(link.accessibilityPerformPress())
         #endif
-        #expect(await eventually { handler.opened.map(\.absoluteString) == ["https://a.test"] })
+        await handler.events.settled { handler.opened.map(\.absoluteString) == ["https://a.test"] }
     }
 
     /// A heading whose whole content is a link must stay a heading, or it drops
@@ -254,7 +254,7 @@ struct MarkdownAccessibilityPlatformTests {
         let heading = try #require(self.elements(view).first)
         #expect(heading.label == "Title")
         view.appendMarkdown(" and more text")
-        #expect(await eventually { self.elements(view).last?.label == "alpha beta and more text" })
+        await view.settled { self.elements(view).last?.label == "alpha beta and more text" }
         #expect(self.elements(view).first === heading, "the heading's element was rebuilt, so focus would jump")
     }
 
@@ -275,7 +275,7 @@ struct MarkdownAccessibilityPlatformTests {
         }
         let before = try #require(publishedFirst())
         view.appendMarkdown(" and more")
-        #expect(await eventually { self.elements(view).last?.label == "alpha beta and more" })
+        await view.settled { self.elements(view).last?.label == "alpha beta and more" }
         #expect(publishedFirst() == before, "the published element was rebuilt, so focus would move")
     }
 
@@ -341,7 +341,7 @@ struct MarkdownAccessibilityPlatformTests {
         defer { view.dismantleRenderSession() }
         let before = try #require(self.elements(view).first)
         view.setMarkdown("completely different")
-        #expect(await eventually { self.elements(view).map(\.label) == ["completely different"] })
+        await view.settled { self.elements(view).map(\.label) == ["completely different"] }
         #expect(self.elements(view).first !== before)
     }
 }

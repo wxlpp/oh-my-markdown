@@ -16,11 +16,15 @@ struct ResourceConfigurationTests {
     private final class HandlerLifetime {}
     actor PausedLoader: MarkdownImageLoading {
         private var pending: [CheckedContinuation<MarkdownImagePayload, any Error>] = []
+        /// Reported on both edges of a load, so a test waits for the call it
+        /// asserts on rather than for a timer.
+        nonisolated let events = EventSignal()
         private(set) var calls = 0
         private(set) var completed = 0
         func load(_ request: MarkdownImageRequest) async throws -> MarkdownImagePayload {
             self.calls += 1
-            defer { self.completed += 1 }
+            self.events.record()
+            defer { self.completed += 1; self.events.record() }
             return try await withCheckedThrowingContinuation { self.pending.append($0) }
         }
 
@@ -49,21 +53,20 @@ struct ResourceConfigurationTests {
         view.onResourceError = { failures.append($0) }
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader, configurationID: shared)
         view.blocks = MarkdownDocument(parsing: "![private alt](https://example.test/private.png?secret=hidden)").blocks
-        guard await eventually({ await loader.calls == 1 }) else {
-            Issue.record("Opt-in did not invoke the configured loader")
-            return
-        }
+        // Opting in has to invoke the configured loader; if it never does, this
+        // waits for an event that never comes and the suite's time limit fails it.
+        await loader.events.settled { await loader.calls == 1 }
         let old = try #require(view.currentCommitToken)
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader, configurationID: shared)
-        #expect(await eventually { await loader.calls == 2 })
+        await loader.events.settled { await loader.calls == 2 }
         let current = try #require(view.currentCommitToken)
         #expect(current.configurationGeneration == old.configurationGeneration + 1)
         await loader.finish(.failure(URLError(.badServerResponse)))
-        #expect(await eventually { await loader.completed == 1 })
+        await loader.events.settled { await loader.completed == 1 }
         #expect(failures.isEmpty)
         #expect(view.imageRequests.values.allSatisfy { $0 == .loading })
         await loader.finish(.failure(URLError(.timedOut)))
-        #expect(await eventually { failures.count == 1 })
+        await view.settled { failures.count == 1 }
         #expect(failures.first?.category == .timedOut)
         #expect(try failures.first?.origin == SanitizedMarkdownOrigin(url: #require(URL(string: "https://example.test"))))
     }
@@ -93,7 +96,7 @@ struct ResourceConfigurationTests {
         owner = nil
         view.remoteImages = .init(loader: loader)
         view.blocks = MarkdownDocument(parsing: "![alt](https://example.test/image)").blocks
-        #expect(await eventually { await loader.calls == 1 })
+        await loader.events.settled { await loader.calls == 1 }
         let token = try #require(view.currentCommitToken)
         if removeHandler { view.onResourceError = nil }
         else { view.onResourceError = { _ in currentCalls += 1 } }
@@ -113,12 +116,12 @@ struct ResourceConfigurationTests {
         view.onResourceError = { failures.append($0) }
         view.remoteImages = .init(loader: loader)
         view.blocks = MarkdownDocument(parsing: "![alt](https://example.test/image)").blocks
-        #expect(await eventually { await loader.calls == 1 }, "View error: \(String(describing: view.lastRenderError))")
+        await loader.events.settled { await loader.calls == 1 }
         let prior = try #require(view.currentCommitToken)
         view.remoteImages = .disabled
         await view.settled { view.currentCommitToken?.configurationGeneration == prior.configurationGeneration + 1 }
         await loader.finish(.success(.init(data: MarkdownImageLoaderTests.png, declaredMIMEType: "image/png")))
-        #expect(await eventually { await loader.completed == 1 })
+        await loader.events.settled { await loader.completed == 1 }
         #expect(view.currentSnapshot?.attributedString.string == "🖼 alt")
         #expect(view.imageRequests.isEmpty)
         #expect(failures.isEmpty)
@@ -132,9 +135,9 @@ struct ResourceConfigurationTests {
         view.onResourceError = { failures.append($0) }
         view.remoteImages = .init(loader: loader)
         view.blocks = MarkdownDocument(parsing: "![alt](https://example.test/private?secret)").blocks
-        #expect(await eventually { await loader.calls == 1 })
+        await loader.events.settled { await loader.calls == 1 }
         await loader.finish(.success(.init(data: MarkdownImageLoaderTests.png, declaredMIMEType: "image/jpeg")))
-        #expect(await eventually { failures.count == 1 })
+        await view.settled { failures.count == 1 }
         #expect(failures.first?.category == .typeMismatch)
         #expect(view.currentSnapshot?.attributedString.string == "🖼 alt")
         #expect(view.imageRequests.values.allSatisfy { $0 == .failed })
@@ -150,7 +153,7 @@ struct ResourceConfigurationTests {
         defer { view.dismantleRenderSession() }
         view.remoteImages = .init(loader: DefaultHTTPSImageLoader(requestTimeout: .seconds(75), resourceTimeout: .seconds(95), protocolClasses: [MarkdownImageLoaderTests.ControlledProtocol.self]))
         view.blocks = MarkdownDocument(parsing: "![alt](\(url.absoluteString))").blocks
-        #expect(await eventually { view.currentSnapshot?.attributedString.string == "\u{FFFC}" })
+        await view.settled { view.currentSnapshot?.attributedString.string == "\u{FFFC}" }
     }
 
     @Test(arguments: [false, true])
@@ -175,11 +178,11 @@ struct ResourceConfigurationTests {
         host.frame = CGRect(x: 0, y: 0, width: 320, height: 200)
         host.layoutSubtreeIfNeeded()
         #endif
-        #expect(await eventually { await loader.calls > 0 })
+        await loader.events.settled { await loader.calls > 0 }
         while await loader.calls > loader.completed {
             let completed = await loader.completed
             await loader.finish(.failure(MarkdownResourceError.transport))
-            #expect(await eventually { await loader.completed > completed })
+            await loader.events.settled { await loader.completed > completed }
         }
         withExtendedLifetime(host) {}
     }

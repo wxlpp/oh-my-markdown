@@ -6,6 +6,9 @@ import Synchronization
 import Testing
 
 @MainActor final class RecordingRenderSink: RenderSessionSink {
+    /// Reported on every publication and every error, so a test waits for the
+    /// delivery it asserts on rather than for a timer.
+    nonisolated let events = EventSignal()
     let sideEffects = RenderSideEffectProbe()
     var tokens: [RenderCommitToken] = []
     var strings: [String] = []
@@ -13,6 +16,7 @@ import Testing
     var models: [RenderDisplayModel] = []
     func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken) {
         self.sideEffects.record()
+        defer { self.events.record() }
         self.tokens.append(token)
         self.strings.append(snapshot.attributedString.string)
         self.models.append(snapshot.displayModel)
@@ -21,17 +25,20 @@ import Testing
     func receive(error: RenderSessionError) {
         self.sideEffects.record()
         self.errors.append(error)
+        self.events.record()
     }
 }
 
+/// A call counter that is also waitable, so a test can wait for the call it
+/// asserts on instead of re-checking the count on a timer.
 final class RenderSideEffectProbe: Sendable {
-    private let calls = Mutex(0)
+    let events = EventSignal()
     func record() {
-        self.calls.withLock { $0 += 1 }
+        self.events.record()
     }
 
     var count: Int {
-        self.calls.withLock { $0 }
+        self.events.count
     }
 }
 
@@ -62,6 +69,10 @@ final class WeakActorLifetime<Value: Actor>: Sendable {
 }
 
 final class ManualRenderClock: RenderSessionClock {
+    /// Reported when a sleeper registers, cancels or is released, so a test waits
+    /// for the retry it asserts on rather than for a timer — which would be the
+    /// very thing this clock exists to replace.
+    let events = EventSignal()
     private struct State {
         var now: Duration = .zero
         var calls = 0
@@ -91,11 +102,13 @@ final class ManualRenderClock: RenderSessionClock {
                     state.sleepers[id] = (state.now + duration, continuation)
                     return false
                 }
+                self.events.record()
                 if cancelled { continuation.resume(throwing: CancellationError()) }
             }
         } onCancel: {
             let sleeper = self.state.withLock { $0.sleepers.removeValue(forKey: id) }
             sleeper?.1.resume(throwing: CancellationError())
+            self.events.record()
         }
     }
 
@@ -108,6 +121,7 @@ final class ManualRenderClock: RenderSessionClock {
         for continuation in ready {
             continuation.resume()
         }
+        self.events.record()
     }
 }
 
@@ -117,7 +131,7 @@ final class ManualRenderClock: RenderSessionClock {
     private func releaseOwnersBeforeAllowingQueuedPublication(
         queued: DispatchSemaphore, session: inout MarkdownRenderSession?,
         driver: inout MarkdownRenderSessionDriver?, sink: inout RecordingRenderSink?,
-        weakSession: WeakActorLifetime<MarkdownRenderSession>
+        weakSession: WeakActorLifetime<MarkdownRenderSession>, executor: ParseExecutor
     ) {
         #expect(queued.wait(timeout: .now() + 10) == .success)
         driver?.send(.dismantle)
@@ -125,8 +139,10 @@ final class ManualRenderClock: RenderSessionClock {
         session = nil
         sink = nil
         let released = DispatchSemaphore(value: 0)
+        // The session's `deinit` tombstones through the executor, so its teardown
+        // is an event this can wait on rather than a state to re-check on a timer.
         Task.detached {
-            _ = await eventually { weakSession.value == nil }
+            await executor.settled { weakSession.value == nil }
             released.signal()
         }
         #expect(released.wait(timeout: .now() + 12) == .success)
@@ -147,7 +163,7 @@ final class ManualRenderClock: RenderSessionClock {
         let weakSink = WeakLifetime(sink)
         let probe = try #require(sink?.sideEffects)
         driver?.send(.setSource("hello", MarkdownRenderConfiguration.default.snapshot(generation: 1)))
-        #expect(await eventually { gate.jobs.count == 1 })
+        await gate.events.settled { gate.jobs.count == 1 }
         let old = try #require(gate.jobs.first?.submission)
         let queued = DispatchSemaphore(value: 0)
         if error {
@@ -156,13 +172,16 @@ final class ManualRenderClock: RenderSessionClock {
         } else {
             gate.release("hello")
         }
-        let observer = Task.detached { [weak session] in
-            let checked = await eventually { await session?.submission == nil }
+        // The observation point is a separate object that outlives the session,
+        // so waiting on it does not retain the thing this test checks is released.
+        let observation = session?.observation
+        let observer = Task.detached { [weak session, observation] in
+            await observation?.settled { await session?.submission == nil }
             queued.signal()
-            return checked
         }
         self.releaseOwnersBeforeAllowingQueuedPublication(
-            queued: queued, session: &session, driver: &driver, sink: &sink, weakSession: weakSession
+            queued: queued, session: &session, driver: &driver, sink: &sink, weakSession: weakSession,
+            executor: executor
         )
         #expect(weakDriver.value == nil)
         #expect(weakSink.value == nil)
@@ -170,10 +189,10 @@ final class ManualRenderClock: RenderSessionClock {
         // The queued message's exact authorization was revoked in the same
         // MainActor turn, so even a still-live sink could not be invoked.
         #expect(!registry.withAuthorizedSink(for: old.commitToken) { $0.receive(error: .parseBusy) })
-        #expect(await observer.value)
+        await observer.value
         gate.release("hello")
-        #expect(await eventually { await executor.diagnostics.activeCount == 0 })
-        #expect(await eventually { weakSession.value == nil })
+        await executor.settled { await executor.diagnostics.activeCount == 0 }
+        await executor.settled { weakSession.value == nil }
         #expect(probe.count == 0)
         #expect(clock.sleepCalls == 0)
     }
@@ -193,12 +212,12 @@ final class ManualRenderClock: RenderSessionClock {
         var driver: MarkdownRenderSessionDriver? = try MarkdownRenderSessionDriver(session: #require(session))
         let weakSession = WeakLifetime(session)
         driver?.send(.setSource("hello", MarkdownRenderConfiguration.default.snapshot(generation: 1)))
-        #expect(await eventually { preparationClock.sleepingCount == 1 })
+        await preparationClock.events.settled { preparationClock.sleepingCount == 1 }
         driver?.send(.replaceConfiguration(MarkdownRenderConfiguration.default.snapshot(generation: 2)))
-        #expect(await eventually { preparationClock.sleepCalls == 2 && preparationClock.sleepingCount == 1 })
+        await preparationClock.events.settled { preparationClock.sleepCalls == 2 && preparationClock.sleepingCount == 1 }
         session = nil
         driver = nil
-        #expect(await eventually { weakSession.value == nil && preparationClock.sleepingCount == 0 })
+        await executor.settled { weakSession.value == nil && preparationClock.sleepingCount == 0 }
         #expect(sink.tokens.isEmpty)
         #expect(sink.errors.isEmpty)
         #expect(registry.count == 0)
@@ -213,11 +232,11 @@ final class ManualRenderClock: RenderSessionClock {
         let driver = MarkdownRenderSessionDriver(session: session)
         let reused = MarkdownRenderConfiguration.default.snapshot(generation: 99)
         driver.send(.setSource("$x$", reused))
-        #expect(await eventually { sink.models.count == 1 })
+        await sink.events.settled { sink.models.count == 1 }
         let firstLineage = sink.models[0].blocks[0].lineage
         #expect(sink.models[0].runs.first?.resourceID?.rawValue == "1:\(firstLineage):0")
         driver.send(.replaceConfiguration(reused))
-        #expect(await eventually { sink.models.count == 2 })
+        await sink.events.settled { sink.models.count == 2 }
         let secondLineage = sink.models[1].blocks[0].lineage
         #expect(secondLineage == firstLineage)
         #expect(sink.models[1].runs.first?.resourceID?.rawValue == "2:\(secondLineage):0")
@@ -245,19 +264,19 @@ final class ManualRenderClock: RenderSessionClock {
         registry.register(sink, for: session.id)
         let driver = MarkdownRenderSessionDriver(session: session)
         driver.send(.setSource("busy", MarkdownRenderConfiguration.default.snapshot(generation: 1)))
-        #expect(await eventually { clock.sleepingCount == 1 })
+        await clock.events.settled { clock.sleepingCount == 1 }
         clock.advance(by: .milliseconds(250))
-        #expect(await eventually { clock.sleepCalls == 2 && clock.sleepingCount == 1 })
+        await clock.events.settled { clock.sleepCalls == 2 && clock.sleepingCount == 1 }
         clock.advance(by: .milliseconds(250))
-        #expect(await eventually { sink.errors == [.parseBusy] })
+        await sink.events.settled { sink.errors == [.parseBusy] }
         #expect(clock.sleepCalls == 2)
         #expect(clock.sleepingCount == 0)
         clock.advance(by: .seconds(10))
         #expect(sink.errors == [.parseBusy])
         driver.send(.replaceConfiguration(MarkdownRenderConfiguration.default.snapshot(generation: 2)))
-        #expect(await eventually { clock.sleepCalls == 3 })
+        await clock.events.settled { clock.sleepCalls == 3 }
         driver.send(.dismantle)
-        #expect(await eventually { clock.sleepingCount == 0 })
+        await clock.events.settled { clock.sleepingCount == 0 }
         gate.release("a", "b")
     }
 
@@ -275,15 +294,15 @@ final class ManualRenderClock: RenderSessionClock {
         var driver: MarkdownRenderSessionDriver? = try MarkdownRenderSessionDriver(session: #require(session))
         let weakSession = WeakLifetime(session)
         driver?.send(.setSource("busy", MarkdownRenderConfiguration.default.snapshot(generation: 1)))
-        #expect(await eventually { clock.sleepingCount == 1 })
+        await clock.events.settled { clock.sleepingCount == 1 }
         clock.advance(by: .seconds(2))
-        #expect(await eventually { sink.errors == [.parseBusy] })
+        await sink.events.settled { sink.errors == [.parseBusy] }
         #expect(clock.sleepCalls == 1)
         driver?.send(.append("again"))
-        #expect(await eventually { clock.sleepingCount == 1 })
+        await clock.events.settled { clock.sleepingCount == 1 }
         session = nil
         driver = nil
-        #expect(await eventually { weakSession.value == nil && clock.sleepingCount == 0 })
+        await executor.settled { weakSession.value == nil && clock.sleepingCount == 0 }
         #expect(registry.count == 0)
         clock.advance(by: .seconds(2))
         #expect(sink.errors == [.parseBusy])
@@ -299,11 +318,11 @@ final class ManualRenderClock: RenderSessionClock {
         registry.register(sink, for: session.id)
         let driver = MarkdownRenderSessionDriver(session: session)
         driver.send(.setSource("hello", MarkdownRenderConfiguration.default.snapshot(generation: 1)))
-        #expect(await eventually { gate.entered == ["hello"] })
+        await gate.events.settled { gate.entered == ["hello"] }
         driver.send(.replaceConfiguration(MarkdownRenderConfiguration.default.snapshot(generation: 2)))
-        #expect(await eventually { await session.currentToken?.configurationGeneration == 2 })
+        await session.settled { await session.currentToken?.configurationGeneration == 2 }
         gate.release("hello")
-        #expect(await eventually { sink.tokens.count == 1 })
+        await sink.events.settled { sink.tokens.count == 1 }
         #expect(sink.tokens.first?.sourceRevision == 1)
         #expect(sink.tokens.first?.configurationGeneration == 2)
         #expect(sink.strings == ["hello"])
@@ -320,10 +339,10 @@ final class ManualRenderClock: RenderSessionClock {
         registry.register(sink, for: session.id)
         let driver = MarkdownRenderSessionDriver(session: session)
         driver.send(.setSource("hello", MarkdownRenderConfiguration.default.snapshot(generation: 1)))
-        #expect(await eventually { gate.jobs.count == 1 })
+        await gate.events.settled { gate.jobs.count == 1 }
         let old = gate.jobs[0].submission
         driver.send(.replaceConfiguration(MarkdownRenderConfiguration.default.snapshot(generation: 2)))
-        #expect(await eventually { await session.currentToken?.configurationGeneration == 2 })
+        await session.settled { await session.currentToken?.configurationGeneration == 2 }
         let current = try await #require(session.submission)
         await session.receive(.busy(submission: old))
         await session.receive(.stale(submission: old))
@@ -345,7 +364,7 @@ final class ManualRenderClock: RenderSessionClock {
         #expect(clock.sleepCalls == 0)
         #expect(sink.errors.isEmpty)
         gate.release("hello")
-        #expect(await eventually { sink.tokens.count == 1 })
+        await sink.events.settled { sink.tokens.count == 1 }
         #expect(sink.tokens[0].configurationGeneration == 2)
         driver.send(.dismantle)
     }
@@ -362,7 +381,7 @@ final class ManualRenderClock: RenderSessionClock {
         registry.register(sink, for: session.id)
         let driver = MarkdownRenderSessionDriver(session: session)
         driver.send(.setSource("hello", MarkdownRenderConfiguration.default.snapshot(generation: 1)))
-        #expect(await eventually { gate.jobs.count == 1 })
+        await gate.events.settled { gate.jobs.count == 1 }
         let old = gate.jobs[0].submission
         let checked = DispatchSemaphore(value: 0)
         if error {
@@ -371,15 +390,15 @@ final class ManualRenderClock: RenderSessionClock {
         } else {
             gate.release("hello")
         }
-        let observer = Task.detached {
-            let reached = await eventually { await session.submission == nil }
+        let observation = session.observation
+        let observer = Task.detached { [weak session, observation] in
+            await observation.settled { await session?.submission == nil }
             checked.signal()
-            return reached
         }
         self.authorizeWhileMainActorIsHeld(checked, driver: driver)
-        #expect(await observer.value)
+        await observer.value
         gate.release("hello")
-        #expect(await eventually { sink.tokens.count == 1 })
+        await sink.events.settled { sink.tokens.count == 1 }
         #expect(sink.tokens[0].configurationGeneration == 2)
         #expect(sink.errors.isEmpty)
         #expect(clock.sleepCalls == 0)
@@ -396,16 +415,16 @@ final class ManualRenderClock: RenderSessionClock {
         let driver = MarkdownRenderSessionDriver(session: session)
         let config = MarkdownRenderConfiguration.default.snapshot(generation: 1)
         driver.send(.setSource("first", config))
-        #expect(await eventually { gate.entered == ["first"] })
+        await gate.events.settled { gate.entered == ["first"] }
         for _ in 0 ..< 20 {
             driver.send(.append(" discarded"))
         }
         driver.send(.setSource("new", config))
         driver.send(.append("est"))
         driver.send(.replaceConfiguration(config))
-        #expect(await eventually { await session.currentToken?.sequence == 24 })
+        await session.settled { await session.currentToken?.sequence == 24 }
         gate.release("first", "newest")
-        #expect(await eventually { sink.strings == ["newest"] })
+        await sink.events.settled { sink.strings == ["newest"] }
         #expect(gate.entered == ["first", "newest"])
         #expect(sink.tokens[0].sourceRevision == 23)
         #expect(sink.tokens[0].configurationGeneration == 3)
@@ -424,16 +443,16 @@ final class ManualRenderClock: RenderSessionClock {
         let weakSession = WeakLifetime(session)
         let weakDriver = WeakLifetime(driver)
         driver?.send(.setSource("blocked", MarkdownRenderConfiguration.default.snapshot(generation: 1)))
-        #expect(await eventually { gate.entered == ["blocked"] })
+        await gate.events.settled { gate.entered == ["blocked"] }
         session = nil
         sink = nil
         driver = nil
-        #expect(await eventually { weakDriver.value == nil && weakSession.value == nil && weakSink.value == nil })
+        await executor.settled { weakDriver.value == nil && weakSession.value == nil && weakSink.value == nil }
         #expect(registry.count == 0)
-        #expect(await eventually { await executor.diagnostics.registryCount == 0 })
+        await executor.settled { await executor.diagnostics.registryCount == 0 }
         #expect(await executor.diagnostics.activeCount == 1)
         gate.release("blocked")
-        #expect(await eventually { await executor.diagnostics.activeCount == 0 })
+        await executor.settled { await executor.diagnostics.activeCount == 0 }
         #expect(gate.entered == ["blocked"])
     }
 
@@ -467,14 +486,14 @@ final class ManualRenderClock: RenderSessionClock {
             let driver = MarkdownRenderSessionDriver(session: session)
             weakSessions.append(WeakLifetime(session))
             driver.send(.setSource("hello", MarkdownRenderConfiguration.default.snapshot(generation: 1)))
-            #expect(await eventually { await executor.diagnostics.registryCount == 3 })
+            await executor.settled { await executor.diagnostics.registryCount == 3 }
             driver.send(.dismantle)
             await session.dismantle()
         }
         #expect(registry.count == 0)
-        #expect(await eventually { weakSessions.allSatisfy { $0.value == nil } })
+        await executor.settled { weakSessions.allSatisfy { $0.value == nil } }
         #expect(await executor.diagnostics == .init(activeCount: 2, waitingTokenCount: 0, registryCount: 2))
         gate.release("a", "b")
-        #expect(await eventually { await executor.diagnostics == .init(activeCount: 0, waitingTokenCount: 0, registryCount: 0) })
+        await executor.settled { await executor.diagnostics == .init(activeCount: 0, waitingTokenCount: 0, registryCount: 0) }
     }
 }

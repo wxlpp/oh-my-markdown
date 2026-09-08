@@ -21,10 +21,14 @@ import Testing
 final class ParseGate: Sendable {
     private let state = Mutex((jobs: [ParseJob](), released: Set<String>()))
     private let condition = NSCondition()
+    /// Reported when a job reaches the parser, so a test waits for the arrival it
+    /// asserts on rather than for a timer.
+    let events = EventSignal()
 
     func parse(_ job: ParseJob) -> MarkdownDocument {
         self.condition.lock()
         self.state.withLock { $0.jobs.append(job) }
+        self.events.record()
         while !self.state.withLock({ $0.released.contains(job.source) }) {
             self.condition.wait()
         }
@@ -49,38 +53,27 @@ final class ParseGate: Sendable {
 }
 
 actor RecordingParseSink: ParseResultSink {
+    nonisolated let events = EventSignal()
     var results: [ParseExecutorResult] = []
     func receive(_ result: ParseExecutorResult) {
         self.results.append(result)
+        self.events.record()
     }
 }
 
 actor PausedParseSink: ParseResultSink {
+    nonisolated let events = EventSignal()
     var entered = false
     private var continuation: CheckedContinuation<Void, Never>?
     func receive(_ result: ParseExecutorResult) async {
         self.entered = true
+        self.events.record()
         await withCheckedContinuation { self.continuation = $0 }
     }
 
     func release() {
         self.continuation?.resume(); self.continuation = nil
     }
-}
-
-/// Anti-hang guard, not an assertion: the predicate is what each test asserts.
-/// The budget must exceed the longest legitimate stall, and the largest measured
-/// one is 121.5 s (the iOS 18 append-budget case on a loaded simulator), so ten
-/// seconds was never a valid liveness bound. Sleeping rather than spinning keeps
-/// an uncancelled waiter from adding to the contention it is waiting out; once
-/// cancelled the sleep returns immediately and the caller gives up.
-func eventually(isolation: isolated (any Actor)? = #isolation, _ predicate: () async -> Bool) async -> Bool {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(180))
-    while await !predicate() {
-        if ContinuousClock.now >= deadline { return false }
-        guard await (try? Task.sleep(for: .milliseconds(1))) != nil else { return false }
-    }
-    return true
 }
 
 func parseJob(_ source: String, token: ParseSessionToken = .init()) -> ParseJob {
@@ -135,7 +128,7 @@ func parseJob(_ source: String, token: ParseSessionToken = .init()) -> ParseJob 
         active.submission.sessionToken.revoke()
         waiting.submission.sessionToken.revoke()
         gate.release("active")
-        #expect(await eventually { await executor.diagnostics == .init(activeCount: 0, waitingTokenCount: 0, registryCount: 0) })
+        await executor.settled { await executor.diagnostics == .init(activeCount: 0, waitingTokenCount: 0, registryCount: 0) }
         #expect(gate.entered == ["active"])
         #expect(await sink.results.isEmpty)
     }
@@ -144,7 +137,7 @@ func parseJob(_ source: String, token: ParseSessionToken = .init()) -> ParseJob 
         let sink = PausedParseSink()
         let executor = ParseExecutor(maxActive: 2, maxWaitingTokens: 64) { MarkdownDocument(parsing: $0.source) }
         _ = await executor.enqueue(parseJob("hello"), sink: sink)
-        #expect(await eventually { await sink.entered })
+        await sink.events.settled { await sink.entered }
         #expect(await executor.diagnostics.registryCount == 0)
         await sink.release()
     }
@@ -158,11 +151,11 @@ func parseJob(_ source: String, token: ParseSessionToken = .init()) -> ParseJob 
         _ = await executor.enqueue(queued, sink: sink)
         #expect(await executor.enqueue(parseJob("new", token: queued.submission.sessionToken), sink: sink) == .replacedPending)
         #expect(await executor.diagnostics.waitingTokenCount == 1)
-        #expect(await eventually { await sink.results.count == 1 })
+        await sink.events.settled { await sink.results.count == 1 }
         gate.release("active")
-        #expect(await eventually { gate.entered == ["active", "new"] })
+        await gate.events.settled { gate.entered == ["active", "new"] }
         gate.release("new")
-        #expect(await eventually { await executor.diagnostics.registryCount == 0 })
+        await executor.settled { await executor.diagnostics.registryCount == 0 }
     }
 
     @Test func unregisterPreventsNewPromotionButCannotRecallAnInFlightMessage() async {
@@ -172,7 +165,7 @@ func parseJob(_ source: String, token: ParseSessionToken = .init()) -> ParseJob 
         registry.register(sink, for: job.submission.sessionToken)
         #expect(registry.count == 1)
         let delivery = Task { await registry.publish(.busy(submission: job.submission), to: job.submission.sessionToken) }
-        #expect(await eventually { await sink.entered })
+        await sink.events.settled { await sink.entered }
         registry.unregister(job.submission.sessionToken)
         #expect(registry.count == 0)
         // This returns even though the earlier message is still deliberately paused.
@@ -195,14 +188,14 @@ func parseJob(_ source: String, token: ParseSessionToken = .init()) -> ParseJob 
             #expect(await executor.enqueue(job, sink: sink) == .queued)
         }
         #expect(await executor.enqueue(parseJob("overflow"), sink: sink) == .busy)
-        #expect(await eventually { gate.entered.count == 2 })
+        await gate.events.settled { gate.entered.count == 2 }
         #expect(await executor.diagnostics == .init(activeCount: 2, waitingTokenCount: 64, registryCount: 66))
         for token in waiting {
             await executor.tombstone(token)
         }
         #expect(await executor.diagnostics.registryCount == 2)
         gate.release("active-a", "active-b")
-        #expect(await eventually { await executor.diagnostics.registryCount == 0 })
+        await executor.settled { await executor.diagnostics.registryCount == 0 }
     }
 
     /// Replacing an active token's pending slot must not launch overlapping or intermediate work.
@@ -214,13 +207,13 @@ func parseJob(_ source: String, token: ParseSessionToken = .init()) -> ParseJob 
         #expect(await executor.enqueue(parseJob("first", token: token), sink: sink) == .started)
         #expect(await executor.enqueue(parseJob("middle", token: token), sink: sink) == .queued)
         #expect(await executor.enqueue(parseJob("latest", token: token), sink: sink) == .replacedPending)
-        #expect(await eventually { gate.entered == ["first"] })
+        await gate.events.settled { gate.entered == ["first"] }
         #expect(await executor.diagnostics.activeCount == 1)
         gate.release("first")
-        #expect(await eventually { gate.entered == ["first", "latest"] })
+        await gate.events.settled { gate.entered == ["first", "latest"] }
         gate.release("latest")
-        #expect(await eventually { await executor.diagnostics.registryCount == 0 })
-        #expect(await eventually { await sink.results.count == 3 })
+        await executor.settled { await executor.diagnostics.registryCount == 0 }
+        await sink.events.settled { await sink.results.count == 3 }
         let results = await sink.results
         #expect(results.contains { if case .stale(let submission) = $0 { return submission.sessionToken == token }; return false })
     }
@@ -236,7 +229,7 @@ func parseJob(_ source: String, token: ParseSessionToken = .init()) -> ParseJob 
         #expect(await executor.diagnostics == .init(activeCount: 1, waitingTokenCount: 0, registryCount: 0))
         #expect(await executor.enqueue(parseJob("also-never", token: token), sink: sink) == .busy)
         gate.release("blocked")
-        #expect(await eventually { await executor.diagnostics.activeCount == 0 })
+        await executor.settled { await executor.diagnostics.activeCount == 0 }
         #expect(gate.entered == ["blocked"])
         #expect(await sink.results.isEmpty)
     }

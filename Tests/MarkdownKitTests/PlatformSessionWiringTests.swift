@@ -43,6 +43,9 @@ import AppKit
 struct PlatformSessionWiringTests {
     private actor PausedImageLoader: MarkdownImageLoading {
         enum Failure: Error { case failed }
+        /// Reported on both edges of a load, so a test waits for the fetch it
+        /// asserts on rather than for a timer.
+        nonisolated let events = EventSignal()
         private var continuations: [Int: CheckedContinuation<Data, any Error>] = [:]
         private(set) var sources: [URL] = []
         private(set) var completed = 0
@@ -54,9 +57,11 @@ struct PlatformSessionWiringTests {
         func load(_ url: URL) async throws -> Data {
             let index = self.sources.count
             self.sources.append(url)
+            self.events.record()
             defer {
                 self.completed += 1
                 if Task.isCancelled { self.cancelledCompletions += 1 }
+                self.events.record()
             }
             return try await withCheckedThrowingContinuation { self.continuations[index] = $0 }
         }
@@ -82,10 +87,10 @@ struct PlatformSessionWiringTests {
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("A ![alt](https://example.com/image.png)")
-        #expect(await eventually { await loader.sources.count == 1 })
+        await loader.events.settled { await loader.sources.count == 1 }
         let oldToken = try #require(view.currentCommitToken)
         view.setMarkdown("B ![alt](https://example.com/image.png)")
-        #expect(await eventually { await loader.sources.count == 2 })
+        await loader.events.settled { await loader.sources.count == 2 }
         let current = try #require(view.currentCommitToken)
         let owner = try #require(view.sessionDriver?.resourceTaskOwner)
         #expect(current != oldToken)
@@ -97,14 +102,14 @@ struct PlatformSessionWiringTests {
         default: .failure(CancellationError())
         }
         await loader.finish(0, result: oldResult)
-        #expect(await eventually { await loader.completed == 1 })
-        #expect(await eventually { owner.images.taskCount == 1 })
+        await loader.events.settled { await loader.completed == 1 }
+        await loader.events.settled { owner.images.taskCount == 1 }
         #expect(view.currentCommitToken == current)
         #expect(view.currentSnapshot?.attributedString.string == "B 🖼 alt")
         #expect(view.imageRequests.count == 1)
         #expect(view.imageRequests[RenderImageRequest(token: current, source: "https://example.com/image.png")] == .loading)
         try await loader.finish(1, result: .success(self.imageData(width: 20)))
-        #expect(await eventually { view.currentSnapshot?.attributedString.string == "B \u{FFFC}" })
+        await view.settled { view.currentSnapshot?.attributedString.string == "B \u{FFFC}" }
         let text = try #require(view.currentSnapshot?.attributedString)
         let attachment = try #require(text.attribute(.attachment, at: 2, effectiveRange: nil) as? NSTextAttachment)
         #expect(attachment.bounds == CGRect(x: 0, y: -4, width: 20, height: 10))
@@ -119,7 +124,7 @@ struct PlatformSessionWiringTests {
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("![alt](https://example.com/image.png)")
-        #expect(await eventually { await loader.sources.count == 1 })
+        await loader.events.settled { await loader.sources.count == 1 }
         #expect(view.imageRequests.count == 1)
         let token = view.currentCommitToken
         let owner = try #require(view.sessionDriver?.resourceTaskOwner)
@@ -132,7 +137,7 @@ struct PlatformSessionWiringTests {
         default: .failure(CancellationError())
         }
         await loader.finish(0, result: result)
-        #expect(await eventually { await loader.completed == 1 })
+        await loader.events.settled { await loader.completed == 1 }
         #expect(await loader.cancelledCompletions == 1)
         #expect(view.imageRequests.isEmpty)
         #expect(view.currentSnapshot == nil)
@@ -143,7 +148,7 @@ struct PlatformSessionWiringTests {
     @Test func overflowPlatformOverlayConsumesCurrentSnapshotAndPreservesScrollView() async throws {
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
         view.setMarkdown("| A | B |\n|---|---|\n| old | value |")
-        #expect(await eventually { view._tableOverlays[0] != nil })
+        await view.settled { view._tableOverlays[0] != nil }
         let first = try #require(view._tableOverlays[0])
         let firstData = try #require(view.currentSnapshot?.tableOverlays[0])
         #expect(first.data === firstData)
@@ -164,10 +169,10 @@ struct PlatformSessionWiringTests {
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("| Photo | Text |\n|---|---|\n| ![alt](https://example.com/image.png) | value |")
-        #expect(await eventually { await loader.sources.count == 1 })
+        await loader.events.settled { await loader.sources.count == 1 }
         #expect(view.currentSnapshot?.attributedString.string == "\u{00A0}")
         try await loader.finish(0, result: .success(self.imageData(width: 20)))
-        #expect(await eventually { view.currentSnapshot?.tableOverlays[0]?.attributedString.string == "\tPhoto\tText\n\t\u{FFFC}\tvalue" })
+        await view.settled { view.currentSnapshot?.tableOverlays[0]?.attributedString.string == "\tPhoto\tText\n\t\u{FFFC}\tvalue" }
         weak var overlay = view.currentSnapshot?.tableOverlays[0]
         #expect(view._tableOverlays[0]?.data === overlay)
         #expect(view._tableOverlays[0]?.content.frame.height == overlay?.height)
@@ -182,7 +187,7 @@ struct PlatformSessionWiringTests {
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
         view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
         view.setMarkdown("![alt](https://example.com/image.png)")
-        #expect(await eventually { await loader.sources.count == 1 })
+        await loader.events.settled { await loader.sources.count == 1 }
         let token = try #require(view.currentCommitToken)
         let request = RenderImageRequest(token: token, source: "https://example.com/image.png")
         await loader.finish(0, result: .failure(PausedImageLoader.Failure.failed))
@@ -205,7 +210,7 @@ struct PlatformSessionWiringTests {
             do { try await clock.sleep(for: .seconds(1)) }
             catch { observedCancellation = true }
         }
-        #expect(await eventually { clock.sleepingCount == 1 })
+        await clock.events.settled { clock.sleepingCount == 1 }
         driver.send(.dismantle)
         #expect(owner.count == 0)
         #expect(task.isCancelled)
@@ -250,14 +255,14 @@ struct PlatformSessionWiringTests {
         let weakDriver = WeakLifetime(driver)
         let weakSession = WeakLifetime(session)
         view?.setMarkdown("blocked")
-        #expect(await eventually { gate.entered == ["blocked"] })
+        await gate.events.settled { gate.entered == ["blocked"] }
         session = nil
         driver = nil
         view = nil
-        #expect(await eventually { weakView.value == nil && weakDriver.value == nil && weakSession.value == nil })
+        await executor.settled { weakView.value == nil && weakDriver.value == nil && weakSession.value == nil }
         #expect(registry.count == 0)
         gate.release("blocked")
-        #expect(await eventually { await executor.diagnostics.activeCount == 0 })
+        await executor.settled { await executor.diagnostics.activeCount == 0 }
     }
 
     @Test func pendingLegacyResourceDoesNotRetainViewAcrossTeardown() async {
@@ -266,12 +271,12 @@ struct PlatformSessionWiringTests {
         let weakView = WeakLifetime(view)
         view?.svgBlockRenderer = SVGRendererConfiguration(renderer: renderer)
         view?.setMarkdown("```svg\n<svg viewBox=\"0 0 20 10\"/>\n```")
-        #expect(await eventually { renderer.clock.sleepingCount == 1 })
+        await renderer.clock.events.settled { renderer.clock.sleepingCount == 1 }
         view?.dismantleRenderSession()
         view = nil
-        #expect(await eventually { weakView.value == nil })
+        await renderer.clock.events.settled { weakView.value == nil }
         renderer.clock.advance(by: .seconds(1))
-        #expect(await eventually { renderer.clock.sleepingCount == 0 })
+        await renderer.clock.events.settled { renderer.clock.sleepingCount == 0 }
     }
 
     @Test func rendererChangesEmitExactlyOnceInMutationOrder() {
@@ -297,7 +302,10 @@ struct PlatformSessionWiringTests {
         view.mathRenderer = MathRendererConfiguration(renderer: math)
         view.svgBlockRenderer = SVGRendererConfiguration(renderer: svg)
         view.setMarkdown("![alt](file:///markdownkit-missing-parity-fixture.png) $x$\n\n$$\ny=2\n$$\n\n```svg\n<svg viewBox=\"0 0 200 100\"/>\n```")
-        #expect(await eventually { math.calls.count == 2 && svg.calls.count == 1 })
+        // Both renderers fail, and a failed resource publishes nothing, so the
+        // view reports no event for them: each probe is its own wait.
+        await math.calls.events.settled { math.calls.count == 2 }
+        await svg.calls.events.settled { svg.calls.count == 1 }
         let snapshot = try #require(view.currentSnapshot)
         #expect(snapshot.attributedString.string == "🖼 alt x\n\u{FFFC}\n\u{FFFC}")
         #expect(view._renderedMathStateForTesting().mathSourceCount == 2)

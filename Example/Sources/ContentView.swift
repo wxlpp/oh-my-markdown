@@ -254,7 +254,11 @@ private struct StreamTab: View {
                     break
                 }
                 do {
-                    // Use try (not try?) so CancellationError propagates and stops the loop
+                    // The one deliberate sleep in the repository: it paces a
+                    // simulated token stream for a person to watch, which is a
+                    // real delay rather than a guess about one. Tests may not
+                    // wait on a timer — see `RepositoryHygieneTests`.
+                    // `try`, not `try?`, so cancellation propagates and stops the loop.
                     try await Task.sleep(for: .milliseconds(Int.random(in: 18 ... 55)))
                 } catch {
                     break

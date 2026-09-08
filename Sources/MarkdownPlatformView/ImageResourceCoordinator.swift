@@ -27,8 +27,18 @@ package actor ImageResourceCoordinator {
         let continuation: CheckedContinuation<ImageResourcePermit, any Error>
     }
 
-    private var active: [UUID: Admission] = [:]
-    private var waiting: [Waiter] = []
+    private var active: [UUID: Admission] = [:] {
+        didSet { self.observation.signal() }
+    }
+
+    private var waiting: [Waiter] = [] {
+        didSet { self.observation.signal() }
+    }
+
+    /// Reports every admission and every queue change, which is all `statistics`
+    /// is derived from. A `didSet` rather than a call per mutation site, so a new
+    /// one cannot forget it.
+    package nonisolated let observation = RenderObservationPoint()
     private var peakTransfers = 0
     private var peakDecodes = 0
     private var peakEncoded = 0

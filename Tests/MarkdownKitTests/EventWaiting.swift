@@ -70,18 +70,43 @@ final class EventSignal: Sendable {
     }
 }
 
-extension MarkdownLabelView {
-    /// Waits for the view's own render events until `condition` holds. Every
-    /// snapshot install, error, resource state change and re-materialization
-    /// reports one, so this covers anything a rendered document can settle into.
-    func settled(_ condition: @MainActor () -> Bool) async {
+extension RenderObservationPoint {
+    /// Re-checks `condition` on every reported change until it holds. Inherits
+    /// the caller's isolation, so a condition over main-actor or actor-held
+    /// state is evaluated where that state lives.
+    func settled(isolation: isolated (any Actor)? = #isolation, _ condition: () async -> Bool) async {
         let signal = EventSignal()
-        let previous = self._onRenderEvent
-        self._onRenderEvent = {
-            previous?()
-            signal.record()
-        }
-        defer { self._onRenderEvent = previous }
+        let id = self.add { signal.record() }
+        defer { self.remove(id) }
         await signal.settled(condition)
+    }
+}
+
+extension MarkdownLabelView {
+    /// Waits on the view's own render events until `condition` holds.
+    func settled(_ condition: @MainActor () -> Bool) async {
+        await self.observation.settled { condition() }
+    }
+}
+
+extension ParseExecutor {
+    /// Waits on the executor's admission, completion and teardown events.
+    func settled(isolation: isolated (any Actor)? = #isolation, _ condition: () async -> Bool) async {
+        await self.observation.settled(condition)
+    }
+}
+
+extension ImageResourceCoordinator {
+    /// Waits on the coordinator's admission and queue changes, which is all its
+    /// statistics are derived from.
+    func settled(isolation: isolated (any Actor)? = #isolation, _ condition: () async -> Bool) async {
+        await self.observation.settled(condition)
+    }
+}
+
+extension MarkdownRenderSession {
+    /// Waits until the session has handled an event that makes `condition` hold.
+    func settled(isolation: isolated (any Actor)? = #isolation, _ condition: () async -> Bool) async {
+        await self.observation.settled(condition)
     }
 }

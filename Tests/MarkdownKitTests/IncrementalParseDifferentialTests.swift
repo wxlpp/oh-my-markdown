@@ -107,7 +107,7 @@ struct IncrementalParseDifferentialTests {
             registry.register(sink, for: session.id)
             let driver = MarkdownRenderSessionDriver(session: session)
             driver.send(.setDocument(document, MarkdownRenderConfiguration.default.snapshot(generation: 0)))
-            #expect(await eventually { sink.models.count == 1 })
+            await sink.events.settled { sink.models.count == 1 }
             model = try #require(sink.models.first)
             text = try #require(sink.strings.first)
             driver.send(.dismantle)

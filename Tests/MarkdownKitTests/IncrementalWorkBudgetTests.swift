@@ -429,7 +429,7 @@ struct IncrementalWorkBudgetTests {
         registry.register(sink, for: session.id)
         let driver = MarkdownRenderSessionDriver(session: session)
         driver.send(.append("![alt](image.png)\n\n"))
-        #expect(await eventually { sink.errors.count == 1 })
+        await sink.events.settled { sink.errors.count == 1 }
         #expect(sink.models.isEmpty)
         let diagnostics = await session.attemptDiagnostics
         #expect(diagnostics.acceptedCount == 0)
@@ -445,7 +445,7 @@ struct IncrementalWorkBudgetTests {
         let sink = RecordingParseSink()
         let admission = await ParseExecutor.shared.enqueue(job, sink: sink)
         #expect(admission != .busy)
-        #expect(await eventually { await sink.results.count == 1 })
+        await sink.events.settled { await sink.results.count == 1 }
         let work = job.attemptRecorder.snapshot()
         #expect(work.scannerBytes > 0)
         #expect(work.mappingBytes > 0)
@@ -463,13 +463,13 @@ struct IncrementalWorkBudgetTests {
         let weakSink = try WeakParseResultSink(#require(sink))
         let job = parseJob("orphan work")
         #expect(try await executor.enqueue(job, sink: #require(sink)) == .started)
-        #expect(await eventually { gate.jobs.count == 1 })
+        await gate.events.settled { gate.jobs.count == 1 }
         await executor.tombstone(job.submission.sessionToken)
         sink = nil
         #expect(weakSink.value == nil)
         #expect(await executor.diagnostics.activeCount == 1)
         gate.release(index: 0)
-        #expect(await eventually { await executor.workDiagnostics.orphanedCount == 1 })
+        await executor.settled { await executor.workDiagnostics.orphanedCount == 1 }
         let diagnostics = await executor.workDiagnostics
         #expect(diagnostics.orphaned == job.attemptRecorder.snapshot())
         #expect(diagnostics.orphaned.cmarkInputBytes == 11)
@@ -481,7 +481,7 @@ struct IncrementalWorkBudgetTests {
     @Test("Cancelled live preparation reports real discarded work without publishing")
     @MainActor func cancelledPreparationAttemptAccounting() async throws {
         let first = Mutex(true)
-        let started = Mutex(false)
+        let started = EventSignal()
         let records = Mutex<[ParseAttemptRecorder]>([])
         let registry = RenderSessionSinkRegistry()
         let sink = RecordingRenderSink()
@@ -490,7 +490,7 @@ struct IncrementalWorkBudgetTests {
             _ = input.document.blocks // Intentional facade work must follow this attempt even when cancelled.
             let model = try RenderPreparer(configuration: input.configuration).prepare(input)
             if first.withLock({ value in let old = value; value = false; return old }) {
-                started.withLock { $0 = true }
+                started.record()
                 while !Task.isCancelled {
                     await Task.yield()
                 }
@@ -501,15 +501,15 @@ struct IncrementalWorkBudgetTests {
         registry.register(sink, for: session.id)
         let driver = MarkdownRenderSessionDriver(session: session)
         driver.send(.append("![alt](image.png)\n\n"))
-        #expect(await eventually { started.withLock { $0 } })
+        await started.settled { started.count > 0 }
         #expect(sink.models.isEmpty)
         let active = try #require(await session.submission)
         let forged = ParseSubmission(id: active.id, sessionToken: active.sessionToken, commitToken: active.commitToken, attempt: active.attempt + 1)
         await session.receive(.stale(submission: forged))
         #expect(await session.attemptDiagnostics.discardedCount == 0)
         driver.send(.setSource("# latest\n\n", MarkdownRenderConfiguration.default.snapshot(generation: 0)))
-        #expect(await eventually { sink.models.count == 1 })
-        #expect(await eventually { await session.attemptDiagnostics.discardedCount == 1 })
+        await sink.events.settled { sink.models.count == 1 }
+        await session.settled { await session.attemptDiagnostics.discardedCount == 1 }
         let totals = await session.attemptDiagnostics
         #expect(totals.acceptedCount == 1)
         #expect(totals.discarded.renderPreparationBytes > 0)
@@ -535,20 +535,20 @@ struct IncrementalWorkBudgetTests {
         let driver = MarkdownRenderSessionDriver(session: session)
         let chunk = "# " + String(repeating: "x", count: 1020) + "\n\n"
         driver.send(.append(chunk))
-        #expect(await eventually { gate.jobs.count == 1 })
+        await gate.events.settled { gate.jobs.count == 1 }
         driver.send(.append(chunk))
-        #expect(await eventually { await session.currentToken?.sequence == 2 })
+        await session.settled { await session.currentToken?.sequence == 2 }
         driver.send(.append(chunk))
-        #expect(await eventually { await session.attemptDiagnostics.discardedCount == 1 })
+        await session.settled { await session.attemptDiagnostics.discardedCount == 1 }
         #expect(await session.attemptDiagnostics.acceptedCount == 0)
         #expect(sink.models.isEmpty)
         gate.release(index: 0)
-        #expect(await eventually { gate.jobs.count == 2 })
-        #expect(await eventually { await session.attemptDiagnostics.discardedCount == 2 })
+        await gate.events.settled { gate.jobs.count == 2 }
+        await session.settled { await session.attemptDiagnostics.discardedCount == 2 }
         #expect(await session.attemptDiagnostics.acceptedCount == 0)
         #expect(await session.attemptDiagnostics.discarded.total > 0)
         gate.release(index: 1)
-        #expect(await eventually { sink.models.count == 1 })
+        await sink.events.settled { sink.models.count == 1 }
         let totals = await session.attemptDiagnostics
         #expect(totals.acceptedCount == 1)
         #expect(totals.discardedCount == 2)
@@ -988,7 +988,7 @@ struct IncrementalWorkBudgetTests {
                 : "# " + String(repeating: "x", count: math ? 1016 : 1020) + (math ? " $x$" : "") + "\n\n"
             fullSource += chunk // Test-only oracle source, not the production session buffer.
             driver.send(.append(chunk))
-            #expect(await eventually { sink.models.count == index + 1 })
+            await sink.events.settled { sink.models.count == index + 1 }
         }
         let metrics = await diagnostics.total
         let attempts = await session.attemptDiagnostics
@@ -1132,9 +1132,9 @@ struct IncrementalWorkBudgetTests {
         registry.register(sink, for: session.id)
         let driver = MarkdownRenderSessionDriver(session: session)
         driver.send(.append("# Stable\n\n"))
-        #expect(await eventually { sink.models.count == 1 })
+        await sink.events.settled { sink.models.count == 1 }
         driver.send(.append("# Next\n\n"))
-        #expect(await eventually { sink.models.count == 2 })
+        await sink.events.settled { sink.models.count == 2 }
         #expect(await session.deltaPreparationCount == 1)
         let metrics = await session.lastWorkMetrics
         #expect(metrics?.cmarkInputBytes == 8)
@@ -1248,6 +1248,9 @@ private final class SelfCancellingCheckpoint: Sendable {
 private final class AttemptCmarkGate: Sendable {
     private let condition = NSCondition()
     private let state = Mutex((jobs: [ParseJob](), released: Set<UUID>()))
+    /// Reported when a job reaches the adapter, so a test waits for the arrival
+    /// it asserts on rather than for a timer.
+    let events = EventSignal()
     var jobs: [ParseJob] {
         self.state.withLock { $0.jobs }
     }
@@ -1255,6 +1258,7 @@ private final class AttemptCmarkGate: Sendable {
     func hold(_ job: ParseJob) {
         self.condition.lock()
         self.state.withLock { $0.jobs.append(job) }
+        self.events.record()
         while !self.state.withLock({ $0.released.contains(job.submission.id) }) {
             self.condition.wait()
         }

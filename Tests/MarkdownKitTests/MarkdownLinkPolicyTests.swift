@@ -14,9 +14,12 @@ import AppKit
 
 /// Records activations without touching any platform opener.
 @MainActor final class RecordingLinkHandler: MarkdownLinkHandler {
+    /// Reported on every activation, so a test waits for the open it asserts on.
+    nonisolated let events = EventSignal()
     private(set) var opened: [URL] = []
     func open(_ url: URL) {
         self.opened.append(url)
+        self.events.record()
     }
 }
 
@@ -113,7 +116,7 @@ struct MarkdownLinkPolicyTests {
         await view.settled { view.currentSnapshot != nil }
 
         #expect(view.activateLink(at: 0))
-        #expect(await eventually { handler.opened.count == 1 })
+        await handler.events.settled { handler.opened.count == 1 }
         #expect(handler.opened.first?.absoluteString == "https://example.com/ok")
 
         let rendered = try #require(view.currentSnapshot).attributedString.string
@@ -206,7 +209,7 @@ struct MarkdownLinkPolicyTests {
         host.layoutSubtreeIfNeeded()
         #endif
         let driver = try #require(label.sessionDriver)
-        #expect(await eventually { (driver.linkConfiguration.policy as? AllowListPolicy)?.hosts == ["good.test"] })
+        await label.settled { (driver.linkConfiguration.policy as? AllowListPolicy)?.hosts == ["good.test"] }
 
         #expect(label.activateLink(at: 0))
         for _ in 0 ..< 300 {
@@ -242,7 +245,7 @@ struct MarkdownLinkPolicyTests {
         let label = try #require(await settleForLabel(in: host))
         await label.settled { label.currentSnapshot != nil }
         #expect(label.activateLink(at: 0))
-        #expect(await eventually { handler.opened.count == 1 })
+        await handler.events.settled { handler.opened.count == 1 }
 
         host.rootView = content(installing: nil)
         #if canImport(UIKit)
@@ -253,7 +256,7 @@ struct MarkdownLinkPolicyTests {
         host.layoutSubtreeIfNeeded()
         #endif
         let driver = try #require(label.sessionDriver)
-        #expect(await eventually { driver.linkConfiguration.policyID == WebOnlyMarkdownLinkPolicy.identity })
+        await label.settled { driver.linkConfiguration.policyID == WebOnlyMarkdownLinkPolicy.identity }
 
         #expect(label.activateLink(at: 0))
         for _ in 0 ..< 300 {
@@ -272,9 +275,9 @@ struct MarkdownLinkPolicyTests {
         host.needsLayout = true
         host.layoutSubtreeIfNeeded()
         #endif
-        #expect(await eventually { driver.linkConfiguration.handlerID == permissive.handlerID })
+        await label.settled { driver.linkConfiguration.handlerID == permissive.handlerID }
         #expect(label.activateLink(at: 0))
-        #expect(await eventually { handler.opened.count == 2 })
+        await handler.events.settled { handler.opened.count == 2 }
         withExtendedLifetime(host) {}
     }
 
@@ -286,9 +289,9 @@ struct MarkdownLinkPolicyTests {
         await view.settled { view.currentSnapshot != nil }
         let before = try #require(view.currentCommitToken)
         view.linkConfiguration = MarkdownLinkConfiguration(policy: AllowEverythingPolicy(), handler: handler)
-        #expect(await eventually {
+        await view.settled {
             view.currentCommitToken?.configurationGeneration == before.configurationGeneration + 1
-        })
+        }
         let driver = try #require(view.sessionDriver)
         #expect(driver.linkConfiguration.handlerID == view.linkConfiguration.handlerID)
     }
@@ -315,7 +318,7 @@ struct MarkdownLinkPolicyTests {
         #expect(label.linkConfiguration.handlerID == configuration.handlerID)
         // A custom scheme activates only because this policy permits it.
         #expect(label.activateLink(at: 0))
-        #expect(await eventually { handler.opened.first?.scheme == "myapp" })
+        await handler.events.settled { handler.opened.first?.scheme == "myapp" }
         withExtendedLifetime(host) {}
     }
 
@@ -441,9 +444,9 @@ struct MarkdownLinkPolicyTests {
         view.linkConfiguration = .derived(policy: AllowEverythingPolicy(), handler: other)
         let driver = try #require(view.sessionDriver)
         #expect(driver.linkConfiguration.handlerID == view.linkConfiguration.handlerID)
-        #expect(await eventually {
+        await view.settled {
             view.currentCommitToken?.configurationGeneration == before.configurationGeneration + 1
-        })
+        }
     }
 
     @Test @MainActor func repeatedSwiftUIUpdatesThroughTheModifierAreStable() async throws {

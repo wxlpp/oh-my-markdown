@@ -98,6 +98,7 @@ package actor ParseExecutor {
 
     /// Returns without awaiting parsing or storing a submit continuation.
     package func enqueue(_ job: ParseJob, sink: any ParseResultSink) -> ParseAdmission {
+        defer { self.diagnosticsDidChange() }
         let token = job.submission.sessionToken
         guard !token.isRevoked else { return .busy }
         switch self.states[token] {
@@ -127,6 +128,7 @@ package actor ParseExecutor {
     }
 
     package func tombstone(_ token: ParseSessionToken) {
+        defer { self.diagnosticsDidChange() }
         token.revoke()
         self.registry.unregister(token)
         switch self.states[token] {
@@ -148,7 +150,17 @@ package actor ParseExecutor {
         .init(activeCount: self.activeCount, waitingTokenCount: self.waitingOrder.count, registryCount: self.registry.count)
     }
 
+    /// Reports wherever `diagnostics` can have moved. A session's `deinit`
+    /// tombstones through here, which is what makes a deallocation assertion
+    /// waitable rather than pollable.
+    package nonisolated let observation = RenderObservationPoint()
+
+    private func diagnosticsDidChange() {
+        self.observation.signal()
+    }
+
     private func start(_ job: ParseJob) {
+        defer { self.diagnosticsDidChange() }
         guard !job.submission.sessionToken.isRevoked else {
             self.recordWork(job, orphaned: true)
             self.states[job.submission.sessionToken] = nil
@@ -170,6 +182,7 @@ package actor ParseExecutor {
     }
 
     private func complete(_ output: ParseWorkerOutput) async {
+        defer { self.diagnosticsDidChange() }
         let token = output.job.submission.sessionToken
         guard case .active(_, let pending, let tombstoned) = states[token] else { return }
         self.activeCount -= 1

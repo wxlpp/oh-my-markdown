@@ -26,7 +26,7 @@ struct ImageResourceCoordinatorTests {
         let first = try await coordinator.acquireTransferPermit(session: session)
         let second = try await coordinator.acquireTransferPermit(session: session)
         let queued = Task { try await coordinator.acquireTransfer(session: session) }
-        #expect(await eventually { await coordinator.statistics.transferWaiters == 1 })
+        await coordinator.settled { await coordinator.statistics.transferWaiters == 1 }
         #expect(await coordinator.statistics.encodedBytes == 0)
         await first.release()
         let admitted = try await queued.value
@@ -45,7 +45,7 @@ struct ImageResourceCoordinatorTests {
         let first = try await coordinator.acquireTransferPermit(session: a)
         let second = try await coordinator.acquireTransferPermit(session: a)
         let waiting = Task { try await coordinator.acquireTransferPermit(session: a) }
-        #expect(await eventually { await coordinator.statistics.transferWaiters == 1 })
+        await coordinator.settled { await coordinator.statistics.transferWaiters == 1 }
         let other = try await coordinator.acquireTransferPermit(session: b)
         #expect(await coordinator.statistics.transfers == 3)
         waiting.cancel()
@@ -56,7 +56,7 @@ struct ImageResourceCoordinatorTests {
         await other.release()
         let decode = try await coordinator.acquireDecodePermit(session: a)
         let queued = Task { try await coordinator.acquireDecodePermit(session: a) }
-        #expect(await eventually { await coordinator.statistics.decodeWaiters == 1 })
+        await coordinator.settled { await coordinator.statistics.decodeWaiters == 1 }
         await coordinator.cancelQueued(session: a)
         do { _ = try await queued.value; Issue.record("Revoked decode admitted") } catch is CancellationError {}
         await decode.release()
@@ -98,7 +98,7 @@ struct ImageResourceCoordinatorTests {
             try await filler.append(coordinator.reserveEncodedBody(session: .init(rawValue: UUID())))
         }
         let queued = Task { [coordinator] in try await coordinator.acquireTransfer(session: .init(rawValue: UUID())) }
-        #expect(await eventually { await coordinator.statistics.transferWaiters == 1 })
+        await coordinator.settled { await coordinator.statistics.transferWaiters == 1 }
         #expect(await coordinator.statistics.encodedBytes == 80 * 1024 * 1024)
         #expect(await coordinator.statistics.transfers == 0)
 
@@ -124,7 +124,7 @@ struct ImageResourceCoordinatorTests {
             try await reservations.append(coordinator.reserveEncodedBody(session: session))
         }
         let queued = Task { try await coordinator.reserveEncodedBody(session: session) }
-        #expect(await eventually { await coordinator.statistics.encodedWaiters == 1 })
+        await coordinator.settled { await coordinator.statistics.encodedWaiters == 1 }
         #expect(await coordinator.statistics.encodedBytes == 80 * 1024 * 1024)
         await reservations.removeFirst().rejectAndRelease()
         let admitted = try await queued.value
@@ -151,7 +151,7 @@ struct ImageResourceCoordinatorTests {
             try await permits.append(coordinator.acquireDecodePermit(session: session))
         }
         let queued = Task { try await coordinator.acquireDecodePermit(session: sessions[2]) }
-        #expect(await eventually { await coordinator.statistics.decodeWaiters == 1 })
+        await coordinator.settled { await coordinator.statistics.decodeWaiters == 1 }
         #expect(await coordinator.statistics.decodes == 2)
         #expect(await coordinator.statistics.peakDecodes == 2)
         await permits.removeFirst().release()
@@ -177,13 +177,13 @@ struct ImageResourceCoordinatorTests {
             await order.record("first")
             return permit
         }
-        #expect(await eventually { await coordinator.statistics.transferWaiters == 1 })
+        await coordinator.settled { await coordinator.statistics.transferWaiters == 1 }
         let second = Task { [coordinator] in
             let permit = try await coordinator.acquireTransferPermit(session: .init(rawValue: UUID()))
             await order.record("second")
             return permit
         }
-        #expect(await eventually { await coordinator.statistics.transferWaiters == 2 })
+        await coordinator.settled { await coordinator.statistics.transferWaiters == 2 }
         await holders.removeFirst().release()
         let firstPermit = try await first.value
         #expect(await order.values == ["first"])
@@ -215,7 +215,7 @@ struct ImageResourceCoordinatorTests {
             withExtendedLifetime((permit, admission, reservation)) {}
         }
         // Nothing was released explicitly; deinit alone returns every budget.
-        #expect(await eventually { await coordinator.statistics.isEmpty })
+        await coordinator.settled { await coordinator.statistics.isEmpty }
     }
 
     @Test func cancellationRacingTheGrantHandoffNeverLeaksOrStrandsAPermit() async throws {
@@ -226,7 +226,7 @@ struct ImageResourceCoordinatorTests {
                 try await holders.append(coordinator.acquireTransferPermit(session: .init(rawValue: UUID())))
             }
             let waiter = Task { [coordinator] in try await coordinator.acquireTransferPermit(session: .init(rawValue: UUID())) }
-            #expect(await eventually { await coordinator.statistics.transferWaiters == 1 })
+            await coordinator.settled { await coordinator.statistics.transferWaiters == 1 }
             let released = holders.removeFirst()
             async let release: Void = released.release()
             waiter.cancel()
@@ -235,7 +235,7 @@ struct ImageResourceCoordinatorTests {
             for permit in holders {
                 await permit.release()
             }
-            #expect(await eventually { await coordinator.statistics.isEmpty })
+            await coordinator.settled { await coordinator.statistics.isEmpty }
         }
     }
 
@@ -251,7 +251,7 @@ struct ImageResourceCoordinatorTests {
             try await holders.append(coordinator.acquireTransferPermit(session: kept))
         }
         let queued = Task { [coordinator] in try await coordinator.acquireTransfer(session: revoked) }
-        #expect(await eventually { await coordinator.statistics.transferWaiters == 1 })
+        await coordinator.settled { await coordinator.statistics.transferWaiters == 1 }
         await coordinator.cancelQueued(session: revoked)
         do {
             _ = try await queued.value
@@ -284,7 +284,7 @@ struct ImageResourceCoordinatorTests {
             _ = try await task.value
             Issue.record("Cancelled decode produced a backing")
         } catch is CancellationError {}
-        #expect(await eventually { await coordinator.statistics.isEmpty })
+        await coordinator.settled { await coordinator.statistics.isEmpty }
     }
 
     @Test func oversizedBodiesAreRejectedByTheAttachedReservation() async throws {

@@ -15,7 +15,10 @@ package actor MarkdownRenderSession: ParseResultSink {
     private let diagnostics: (@Sendable (ParseSubmission, ParseWorkMetrics) async -> Void)?
     private let attemptSink: (@Sendable (ParseAttemptReport) async -> Void)?
     private var attempts: [ParseSubmission: ParseAttemptRecorder] = [:]
-    package private(set) var attemptDiagnostics = ParseAttemptDiagnostics()
+    package private(set) var attemptDiagnostics = ParseAttemptDiagnostics() {
+        didSet { self.observation.signal() }
+    }
+
     private let workRecorder: ParseWorkRecorder
     private var sourceBuffer: IncrementalSourceBuffer
     package var facadeMaterializationCount: Int {
@@ -36,8 +39,14 @@ package actor MarkdownRenderSession: ParseResultSink {
     /// by a width or style change. Accessibility identity is anchored to it, so
     /// a rotation must not renumber every element.
     private var documentGeneration: UInt64 = 0
-    package private(set) var currentToken: RenderCommitToken?
-    package private(set) var submission: ParseSubmission?
+    package private(set) var currentToken: RenderCommitToken? {
+        didSet { self.observation.signal() }
+    }
+
+    package private(set) var submission: ParseSubmission? {
+        didSet { self.observation.signal() }
+    }
+
     private var retryTask: Task<Void, Never>?
     private var preparationTask: Task<Void, Never>?
     private var deadline: Duration = .zero
@@ -69,13 +78,20 @@ package actor MarkdownRenderSession: ParseResultSink {
     }
 
     deinit {
+        // The last report a session makes: a waiter whose condition is *about*
+        // this session going away has nothing else left to wake it.
+        observation.signal()
         token.revoke()
         retryTask?.cancel()
         preparationTask?.cancel()
         Task { [executor, token] in await executor.tombstone(token) }
     }
 
+    /// Reports each handled event, once the session has finished acting on it.
+    package nonisolated let observation = RenderObservationPoint()
+
     package func handle(_ event: RenderSessionEvent) async {
+        defer { self.observation.signal() }
         guard !self.dismantled, event.commitToken.sessionID == self.id,
               event.commitToken.sequence > (self.currentToken?.sequence ?? 0)
         else { return }
@@ -146,6 +162,7 @@ package actor MarkdownRenderSession: ParseResultSink {
     }
 
     package func dismantle() async {
+        defer { self.observation.signal() }
         self.invalidateAdmission()
         guard !self.dismantled else { return }
         self.dismantled = true
@@ -185,6 +202,7 @@ package actor MarkdownRenderSession: ParseResultSink {
     /// Registry promotion retains this actor only for this non-suspending command.
     /// Parsing, retry clocks, preparation and MainActor delivery are never awaited here.
     package func receive(_ result: ParseExecutorResult) {
+        defer { self.observation.signal() }
         let received = result.submission
         guard !self.dismantled, !self.token.isRevoked, self.submission == received, self.currentToken == received.commitToken else {
             self.finishAttempt(received, disposition: .discarded)
