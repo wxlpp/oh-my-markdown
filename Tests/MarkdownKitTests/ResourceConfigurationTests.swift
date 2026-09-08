@@ -197,3 +197,75 @@ struct ResourceConfigurationTests {
         #expect(view.sessionDriver?.resourceTaskOwner.count == 0)
     }
 }
+
+/// `.defaultHTTPS` builds a fresh value on every access, and a SwiftUI body is
+/// evaluated whenever anything around it changes — including the `@State` a host
+/// updates from `onMarkdownResourceError`. Keying the reinstall on the instance
+/// therefore closed a loop: reinstall, restart the loads, fail, record, evaluate
+/// the body, reinstall. Found by watching the Example's failure list grow without
+/// bound with one unreachable image on screen.
+@MainActor
+@Suite(.timeLimit(.minutes(5)), .serialized)
+struct RemoteImageReinstallTests {
+    private actor CountingLoader: MarkdownImageLoading {
+        nonisolated let events = EventSignal()
+        private(set) var calls = 0
+        func load(_ request: MarkdownImageRequest) async throws -> MarkdownImagePayload {
+            self.calls += 1
+            self.events.record()
+            throw URLError(.cannotFindHost)
+        }
+    }
+
+    /// The host shape that closes the loop: a failure updates state, which
+    /// re-evaluates the body, which rebuilds the configuration value.
+    private struct FailureRecordingHost: View {
+        let loader: any MarkdownImageLoading
+        let configurationID: MarkdownConfigurationID
+        @State private var failures = 0
+
+        var body: some View {
+            VStack {
+                Text("failures: \(self.failures)")
+                MarkdownText("![alt](https://example.invalid/x.png)")
+                    .markdownRemoteImages(
+                        MarkdownRemoteImageConfiguration(loader: self.loader, configurationID: self.configurationID)
+                    )
+                    .onMarkdownResourceError { _ in self.failures += 1 }
+            }
+        }
+    }
+
+    @Test func aRecordedFailureDoesNotRestartTheLoad() async throws {
+        let loader = CountingLoader()
+        let content = FailureRecordingHost(
+            loader: loader, configurationID: .semantic(namespace: "reinstall-test", version: 1)
+        )
+        #if canImport(UIKit)
+        let host = UIHostingController(rootView: content)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        host.view.layoutIfNeeded()
+        #else
+        let host = NSHostingView(rootView: content)
+        host.frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        #endif
+        let label = try #require(await settleForLabel(in: host))
+        await loader.events.settled { await loader.calls >= 1 }
+        // Long enough for a loop to run away: each turn of the broken cycle is one
+        // failure, one state write and one body evaluation, all on this actor.
+        for _ in 0 ..< 400 {
+            #if canImport(UIKit)
+            host.view.layoutIfNeeded()
+            #else
+            host.layoutSubtreeIfNeeded()
+            #endif
+            await Task.yield()
+        }
+        #expect(await loader.calls == 1, "a recorded failure restarted the load")
+        withExtendedLifetime((host, label)) {}
+    }
+}

@@ -88,6 +88,12 @@ public typealias MarkdownLinkConfiguration = MarkdownPlatformView.MarkdownLinkCo
 public typealias WebOnlyMarkdownLinkPolicy = MarkdownPlatformView.WebOnlyMarkdownLinkPolicy
 public typealias PlatformMarkdownLinkHandler = MarkdownPlatformView.PlatformMarkdownLinkHandler
 
+// `MarkdownSelectionProxy` lives here and returns these, so a consumer of the
+// umbrella alone has to be able to name them.
+public typealias MarkdownCopyResult = MarkdownPlatformView.MarkdownCopyResult
+public typealias MarkdownCopyGranularity = MarkdownPlatformView.MarkdownCopyGranularity
+public typealias MarkdownCopyCommandTitle = MarkdownPlatformView.MarkdownCopyCommandTitle
+
 public typealias RenderedImage = MarkdownRenderKit.RenderedImage
 public typealias RenderedMath = MarkdownRenderKit.RenderedMath
 public typealias RenderedSVG = MarkdownRenderKit.RenderedSVG

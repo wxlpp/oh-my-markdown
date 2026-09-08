@@ -147,3 +147,36 @@ private final class IdentitySVGRenderer: SVGBlockRendering {
         .failed
     }
 }
+
+@MainActor
+@Suite(.timeLimit(.minutes(1)))
+struct StyleSemanticEqualityTests {
+    /// The default style is built fresh on every access and its colors are
+    /// dynamic, so comparing them by object identity made a style unequal to
+    /// itself — and every caller of this is deciding "is this a replacement?".
+    @Test func aDefaultStyleEqualsAnotherDefaultStyle() {
+        #expect(RenderStyle.default.isSemanticallyEqual(to: .default))
+        #expect(RenderStyle.fixedDefault.isSemanticallyEqual(to: .fixedDefault))
+    }
+
+    /// …and it still says no when the render would actually differ.
+    @Test func aChangedColorOrSizeIsNotEqual() {
+        var recolored = RenderStyle.default
+        recolored.linkColor = .red
+        #expect(!recolored.isSemanticallyEqual(to: .default))
+
+        var resized = RenderStyle.default
+        resized.bodyFont = .systemFont(ofSize: 41)
+        #expect(!resized.isSemanticallyEqual(to: .default))
+
+        var respaced = RenderStyle.default
+        respaced.paragraphSpacing += 1
+        #expect(!respaced.isSemanticallyEqual(to: .default))
+
+        // Registration is part of the render: an unpinned role scales and a
+        // pinned one does not, at the same point size.
+        var pinned = RenderStyle.default
+        pinned.pinFont(for: .body)
+        #expect(!pinned.isSemanticallyEqual(to: .default))
+    }
+}

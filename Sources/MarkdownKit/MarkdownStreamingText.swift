@@ -100,7 +100,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         var lastStyle: RenderStyle?
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
-        var lastImageReplacementID: UUID?
+        var lastImageConfigurationID: MarkdownConfigurationID?
         var hasInstalledLinkConfiguration = false
     }
 
@@ -149,9 +149,17 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
             uiView.linkConfiguration = .platformDefault
             context.coordinator.hasInstalledLinkConfiguration = false
         }
-        if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
+        // Compared by `configurationID`, not by instance: `.defaultHTTPS` and
+        // `.https(…)` build a fresh value on every access, so an instance-keyed
+        // check would reinstall on every body evaluation — and reinstalling
+        // restarts the loads, which turns one failing image into an unbounded
+        // retry loop for any host that records failures into `@State`.
+        // Equal semantic ids promise interchangeable output, so not reinstalling
+        // is the contract rather than an optimisation; a `.uniqueInstance()` id
+        // differs every time and still reinstalls, which is what it means.
+        if context.coordinator.lastImageConfigurationID != self.remoteImages.configurationID {
             uiView.remoteImages = self.remoteImages
-            context.coordinator.lastImageReplacementID = self.remoteImages.replacementID
+            context.coordinator.lastImageConfigurationID = self.remoteImages.configurationID
         }
         if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
             uiView.renderStyle = self.style
@@ -205,7 +213,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         var lastStyle: RenderStyle?
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
-        var lastImageReplacementID: UUID?
+        var lastImageConfigurationID: MarkdownConfigurationID?
         var hasInstalledLinkConfiguration = false
     }
 
@@ -250,9 +258,17 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
             nsView.linkConfiguration = .platformDefault
             context.coordinator.hasInstalledLinkConfiguration = false
         }
-        if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
+        // Compared by `configurationID`, not by instance: `.defaultHTTPS` and
+        // `.https(…)` build a fresh value on every access, so an instance-keyed
+        // check would reinstall on every body evaluation — and reinstalling
+        // restarts the loads, which turns one failing image into an unbounded
+        // retry loop for any host that records failures into `@State`.
+        // Equal semantic ids promise interchangeable output, so not reinstalling
+        // is the contract rather than an optimisation; a `.uniqueInstance()` id
+        // differs every time and still reinstalls, which is what it means.
+        if context.coordinator.lastImageConfigurationID != self.remoteImages.configurationID {
             nsView.remoteImages = self.remoteImages
-            context.coordinator.lastImageReplacementID = self.remoteImages.replacementID
+            context.coordinator.lastImageConfigurationID = self.remoteImages.configurationID
         }
         if context.coordinator.lastStyle?.isSemanticallyEqual(to: self.style) != true {
             nsView.renderStyle = self.style

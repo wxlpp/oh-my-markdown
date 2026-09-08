@@ -5,7 +5,6 @@ import MarkdownRenderKit
 public struct MarkdownRemoteImageConfiguration: Sendable {
     package let loader: (any MarkdownImageLoading)?
     public let configurationID: MarkdownConfigurationID
-    package let replacementID = UUID()
     public static let disabled = Self(optionalLoader: nil, configurationID: .semantic(namespace: "markdown-images-disabled", version: 1))
     public static var defaultHTTPS: Self {
         .https()

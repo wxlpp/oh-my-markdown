@@ -177,6 +177,17 @@ public struct RenderStyle {
         #endif
     }()
 
+    /// Whether two styles would produce the same render.
+    ///
+    /// Colors are compared by their **resolved** value, not by object identity: a
+    /// dynamic `UIColor`/`NSColor` is built from a closure, and two closures are
+    /// never equal, so `RenderStyle.default` did not compare equal to itself. Every
+    /// caller of this is deciding "is this a replacement?", and answering yes on
+    /// every SwiftUI body evaluation replaced the configuration, bumped the
+    /// generation and restarted every image load. Resolution is against the
+    /// current appearance, which is the right question here — an appearance change
+    /// travels its own path and produces a different snapshot identity anyway.
+    @MainActor
     public func isSemanticallyEqual(to other: RenderStyle) -> Bool {
         self.bodyFont.isEqual(other.bodyFont)
             && self.codeFont.isEqual(other.codeFont)
@@ -186,28 +197,22 @@ public struct RenderStyle {
             && self.h4Font.isEqual(other.h4Font)
             && self.h5Font.isEqual(other.h5Font)
             && self.h6Font.isEqual(other.h6Font)
-            && self.textColor.isEqual(other.textColor)
-            && self.secondaryTextColor.isEqual(other.secondaryTextColor)
-            && self.codeTextColor.isEqual(other.codeTextColor)
-            && self.codeBackgroundColor.isEqual(other.codeBackgroundColor)
-            && self.inlineCodeTextColor.isEqual(other.inlineCodeTextColor)
-            && self.inlineCodeBgColor.isEqual(other.inlineCodeBgColor)
-            && self.linkColor.isEqual(other.linkColor)
-            && self.quoteColor.isEqual(other.quoteColor)
-            && self.quoteBarColor.isEqual(other.quoteBarColor)
-            && self.headingBorderColor.isEqual(other.headingBorderColor)
+            && self.textColor.rgbaToken == other.textColor.rgbaToken
+            && self.secondaryTextColor.rgbaToken == other.secondaryTextColor.rgbaToken
+            && self.codeTextColor.rgbaToken == other.codeTextColor.rgbaToken
+            && self.codeBackgroundColor.rgbaToken == other.codeBackgroundColor.rgbaToken
+            && self.inlineCodeTextColor.rgbaToken == other.inlineCodeTextColor.rgbaToken
+            && self.inlineCodeBgColor.rgbaToken == other.inlineCodeBgColor.rgbaToken
+            && self.linkColor.rgbaToken == other.linkColor.rgbaToken
+            && self.quoteColor.rgbaToken == other.quoteColor.rgbaToken
+            && self.quoteBarColor.rgbaToken == other.quoteBarColor.rgbaToken
+            && self.headingBorderColor.rgbaToken == other.headingBorderColor.rgbaToken
             && self.paragraphSpacing == other.paragraphSpacing
             && self.quoteIndent == other.quoteIndent
             && self.scaledBaseSizes == other.scaledBaseSizes
             && self.mathScale == other.mathScale
-            && {
-                switch (self.mathColorOverride, other.mathColorOverride) {
-                case (nil, nil): true
-                case (let l?, let r?): l.isEqual(r)
-                default: false
-                }
-            }()
-            && self.mathTokenColor.isEqual(other.mathTokenColor)
+            && self.mathColorOverride?.rgbaToken == other.mathColorOverride?.rgbaToken
+            && self.mathTokenColor.rgbaToken == other.mathTokenColor.rgbaToken
     }
 
     /// Returns a copy with `quoteIndent` increased, used for nested blockquotes.
@@ -398,7 +403,7 @@ public struct RenderStyle {
 
 @MainActor
 extension PlatformColor {
-    fileprivate var rgbaToken: ColorToken {
+    var rgbaToken: ColorToken {
         var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
         #if canImport(UIKit)
         let resolved = resolvedColor(with: UITraitCollection.current)
