@@ -132,7 +132,14 @@ package struct RenderMaterializer {
             prepared.syntaxIndex = 0
             prepared.currentBlockIndex = index
             if index > 0 {
-                let separator = PreparedRun(text: "\n", attributes: PreparedAttributes(color: nil, paragraph: PreparedParagraph(lineSpacing: 0)))
+                // Renders no leaf: it is the join between two blocks, and a
+                // newline's segment sits at the end of the *previous* line, so
+                // tagging it would stretch the next block's first element up
+                // into the block before it.
+                let separator = PreparedRun(
+                    text: "\n", attributes: PreparedAttributes(color: nil, paragraph: PreparedParagraph(lineSpacing: 0)),
+                    accessibilityOrdinal: -1
+                )
                 result.append(prepared.materializeRun(separator, resources: resources, owners: &owners))
             }
             for piece in bundle.content {
@@ -217,6 +224,17 @@ package struct RenderMaterializer {
     }
 
     private mutating func materializeRun(_ run: PreparedRun, resources: ResolvedResourceSnapshot, owners: inout [any ResourceResidencyOwner]) -> NSAttributedString {
+        let result = self.materializeRunContent(run, resources: resources, owners: &owners)
+        guard run.accessibilityOrdinal >= 0, result.length > 0 else { return result }
+        let tagged = NSMutableAttributedString(attributedString: result)
+        tagged.addAttribute(
+            .markdownAccessibilityLeaf, value: AccessibilityLeafKey(block: self.currentBlockIndex, ordinal: run.accessibilityOrdinal),
+            range: NSRange(location: 0, length: tagged.length)
+        )
+        return tagged
+    }
+
+    private mutating func materializeRunContent(_ run: PreparedRun, resources: ResolvedResourceSnapshot, owners: inout [any ResourceResidencyOwner]) -> NSAttributedString {
         var attrs = self.attributes(run.attributes)
         let copy = self.copyText(of: run)
         if let source = run.sourceText { attrs[.markdownCopySource] = source }

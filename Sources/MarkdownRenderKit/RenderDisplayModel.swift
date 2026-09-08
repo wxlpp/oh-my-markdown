@@ -76,6 +76,15 @@ public struct RenderDisplayModel: Sendable, Equatable {
         self.preparedDocument == nil ? self.standaloneResources : self.observeFlatMap(\.resources)
     }
 
+    /// Roots grouped by block, which is what the platform layer needs: a leaf is
+    /// identified by `(block, ordinal)`, and flattening loses the block.
+    public var accessibilityRootsByBlock: [[AccessibilityNode]] {
+        var metrics = ParseWorkMetrics()
+        let result = self.bundles.materializedMap(\.accessibilityRoots, metrics: &metrics)
+        self.preparedDocument?.workRecorder?.recordFacade(metrics)
+        return result
+    }
+
     public var accessibility: AccessibilityTree {
         self.preparedDocument == nil ? self.standaloneAccessibility : AccessibilityTree(roots: self.observeFlatMap(\.accessibilityRoots))
     }
@@ -290,6 +299,11 @@ package struct PreparedRun: Equatable {
     /// give a source range — a block-level formula lifted out of a paragraph has
     /// none, so without this its source copy would silently lose the delimiters.
     package var sourceText: String?
+    /// Which accessibility leaf renders here. The tree says what a reader stops
+    /// on; this says where that stop is on screen, so an element can take a real
+    /// TextKit frame. `everyLeafIsTaggedOnTheRunsThatRenderIt` is what keeps the
+    /// two walks that produce them from drifting.
+    package var accessibilityOrdinal: Int = 0
 }
 
 package struct PreparedTable: Equatable {

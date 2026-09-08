@@ -10,7 +10,8 @@
       "Parsed blocks include stable source fingerprints",
       "合法公式 → .rendered，尺寸为正",
       "Smoke markdown parses one heading",
-      "testRootDemoIsAccessible()"
+      "testRootDemoIsAccessible()",
+      "testRenderedMarkdownReachesTheAccessibilityTree()"
     ]
   },
   "macos15": {
@@ -21,6 +22,17 @@
     "requiredTests": [
       "Parsed blocks include stable source fingerprints",
       "合法公式 → .rendered，尺寸为正"
+    ]
+  },
+  "ios18-accessibility": {
+    "requiredTargets": [
+      "MarkdownKitTests"
+    ],
+    "requiredTests": [
+      "theExposedLeafSequenceIsTheDocumentReadInOrder()",
+      "everyElementHasItsOwnRealLayoutFrame()",
+      "aLinkElementActivatesThroughThePolicy()",
+      "appendingReusesThePlatformObjectsOfSurvivingLeaves()"
     ]
   }
 }

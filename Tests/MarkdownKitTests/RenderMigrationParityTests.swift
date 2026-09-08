@@ -360,13 +360,17 @@ struct RenderMigrationParityTests {
     }
 }
 
-/// Copy metadata is not rendering: it changes no glyph, and leaving it in would
-/// also split runs at boundaries the golden fixtures never had. Stripped before
-/// comparison; `MarkdownCopyTests` is what pins it.
+/// Copy and accessibility metadata are not rendering: they change no glyph, and
+/// leaving them in would also split runs at boundaries the golden fixtures never
+/// had. Stripped before comparison; `MarkdownCopyTests` and
+/// `MarkdownAccessibility*Tests` are what pin them.
 func strippingCopyMetadata(_ text: NSAttributedString) -> NSAttributedString {
     let stripped = NSMutableAttributedString(attributedString: text)
     let whole = NSRange(location: 0, length: stripped.length)
-    for key in [NSAttributedString.Key.markdownCopyText, .markdownCopySource, .markdownCopySkip] {
+    for key in [
+        NSAttributedString.Key.markdownCopyText, .markdownCopySource, .markdownCopySkip,
+        .markdownAccessibilityLeaf,
+    ] {
         stripped.removeAttribute(key, range: whole)
     }
     return stripped

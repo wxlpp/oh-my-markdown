@@ -141,6 +141,53 @@ struct MarkdownAccessibilityModelTests {
         #expect(label != "markdown.accessibility.image", "the fallback label is not localized")
     }
 
+    /// The tree says *what* a reader stops on; the runs say *where* it is on
+    /// screen. They come from two walks over the same block, so nothing but this
+    /// assertion stops them drifting — and a drift means an element pointing at
+    /// the wrong place, which no other test would notice.
+    @Test func everyLeafIsTaggedOnTheRunsThatRenderIt() throws {
+        for markdown in [
+            Self.fixture,
+            "plain paragraph",
+            "- [a](https://a.test) and text\n- plain",
+            "> quoted [link](https://a.test)\n\n$$\nx\n$$",
+            "| a |\n|---|\n| ![alt](https://i.test/p.png) |",
+        ] {
+            let configuration = RenderStyle.default.snapshot(generation: 0)
+            let input = RenderInput(
+                document: MarkdownDocument(parsing: markdown), source: markdown,
+                availableWidth: 360, configuration: configuration, placeholderMode: .static
+            )
+            let model = try RenderPreparer(configuration: configuration).prepare(input)
+            for bundle in model.bundles {
+                func leafOrdinals(_ node: AccessibilityNode) -> [Int] {
+                    node.children.isEmpty ? [node.id.ordinal] : node.children.flatMap(leafOrdinals)
+                }
+                let expected = Set(bundle.accessibilityRoots.flatMap(leafOrdinals))
+                var tagged: Set<Int> = []
+                func note(_ runs: [PreparedRun]) {
+                    // Negative means the run renders no leaf of its own: a bullet.
+                    for run in runs where run.accessibilityOrdinal >= 0 {
+                        tagged.insert(run.accessibilityOrdinal)
+                    }
+                }
+                for piece in bundle.content {
+                    switch piece {
+                    case .blockStart: break
+                    case .run(let run): note([run])
+                    case .table(let table):
+                        table.head.forEach(note)
+                        table.rows.forEach { $0.forEach(note) }
+                    }
+                }
+                #expect(
+                    tagged == expected,
+                    "leaf tags drifted in \(markdown.debugDescription): tagged \(tagged.sorted()) vs leaves \(expected.sorted())"
+                )
+            }
+        }
+    }
+
     /// Appending to the last paragraph must not renumber the leaves before it,
     /// or focus jumps on every streamed chunk.
     @Test func appendingKeepsTheIdentitiesOfEverythingBeforeTheGrowingTail() throws {

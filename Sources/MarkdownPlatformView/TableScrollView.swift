@@ -56,6 +56,36 @@ final class TableContentView: UIView {
         fatalError("Use init(tableString:style:naturalWidth:)")
     }
 
+    /// On-screen extent of every accessibility leaf in this table, in this
+    /// view's own space. An overflowing table's cells exist only here — the main
+    /// document holds a single placeholder character — so without this a reader
+    /// would find the whole table missing.
+    func accessibilityLeafFrames() -> [AccessibilityLeafKey: CGRect] {
+        guard let text = self.contentStorage.attributedString, text.length > 0 else { return [:] }
+        var ranges: [AccessibilityLeafKey: NSRange] = [:]
+        text.enumerateAttribute(
+            .markdownAccessibilityLeaf, in: NSRange(location: 0, length: text.length), options: []
+        ) { value, range, _ in
+            guard let key = value as? AccessibilityLeafKey else { return }
+            ranges[key] = ranges[key].map { NSUnionRange($0, range) } ?? range
+        }
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        var result: [AccessibilityLeafKey: CGRect] = [:]
+        for (key, range) in ranges {
+            guard
+                let start = self.contentStorage.location(self.contentStorage.documentRange.location, offsetBy: range.location),
+                let end = self.contentStorage.location(start, offsetBy: range.length),
+                let textRange = NSTextRange(location: start, end: end) else { continue }
+            var frame = CGRect.null
+            self.layoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, rect, _, _ in
+                frame = frame.isNull ? rect : frame.union(rect)
+                return true
+            }
+            if !frame.isNull, !frame.isEmpty { result[key] = frame }
+        }
+        return result
+    }
+
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else {
             return
@@ -257,6 +287,36 @@ final class TableContentView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("Use init(tableString:style:naturalWidth:)")
+    }
+
+    /// On-screen extent of every accessibility leaf in this table, in this
+    /// view's own space. An overflowing table's cells exist only here — the main
+    /// document holds a single placeholder character — so without this a reader
+    /// would find the whole table missing.
+    func accessibilityLeafFrames() -> [AccessibilityLeafKey: CGRect] {
+        guard let text = self.contentStorage.attributedString, text.length > 0 else { return [:] }
+        var ranges: [AccessibilityLeafKey: NSRange] = [:]
+        text.enumerateAttribute(
+            .markdownAccessibilityLeaf, in: NSRange(location: 0, length: text.length), options: []
+        ) { value, range, _ in
+            guard let key = value as? AccessibilityLeafKey else { return }
+            ranges[key] = ranges[key].map { NSUnionRange($0, range) } ?? range
+        }
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        var result: [AccessibilityLeafKey: CGRect] = [:]
+        for (key, range) in ranges {
+            guard
+                let start = self.contentStorage.location(self.contentStorage.documentRange.location, offsetBy: range.location),
+                let end = self.contentStorage.location(start, offsetBy: range.length),
+                let textRange = NSTextRange(location: start, end: end) else { continue }
+            var frame = CGRect.null
+            self.layoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, rect, _, _ in
+                frame = frame.isNull ? rect : frame.union(rect)
+                return true
+            }
+            if !frame.isNull, !frame.isEmpty { result[key] = frame }
+        }
+        return result
     }
 
     override var isFlipped: Bool {

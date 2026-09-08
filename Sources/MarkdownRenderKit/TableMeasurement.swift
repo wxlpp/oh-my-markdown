@@ -34,6 +34,10 @@ extension NSAttributedString.Key {
     public static let markdownCopySkip = NSAttributedString.Key("MarkdownKit.copySkip")
     /// Markdown syntax for a character whose block carries no parser source range.
     public static let markdownCopySource = NSAttributedString.Key("MarkdownKit.copySource")
+    /// Which accessibility leaf these characters render, as `block:ordinal`.
+    /// The platform layer turns each run of it into one element's frame, so a
+    /// reader can point at a link rather than at the paragraph containing it.
+    public static let markdownAccessibilityLeaf = NSAttributedString.Key("MarkdownKit.accessibilityLeaf")
     /// Marks the single transparent placeholder line that reserves vertical
     /// space for an overflowing (horizontally-scrolling) table. The real table is
     /// drawn by the platform scroll overlay; the reserved height is computed *at

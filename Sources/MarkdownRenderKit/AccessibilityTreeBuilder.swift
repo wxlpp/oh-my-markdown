@@ -35,15 +35,24 @@ private struct Builder {
     let sourceGeneration: UInt64
     let imageFallback: String
     let mathFallback: String
-    /// Position within the block. Every leaf takes the next one, so two links in
-    /// one paragraph — which share a lineage and a source anchor — differ.
-    var ordinal = 0
+    /// Position within the block, so two links in one paragraph — which share a
+    /// lineage and a source anchor — differ. Advanced when a leaf *begins*, not
+    /// when it is emitted, because `RenderPreparer` tags the runs on the same
+    /// rule and the two numberings have to agree; ordinals may therefore skip,
+    /// which costs nothing since only uniqueness and stability matter.
+    var leafOrdinal = 0
+    /// Containers are numbered apart so they never consume a leaf's ordinal.
+    /// Their role already separates them from any leaf sharing a number.
+    var containerOrdinal = 0
 
-    mutating func identity(_ role: AccessibilityRole) -> AccessibilityNodeID {
-        defer { self.ordinal += 1 }
-        return AccessibilityNodeID(
+    mutating func advance() {
+        self.leafOrdinal += 1
+    }
+
+    func identity(_ role: AccessibilityRole, ordinal: Int) -> AccessibilityNodeID {
+        AccessibilityNodeID(
             sourceGeneration: self.sourceGeneration, role: role,
-            startAnchor: self.sourceRange?.lowerBound ?? 0, lineage: self.lineage, ordinal: self.ordinal
+            startAnchor: self.sourceRange?.lowerBound ?? 0, lineage: self.lineage, ordinal: ordinal
         )
     }
 
@@ -52,15 +61,16 @@ private struct Builder {
         activation: AccessibilityActivation? = nil, detail: AccessibilityDetail? = nil
     ) -> AccessibilityNode {
         AccessibilityNode(
-            id: self.identity(role), role: role, label: label, sourceRange: self.sourceRange,
-            activation: activation, detail: detail
+            id: self.identity(role, ordinal: self.leafOrdinal), role: role, label: label,
+            sourceRange: self.sourceRange, activation: activation, detail: detail
         )
     }
 
     mutating func container(_ role: AccessibilityRole, _ children: [AccessibilityNode], detail: AccessibilityDetail? = nil) -> AccessibilityNode {
-        AccessibilityNode(
-            id: self.identity(role), role: role, label: nil, sourceRange: self.sourceRange,
-            children: children, detail: detail
+        defer { self.containerOrdinal += 1 }
+        return AccessibilityNode(
+            id: self.identity(role, ordinal: self.containerOrdinal), role: role, label: nil,
+            sourceRange: self.sourceRange, children: children, detail: detail
         )
     }
 
@@ -72,6 +82,7 @@ private struct Builder {
             return self.inlineLeaves(content, plainRole: .heading(level: level))
         case .codeBlock(let language, let body):
             let trimmed = language?.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.advance()
             return [self.leaf(
                 .code, body.trimmingCharacters(in: .newlines),
                 detail: .code(language: (trimmed?.isEmpty ?? true) ? nil : trimmed)
@@ -85,6 +96,7 @@ private struct Builder {
         case .thematicBreak, .htmlBlock:
             return []
         case .mathBlock(let latex):
+            self.advance()
             return [self.leaf(.math, latex.isEmpty ? self.mathFallback : latex)]
         case .table(_, let head, let rows):
             return [self.tableNode(head: head, rows: rows)]
@@ -93,6 +105,7 @@ private struct Builder {
 
     mutating func listNodes(_ items: [ListItem]) -> [AccessibilityNode] {
         items.enumerated().map { position, item in
+            self.advance()
             let children = item.blocks.flatMap { self.blockNodes($0) }
             // A one-leaf item speaks as itself rather than as a container with a
             // single silent child, so the reader hears one stop, not two.
@@ -112,7 +125,8 @@ private struct Builder {
         var rowNodes: [AccessibilityNode] = []
         if !head.isEmpty {
             let cells = head.enumerated().map { column, cell in
-                self.leaf(
+                self.advance()
+                return self.leaf(
                     .columnHeader, Self.plainText(cell.content),
                     detail: .cell(row: 0, column: column, columnHeader: nil)
                 )
@@ -121,7 +135,8 @@ private struct Builder {
         }
         for (index, row) in rows.enumerated() {
             let cells = row.enumerated().map { column, cell in
-                self.leaf(
+                self.advance()
+                return self.leaf(
                     .cell, Self.plainText(cell.content),
                     detail: .cell(
                         row: index + 1, column: column,
@@ -159,17 +174,23 @@ private struct Builder {
                     walk(children, &builder)
                 case .link(let destination, _, let children):
                     flush(&builder)
+                    builder.advance()
                     let label = Self.plainText(children)
                     let activation = URL(string: destination).map {
                         AccessibilityActivation.link($0, sessionGeneration: builder.sourceGeneration)
                     }
                     result.append(builder.leaf(.link, label, activation: activation))
+                    builder.advance()
                 case .image(_, let alt):
                     flush(&builder)
+                    builder.advance()
                     result.append(builder.leaf(.image, alt.isEmpty ? builder.imageFallback : alt))
+                    builder.advance()
                 case .math(let latex):
                     flush(&builder)
+                    builder.advance()
                     result.append(builder.leaf(.math, latex.isEmpty ? builder.mathFallback : latex))
+                    builder.advance()
                 }
             }
         }

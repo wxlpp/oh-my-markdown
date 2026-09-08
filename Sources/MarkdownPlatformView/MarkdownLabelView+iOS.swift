@@ -88,6 +88,8 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.blockStarts = snapshot.blockStarts
         self.renderedDocument = snapshot.displayModel.preparedDocument
         self.resetLayout()
+        // After layout: element frames come from laid-out text segments.
+        self.rebuildAccessibilityElements()
         let range = NSRange(location: 0, length: snapshot.attributedString.length)
         self.triggerImageLoads(in: range)
         self.triggerMathLoads(in: range)
@@ -269,6 +271,33 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
 
     var renderedAttributedStringForCopy: NSAttributedString? {
         self.contentStorage.attributedString
+    }
+
+    /// Reused platform objects, keyed by the identity that survives streaming.
+    var accessibilityElementStore: [AccessibilityNodeID: MarkdownAccessibilityElement] = [:]
+    var orderedAccessibilityElements: [MarkdownAccessibilityElement] = []
+
+    /// Public read-only view of what a screen reader would traverse.
+    package var markdownAccessibilityElements: [MarkdownAccessibilityElement] {
+        self.orderedAccessibilityElements
+    }
+
+    /// On-screen extent of a rendered range, from TextKit's own segments.
+    func accessibilityFrame(forRenderedRange range: NSRange) -> CGRect? {
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        guard let textRange = self.decorations.makeTextRange(from: range.location, to: range.location + range.length) else {
+            return nil
+        }
+        var result = CGRect.null
+        self.layoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, frame, _, _ in
+            result = result.isNull ? frame : result.union(frame)
+            return true
+        }
+        return result.isNull || result.isEmpty ? nil : result
+    }
+
+    func activateAccessibilityLink(_ url: URL) {
+        self.driver().activateLink(url, sourceRange: nil)
     }
 
     /// Test-support: select the entire document. Headless tests have no

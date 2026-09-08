@@ -65,5 +65,8 @@ extension MarkdownLabelView {
             CATransaction.commit()
             self._tableOverlays[index] = (scroll: scroll, content: content, data: data, naturalWidth: data.naturalWidth)
         }
+        // An overflowing table's cells are laid out here, not in the main
+        // document, so their elements can only take a frame once this has run.
+        self.rebuildAccessibilityElements()
     }
 }

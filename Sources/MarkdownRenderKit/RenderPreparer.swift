@@ -27,6 +27,7 @@ public struct RenderPreparer: Sendable {
             builder.resources = []
             builder.lineage = block.lineage
             builder.sourceRange = block.sourceRange
+            builder.accessibilityLeaf = 0
             var pieces: [PreparedPiece] = []
             pieces.append(.blockStart)
             pieces += try builder.block(block.block, overlayEligible: true)
@@ -49,12 +50,20 @@ public struct RenderPreparer: Sendable {
 }
 
 private struct PreparationBuilder {
+    /// Runs that render no accessibility leaf of their own — a list bullet.
+    static let markerLeaf = -1
+
     let configuration: RenderConfigurationSnapshot
     let checkCancellation: ParseCancellationCheck
     var width: Double
     var mode: PlaceholderMode
     var lineage: UInt64 = 0
     var sourceRange: MarkdownSourceRange?
+    /// Ordinal of the accessibility leaf currently being rendered; reset per block.
+    var accessibilityLeaf = 0
+    /// A table cell is one stop for a reader, so inline content inside one does
+    /// not start further leaves.
+    var accessibilityCellDepth = 0
     var quoteColor = false
     var quoteIndent: Double?
     var resolves = true
@@ -90,7 +99,17 @@ private struct PreparationBuilder {
         // String values are shared here; no source payload is inspected or copied.
         self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, MemoryLayout<DisplayRun>.stride + MemoryLayout<PreparedRun>.stride)
         self.runs.append(DisplayRun(text: resource != nil && self.mode == .static ? "\u{FFFC}" : value, role: attributes.role ?? .body, sourceRange: self.sourceRange, resourceID: resource))
-        return PreparedRun(text: value, attributes: attributes, kind: kind, copyText: copyText, sourceText: sourceText)
+        return PreparedRun(
+            text: value, attributes: attributes, kind: kind, copyText: copyText, sourceText: sourceText,
+            accessibilityOrdinal: self.accessibilityLeaf
+        )
+    }
+
+    /// Advances to the next leaf. Called at the points `AccessibilityTreeBuilder`
+    /// starts one, so a run carries the ordinal of the leaf it renders.
+    mutating func nextAccessibilityLeaf() {
+        guard self.accessibilityCellDepth == 0 else { return }
+        self.accessibilityLeaf += 1
     }
 
     mutating func resource(_ make: (ResourceID) -> UnresolvedResource) -> ResourceID {
@@ -126,15 +145,21 @@ private struct PreparationBuilder {
                 try self.payload(destination.utf8.count)
                 attrs.color = .link; attrs.underline = true; attrs.destination = URL(string: destination)?.absoluteString
                 try self.payload(attrs.destination?.utf8.count ?? 0)
+                self.nextAccessibilityLeaf()
                 result += try self.inlines(children, attributes: attrs)
+                self.nextAccessibilityLeaf()
             case .image(let source, let alt):
                 let id = self.resource { .image(id: $0, source: source, alt: alt) }
+                self.nextAccessibilityLeaf()
+                defer { self.nextAccessibilityLeaf() }
                 attrs.color = .image
                 let label = alt.isEmpty ? (source.isEmpty ? "image" : source) : alt
                 try self.payload(label.utf8.count + 5)
                 result.append(self.text("🖼 \(label)", attributes: attrs, kind: .image(id: id, source: source, width: self.width, resolves: self.resolves), resource: id, copyText: label, sourceText: "![\(alt)](\(source))"))
             case .math(let latex):
                 let id = self.resource { .math(id: $0, latex: latex, display: false) }
+                self.nextAccessibilityLeaf()
+                defer { self.nextAccessibilityLeaf() }
                 attrs.role = .code; attrs.traits = []; attrs.color = .secondary
                 result.append(self.text(latex, attributes: attrs, kind: .math(id: id, latex: latex, display: false, width: self.width, staticPlaceholder: false, resolves: self.resolves), resource: id, sourceText: "$\(latex)$"))
             }
@@ -158,6 +183,7 @@ private struct PreparationBuilder {
             attrs.paragraph = PreparedParagraph(lineSpacing: 2, spacing: level <= 2 ? 8 : 6, before: level <= 2 ? 24 : 20)
             return try self.inlines(nodes, attributes: attrs).map(PreparedPiece.run)
         case .codeBlock(let language, let body):
+            self.nextAccessibilityLeaf()
             attrs.role = .code; attrs.color = .code
             attrs.paragraph = PreparedParagraph(lineSpacing: 4, head: 16, first: 16, tail: -16)
             let trimsNewline = body.hasSuffix("\n")
@@ -219,6 +245,7 @@ private struct PreparationBuilder {
             return [.run(self.text("\u{00A0}", attributes: attrs))]
         case .htmlBlock(let value): return [.run(self.text(value, attributes: attrs))]
         case .mathBlock(let latex):
+            self.nextAccessibilityLeaf()
             let id = self.resource { .math(id: $0, latex: latex, display: true) }
             attrs.role = .code; attrs.color = .secondary
             attrs.paragraph = PreparedParagraph(lineSpacing: 0, spacing: self.configuration.spacing.paragraph, centered: true)
@@ -228,13 +255,19 @@ private struct PreparationBuilder {
             var preparedHead: [[PreparedRun]] = []
             var preparedRows: [[[PreparedRun]]] = []
             for cell in head {
+                self.nextAccessibilityLeaf()
+                self.accessibilityCellDepth += 1
                 try preparedHead.append(self.inlines(cell.content, attributes: header))
+                self.accessibilityCellDepth -= 1
             }
             for row in rows {
                 try self.checkCancellation()
                 var prepared: [[PreparedRun]] = []
                 for cell in row {
+                    self.nextAccessibilityLeaf()
+                    self.accessibilityCellDepth += 1
                     try prepared.append(self.inlines(cell.content, attributes: attrs))
+                    self.accessibilityCellDepth -= 1
                 }
                 preparedRows.append(prepared)
             }
@@ -252,7 +285,11 @@ private struct PreparationBuilder {
             let checkbox = switch item.checkbox { case .checked: "☑ "; case .unchecked: "☐ "; case nil: "" }
             var attrs = self.body()
             attrs.paragraph = PreparedParagraph(lineSpacing: 3, spacing: depth == 0 ? 4 : 2, head: Double(24 * (depth + 1)), first: Double(24 * depth), tab: Double(24 * (depth + 1)))
+            let itemLeaf = self.accessibilityLeaf
+            self.accessibilityLeaf = PreparationBuilder.markerLeaf
             result.append(.run(self.text(marker + checkbox, attributes: attrs)))
+            self.accessibilityLeaf = itemLeaf
+            self.nextAccessibilityLeaf()
             var remaining = item.blocks[...]
             if let first = item.blocks.first, case .paragraph(let inlines) = first {
                 result += try self.inlines(inlines, attributes: attrs).map(PreparedPiece.run)

@@ -72,3 +72,14 @@ public struct AccessibilityNode: Sendable, Equatable {
         self.detail = detail
     }
 }
+
+/// Identifies one accessibility leaf within a rendered snapshot. Carried on the
+/// attributed string so a leaf's on-screen extent can be recovered from layout.
+public struct AccessibilityLeafKey: Hashable, Sendable {
+    public let block: Int
+    public let ordinal: Int
+    public init(block: Int, ordinal: Int) {
+        self.block = block
+        self.ordinal = ordinal
+    }
+}
