@@ -104,14 +104,20 @@ public struct MarkdownDocument: Sendable, Equatable {
             }
             raw = try parser.parse(source: sub.transformed, document: tree, fingerprints: false)
         }
-        let mapped = try raw.map { node in
+        let mapped = try raw.map { node -> ParsedBlockNode in
             try Task.checkCancellation()
-            return ParsedBlockNode(block: node.block, sourceRange: node.sourceRange.map {
-                MarkdownSourceRange(
-                    lowerBound: sub.originalByteOffset(forTransformed: $0.lowerBound, atUpperBound: false),
-                    upperBound: sub.originalByteOffset(forTransformed: $0.upperBound, atUpperBound: true)
-                )
-            })
+            guard let range = node.sourceRange else { return node }
+            let lower = sub.originalByteOffset(forTransformed: range.lowerBound, atUpperBound: false)
+            let upper = sub.originalByteOffset(forTransformed: range.upperBound, atUpperBound: true)
+            // Same refusal as `mapToOriginalSpace`: an inverted mapping means the
+            // sentinel round-trip failed, and no range is safer than a wrong one.
+            guard lower <= upper else {
+                return ParsedBlockNode(block: node.block, sourceRange: nil, fingerprint: nil)
+            }
+            return ParsedBlockNode(
+                block: node.block,
+                sourceRange: MarkdownSourceRange(lowerBound: lower, upperBound: upper)
+            )
         }
         metrics.recordMetadata(mapped.count * MemoryLayout<ParsedBlockNode>.stride)
         let work = ParseWorkAccumulator(metrics, cancellable: true)
@@ -332,8 +338,13 @@ public struct ParsedBlockNode: Sendable, Equatable {
     /// it a copy has no provable end and has to guess at the document's.
     package let sourceAnchorEnd: Int?
     package let splitOrdinal: Int
-    /// Non-nil only for public, programmatically constructed source-less nodes.
-    /// Parser/backfill constructors explicitly preserve their real source anchor.
+    /// Non-nil when `sourceAnchor` is a placeholder rather than a real offset:
+    /// programmatically constructed nodes, and the parser's own inverted-range
+    /// fallback, which routes through the public init. Source copy reads it as
+    /// "this anchor cannot be used as a boundary", so every constructor that
+    /// rebuilds a node has to carry it — there are three:
+    /// `MathBackfill.resolve`, `IncrementalParseState`'s window shift, and
+    /// `MarkdownDocument.init(parsedBlocks:)` below.
     package let documentOrdinal: Int?
     package var lineage: UInt64 {
         let role: UInt64 = switch self.block {

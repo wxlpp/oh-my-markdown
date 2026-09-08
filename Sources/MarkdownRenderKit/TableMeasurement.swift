@@ -27,9 +27,10 @@ extension NSAttributedString.Key {
     /// sub-range that touches it, so a longer run would make a partial selection
     /// paste more than was selected. Pinned by `everyCopyTextRunIsExactlyOneCharacter`.
     public static let markdownCopyText = NSAttributedString.Key("MarkdownKit.copyText")
-    /// Layout-only character, dropped from a copy. Carried by a table row's
-    /// *leading indent* tab only — don't add it to the tabs between cells, which
-    /// are the separators a copied table needs.
+    /// Decorative or layout-only characters, dropped from a copy. Two sites: a
+    /// table row's *leading indent* tab — don't add it to the tabs between cells,
+    /// which are the separators a copied table needs — and the `🖼 ` marker on an
+    /// image placeholder, which also splits that placeholder's syntax run in two.
     public static let markdownCopySkip = NSAttributedString.Key("MarkdownKit.copySkip")
     /// Markdown syntax for a character whose block carries no parser source range.
     public static let markdownCopySource = NSAttributedString.Key("MarkdownKit.copySource")

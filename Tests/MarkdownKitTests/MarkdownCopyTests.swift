@@ -304,12 +304,18 @@ struct MarkdownCopyTests {
         let whole = try #require(view.markdownSourceSelectionResult(forRenderedRange: placeholder))
         #expect(whole.text == "![alt](https://never-rendered.test/p.png)", "syntax was not emitted for a whole run")
 
-        let clipped = NSRange(location: placeholder.location, length: placeholder.length - 1)
-        let partial = try #require(view.markdownSourceSelectionResult(forRenderedRange: clipped))
-        #expect(
-            !partial.text.contains("never-rendered.test"),
-            "a clipped run still pasted the image's URL: \(partial.text.debugDescription)"
-        )
+        // Both ends: clipping the start queries `effectiveRange` from inside the
+        // run rather than at its first character.
+        for clipped in [
+            NSRange(location: placeholder.location, length: placeholder.length - 1),
+            NSRange(location: placeholder.location + 1, length: placeholder.length - 1),
+        ] {
+            let partial = try #require(view.markdownSourceSelectionResult(forRenderedRange: clipped))
+            #expect(
+                !partial.text.contains("never-rendered.test"),
+                "a run clipped at \(clipped) still pasted the image's URL: \(partial.text.debugDescription)"
+            )
+        }
     }
 
     /// A partial selection inside a block with provable boundaries returns that
@@ -366,6 +372,30 @@ struct MarkdownCopyTests {
             #expect(a?.text == b?.text, "block \(index) copied differently when streamed")
             #expect(a?.granularity == b?.granularity, "block \(index) granularity differs when streamed")
         }
+    }
+
+    /// A node whose `sourceAnchor` is a placeholder must never be used as a
+    /// boundary. Nothing reaches that shape through the views, so this drives the
+    /// mapping directly — without it, deleting either `documentOrdinal == nil`
+    /// guard leaves the whole suite green.
+    @Test func aPlaceholderAnchorIsNeverUsedAsABoundary() {
+        let source = "hello world"
+        func copy(documentOrdinal: Int?) -> MarkdownCopyResult {
+            let node = ParsedBlockNode(
+                block: .paragraph([.text("hello world")]), sourceRange: nil, fingerprint: nil,
+                sourceAnchor: 6, sourceAnchorEnd: 11, documentOrdinal: documentOrdinal
+            )
+            return markdownSourceCopy(
+                renderedRange: NSRange(location: 0, length: 11), renderedPlainText: source,
+                blockStarts: [0], parsedBlocks: [node], renderedLength: 11, originalSource: source,
+                renderedFallback: { _ in "fallback" }, reconstructedSource: { _ in "reconstructed" }
+            )
+        }
+        // A real anchor is usable, so the fixture proves the guard is what differs.
+        #expect(copy(documentOrdinal: nil).granularity == .exact)
+        #expect(copy(documentOrdinal: nil).text == " world")
+        #expect(copy(documentOrdinal: 0).granularity == .renderedFallback)
+        #expect(copy(documentOrdinal: 0).text == "reconstructed")
     }
 
     // MARK: Commands and resources

@@ -187,9 +187,13 @@ func markdownSourceCopy(
         upperByte = range.upperBound
     } else if runEnd(upper) == upper, upper - runStart(upper) == parsedBlocks[upper].splitOrdinal,
               parsedBlocks[upper].documentOrdinal == nil {
-        // The piece index has to agree with the distance walked, mirroring the
-        // lower boundary's `splitOrdinal == 0`: if grouping ever breaks, both
-        // sides fail closed instead of only one.
+        // What this conjunct proves is that the group *starts* at piece 0 — the
+        // lower boundary's property, checked here too so a broken grouping fails
+        // closed on both sides. It is not the end proof. That is `runEnd(upper)
+        // == upper` plus the contiguity `equivalentForSplice` maintains by
+        // comparing `sourceAnchorEnd`; `ParsedBlockNode` records no piece count,
+        // so nothing stronger is expressible. Don't drop `runEnd` as redundant:
+        // without it, a run missing its last piece hands over that piece's bytes.
         upperByte = parsedBlocks[upper].sourceAnchorEnd
     }
 
@@ -240,8 +244,8 @@ func renderedCopyText(from attributed: NSAttributedString, range: NSRange) -> St
     attributed.enumerateAttributes(in: clamped, options: []) { attributes, range, _ in
         if attributes[.markdownCopySkip] != nil { return }
         // A run carrying copy text occupies characters that read as nothing —
-        // an attachment, or a placeholder standing in for a whole table — so it
-        // contributes its text whole, never a slice of the placeholder.
+        // an attachment, or a placeholder standing in for a whole table — and is
+        // always one character, so it contributes its text whole.
         if let semantic = attributes[.markdownCopyText] as? String {
             result += semantic
             return
@@ -251,10 +255,6 @@ func renderedCopyText(from attributed: NSAttributedString, range: NSRange) -> St
     return result
 }
 
-/// Markdown syntax for a rendered range whose block has no parser source range.
-/// Approximate by construction — a run that recorded its own syntax contributes
-/// it, everything else contributes rendered text, which has already lost its
-/// delimiters. Never reported as source; the caller returns `.renderedFallback`.
 func reconstructedSourceText(from attributed: NSAttributedString, range: NSRange) -> String {
     let clamped = NSRange(
         location: min(max(0, range.location), attributed.length),
@@ -262,33 +262,37 @@ func reconstructedSourceText(from attributed: NSAttributedString, range: NSRange
     )
     guard clamped.length > 0 else { return "" }
     let plain = attributed.string as NSString
+
+    // A recorded syntax stands for a whole run, so the selection has to contain
+    // that run whole. Measured: judging dictionary runs instead let a selection
+    // clipped at the run's *start* paste an image's URL. The unit is the *key's* run, not an attribute-dictionary
+    // run: the `🖼 ` marker carries `.markdownCopySkip` and splits an image's
+    // syntax run in two, so judging each dictionary run on its own emitted the
+    // image's URL for a selection that clipped the run's start — the second half
+    // looked complete on its own. `enumerateAttribute` on the single key
+    // coalesces the run, which is the unit the value stands for.
+    var wholeRuns: [NSRange] = []
+    attributed.enumerateAttribute(
+        .markdownCopySource, in: NSRange(location: 0, length: attributed.length), options: []
+    ) { value, range, _ in
+        if value != nil, NSEqualRanges(NSIntersectionRange(range, clamped), range) { wholeRuns.append(range) }
+    }
+
     var result = ""
     attributed.enumerateAttributes(in: clamped, options: []) { attributes, range, _ in
-        if attributes[.markdownCopySkip] != nil { return }
-        /// A whole value may only stand in for a range the selection covers
-        /// whole. Partially selecting an image's placeholder text must not paste
-        /// the image's URL.
-        ///
-        /// `effectiveRange` returns the *attribute-dictionary* run — the same
-        /// partition `enumerateAttributes` walks — not the maximal run of this
-        /// one key, so this equality means "the enumerated run was not clipped by
-        /// the selection", which is the test wanted. Measured: with copySource
-        /// over [0,10) and copySkip over [0,3), `effectiveRange` at 3 gives
-        /// {3,7} where `longestEffectiveRange` gives {0,10}; the longest form
-        /// would stop emitting the syntax even for a whole-placeholder selection.
-        /// It follows that a value is emitted once per dictionary run, so an
-        /// attribute that splits a syntax run into two would emit it twice.
-        /// Nothing does today: the only intra-run splitter returns above.
-        func covered(_ key: NSAttributedString.Key) -> Bool {
-            var effective = NSRange(location: 0, length: 0)
-            _ = attributed.attribute(key, at: range.location, effectiveRange: &effective)
-            return NSEqualRanges(effective, range)
-        }
-        if let source = attributes[.markdownCopySource] as? String, covered(.markdownCopySource) {
-            result += source
+        // Before the skip check: the syntax replaces everything in its run,
+        // including the `🖼 ` marker, which is where the run begins.
+        if let run = wholeRuns.first(where: { NSLocationInRange(range.location, $0) }) {
+            // Once per run, at its first character.
+            if range.location == run.location, let source = attributes[.markdownCopySource] as? String {
+                result += source
+            }
             return
         }
-        if let semantic = attributes[.markdownCopyText] as? String, covered(.markdownCopyText) {
+        if attributes[.markdownCopySkip] != nil { return }
+        // `.markdownCopyText` needs no such check: every run carrying it is one
+        // character, so it cannot be clipped.
+        if let semantic = attributes[.markdownCopyText] as? String {
             result += semantic
             return
         }
