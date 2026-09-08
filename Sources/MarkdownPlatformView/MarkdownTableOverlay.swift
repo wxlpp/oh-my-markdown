@@ -14,6 +14,9 @@ extension MarkdownLabelView {
         let viewWidth = bounds.width
         for index in self._tableOverlays.keys.filter({ $0 >= startIndex }) {
             if tables[index] == nil || tables[index]!.naturalWidth <= viewWidth + 0.5 {
+                #if canImport(AppKit) && !canImport(UIKit)
+                if let scroll = self._tableOverlays[index]?.scroll { self.stopObservingTableOverlayScroll(scroll) }
+                #endif
                 self._tableOverlays[index]?.scroll.removeFromSuperview()
                 self._tableOverlays.removeValue(forKey: index)
             }
@@ -38,6 +41,9 @@ extension MarkdownLabelView {
                 self._tableOverlays[index] = (scroll: existing.scroll, content: existing.content, data: data, naturalWidth: data.naturalWidth)
                 continue
             }
+            #if canImport(AppKit) && !canImport(UIKit)
+            if let scroll = self._tableOverlays[index]?.scroll { self.stopObservingTableOverlayScroll(scroll) }
+            #endif
             self._tableOverlays[index]?.scroll.removeFromSuperview()
             let content = TableContentView(tableString: data.attributedString, style: data.style, naturalWidth: data.naturalWidth)
             let frame = CGRect(x: 0, y: blockFrame.minY - 8, width: viewWidth, height: data.height)
@@ -56,10 +62,7 @@ extension MarkdownLabelView {
             // Cell frames are converted from the overlay's space, so they go
             // stale the moment the reader scrolls the table sideways.
             scroll.contentView.postsBoundsChangedNotifications = true
-            NotificationCenter.default.addObserver(
-                self, selector: #selector(self.tableOverlayDidScroll),
-                name: NSView.boundsDidChangeNotification, object: scroll.contentView
-            )
+            self.observeTableOverlayScroll(scroll)
             scroll.hasHorizontalScroller = true
             scroll.hasVerticalScroller = false
             scroll.autohidesScrollers = true
@@ -90,6 +93,22 @@ extension MarkdownLabelView: UIScrollViewDelegate {
 
 #elseif canImport(AppKit)
 extension MarkdownLabelView {
+    /// Registered per overlay and removed with it: without the removal the
+    /// registrations accumulate one per overlay recreation — every width and
+    /// style change — for the life of the view.
+    func observeTableOverlayScroll(_ scroll: NSScrollView) {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(self.tableOverlayDidScroll),
+            name: NSView.boundsDidChangeNotification, object: scroll.contentView
+        )
+    }
+
+    func stopObservingTableOverlayScroll(_ scroll: NSScrollView) {
+        NotificationCenter.default.removeObserver(
+            self, name: NSView.boundsDidChangeNotification, object: scroll.contentView
+        )
+    }
+
     @objc func tableOverlayDidScroll() {
         self.rebuildAccessibilityElements()
     }

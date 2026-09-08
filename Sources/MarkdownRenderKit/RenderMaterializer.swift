@@ -363,7 +363,11 @@ package struct RenderMaterializer {
             for (cellIndex, value) in row.enumerated() {
                 // The tag spans the separator before the cell as well, so a cell
                 // with no text still has an extent a reader can point at.
-                let cellStart = line.length
+                // From 0 for the first cell: it has no separator before it, so an
+                // empty one would otherwise have no extent and be dropped. The
+                // row's leading tab carries `markdownCopySkip`, so covering it
+                // costs a copy nothing.
+                let cellStart = cellIndex == 0 ? 0 : line.length
                 if cellIndex > 0 { line.append(NSAttributedString(string: "\t", attributes: attrs)) }
                 let content = NSMutableAttributedString(attributedString: value)
                 value.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: value.length)) { existing, range, _ in

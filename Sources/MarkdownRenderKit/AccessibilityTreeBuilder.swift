@@ -13,14 +13,17 @@ public enum AccessibilityTreeBuilder {
     public static let imageFallback = NSLocalizedString(
         "markdown.accessibility.image", bundle: .module, comment: "Spoken for an image with no alt text"
     )
-    public static let rowLabel = NSLocalizedString(
-        "markdown.accessibility.row", bundle: .module, comment: "Spoken before a table row number"
+    /// Whole sentences, not words joined in English order: "row %1$d, column
+    /// %2$d" has no word-for-word Chinese equivalent, and substituting the six
+    /// pieces separately produced `第 2, 列 2` — a dangling measure word and no
+    /// 行 at all.
+    public static let cellPositionFormat = NSLocalizedString(
+        "markdown.accessibility.cellPosition", bundle: .module,
+        comment: "Table cell position; %1$d is the row number, %2$d the column"
     )
-    public static let columnLabel = NSLocalizedString(
-        "markdown.accessibility.column", bundle: .module, comment: "Spoken before a table column number"
-    )
-    public static let ofLabel = NSLocalizedString(
-        "markdown.accessibility.of", bundle: .module, comment: "Joins a list item's position and count"
+    public static let listPositionFormat = NSLocalizedString(
+        "markdown.accessibility.listPosition", bundle: .module,
+        comment: "List item position; %1$d is the item number, %2$d the count"
     )
     public static let checkedLabel = NSLocalizedString(
         "markdown.accessibility.checked", bundle: .module, comment: "Spoken for a completed task list item"

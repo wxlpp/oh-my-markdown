@@ -47,11 +47,11 @@ package final class MarkdownAccessibilityElement {
     package var spokenValue: String? {
         switch self.detail {
         case .cell(let row, let column, let header):
-            let position = "\(AccessibilityTreeBuilder.rowLabel) \(row + 1), \(AccessibilityTreeBuilder.columnLabel) \(column + 1)"
+            let position = String(format: AccessibilityTreeBuilder.cellPositionFormat, row + 1, column + 1)
             return header.map { $0.isEmpty ? position : "\($0), \(position)" } ?? position
         case .listItem(let position, let count, let checkbox):
             let state = checkbox.map { $0 ? AccessibilityTreeBuilder.checkedLabel : AccessibilityTreeBuilder.uncheckedLabel }
-            let position = "\(position) \(AccessibilityTreeBuilder.ofLabel) \(count)"
+            let position = String(format: AccessibilityTreeBuilder.listPositionFormat, position, count)
             return state.map { "\($0), \(position)" } ?? position
         case .code(let language):
             return language
@@ -78,9 +78,21 @@ extension MarkdownLabelView {
         // Re-entrant by construction: the rebuild lays out the overlay, which can
         // move its scroll position, which calls back in here. Without this the
         // Example app hangs on a rotation.
-        guard !self.isRebuildingAccessibilityElements else { return }
+        guard !self.isRebuildingAccessibilityElements else {
+            // Not dropped: the re-entrant call is the pass that would correct the
+            // frames the outer pass computed *before* the overlay moved, so it is
+            // deferred to one bounded extra pass rather than discarded.
+            self.needsAccessibilityRebuild = true
+            return
+        }
         self.isRebuildingAccessibilityElements = true
-        defer { self.isRebuildingAccessibilityElements = false }
+        defer {
+            self.isRebuildingAccessibilityElements = false
+            if self.needsAccessibilityRebuild {
+                self.needsAccessibilityRebuild = false
+                self.rebuildAccessibilityElements()
+            }
+        }
         guard let snapshot = self.currentSnapshot else {
             self.accessibilityElementStore = [:]
             self.orderedAccessibilityElements = []
@@ -91,13 +103,27 @@ extension MarkdownLabelView {
         var reused: [AccessibilityNodeID: MarkdownAccessibilityElement] = [:]
         var ordered: [MarkdownAccessibilityElement] = []
 
-        func visit(_ node: AccessibilityNode, block: Int) {
-            guard node.children.isEmpty else {
-                for child in node.children {
-                    visit(child, block: block)
+        /// A container is not published as its own stop — that would make a reader
+        /// hear the item and then each of its parts. Its role and detail are
+        /// merged onto the first leaf inside it instead, which is the leaf
+        /// carrying the item's own text, so a nested list item still says
+        /// "1 of 2" rather than arriving as anonymous prose.
+        func visit(_ original: AccessibilityNode, block: Int, inherited: AccessibilityNode? = nil) {
+            guard original.children.isEmpty else {
+                var pending = inherited ?? (original.role == .listItem ? original : nil)
+                for child in original.children {
+                    visit(child, block: block, inherited: pending)
+                    pending = nil
                 }
                 return
             }
+            let node = inherited.map { container in
+                AccessibilityNode(
+                    id: original.id, role: original.role == .text ? container.role : original.role,
+                    label: original.label, sourceRange: original.sourceRange,
+                    activation: original.activation, detail: original.detail ?? container.detail
+                )
+            } ?? original
             // A leaf with no laid-out extent cannot be pointed at, so it is not
             // exposed rather than exposed at a wrong or empty rect.
             guard let frame = frames[AccessibilityLeafKey(block: block, ordinal: node.id.ordinal)] else { return }
@@ -139,9 +165,10 @@ extension MarkdownLabelView {
         // main document; its cells live in the overlay's own text stack, so their
         // frames come from there and are converted into this view's space.
         for overlay in self._tableOverlays.values {
-            let converted = overlay.content.accessibilityLeafFrames().mapValues {
-                overlay.content.convert($0, to: self)
-            }
+            let visible = overlay.scroll.convert(overlay.scroll.bounds, to: self)
+            let converted = overlay.content.accessibilityLeafFrames()
+                .mapValues { overlay.content.convert($0, to: self).intersection(visible) }
+                .filter { !$0.value.isNull && !$0.value.isEmpty }
             result.merge(converted) { _, new in new }
         }
         return result

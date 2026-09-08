@@ -189,6 +189,13 @@ struct MarkdownAccessibilityModelTests {
             "- [x] done\n- [ ] todo",
             "# [Home](https://a.test)",
             "- a\n  - b\n- c",
+            // Round-2 review: a thematic break inside a container orphaned every
+            // leaf after it, and a blockquote's own separator was tagged as one.
+            "> ---\n>\n> b",
+            "1. a\n\n   ---\n\n   b",
+            "> # h\n>\n> ---\n>\n> [l](https://a.test)",
+            "> a\n>\n> | x |\n> |---|\n> | y |",
+            "> ![alt](https://i.test/p.png)\n>\n> tail",
         ] {
             let configuration = RenderStyle.default.snapshot(generation: 0)
             let input = RenderInput(
@@ -200,7 +207,9 @@ struct MarkdownAccessibilityModelTests {
                 func leafOrdinals(_ node: AccessibilityNode) -> [Int] {
                     node.children.isEmpty ? [node.id.ordinal] : node.children.flatMap(leafOrdinals)
                 }
-                let expected = Set(bundle.accessibilityRoots.flatMap(leafOrdinals))
+                // Sequences, not sets: two leaves swapping ordinals produce the
+                // same set, and that is an element pointing at its neighbour.
+                let expected = bundle.accessibilityRoots.flatMap(leafOrdinals)
                 var tagged: Set<Int> = []
                 func note(_ runs: [PreparedRun]) {
                     // Negative means the run renders no leaf of its own: a bullet.
@@ -220,8 +229,14 @@ struct MarkdownAccessibilityModelTests {
                     }
                 }
                 #expect(
-                    tagged == expected,
+                    tagged.sorted() == expected.sorted(),
                     "leaf tags drifted in \(markdown.debugDescription): tagged \(tagged.sorted()) vs leaves \(expected.sorted())"
+                )
+                // Reading order: the tree's leaves must be in ascending ordinal
+                // order, or the element list is ordered differently from the page.
+                #expect(
+                    expected == expected.sorted(),
+                    "leaves are out of reading order in \(markdown.debugDescription): \(expected)"
                 )
             }
         }

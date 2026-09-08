@@ -23,6 +23,12 @@ final class MarkdownAccessibilityNSElement: NSAccessibilityElement {
         self.setAccessibilityValue(element.spokenValue)
         self.setAccessibilityRole(Self.role(for: element.role))
         self.setAccessibilityEnabled(true)
+        // The heading role alone is what macOS VoiceOver's heading navigation
+        // looks for; `NSAccessibilityElement` exposes no level setter, so the
+        // level is spoken through the value instead.
+        if case .heading(let level) = element.role, element.spokenValue == nil {
+            self.setAccessibilityValue("\(level)")
+        }
         if case .cell(let row, let column, _)? = element.detail {
             self.setAccessibilityRowIndexRange(NSRange(location: row, length: 1))
             self.setAccessibilityColumnIndexRange(NSRange(location: column, length: 1))
@@ -35,6 +41,7 @@ final class MarkdownAccessibilityNSElement: NSAccessibilityElement {
         case .link: .link
         case .image: .image
         case .cell, .columnHeader, .rowHeader: .cell
+        case .heading: NSAccessibility.Role(rawValue: "AXHeading")
         default: .staticText
         }
     }

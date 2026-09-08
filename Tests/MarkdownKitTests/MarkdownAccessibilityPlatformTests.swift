@@ -92,13 +92,30 @@ struct MarkdownAccessibilityPlatformTests {
     /// An empty cell has no text of its own, so it had no tagged run and was
     /// dropped — leaving the row one cell shorter than its header, which is
     /// exactly what a reader counting across a row relies on.
-    @Test func anEmptyTableCellIsStillExposed() async {
-        let view = await self.view("| Name | Age |\n|---|---|\n| Ada |  |")
+    @Test(arguments: [
+        "| Name | Age |\n|---|---|\n| Ada |  |",
+        "| Name | Age |\n|---|---|\n|  | 36 |",
+        "|  | Age |\n|---|---|\n| Ada | 36 |",
+        "| Name | Age |\n|---|---|\n|  |  |",
+    ])
+    func anEmptyTableCellIsStillExposed(markdown: String) async {
+        let view = await self.view(markdown)
         defer { view.dismantleRenderSession() }
         let elements = self.elements(view)
         #expect(elements.count == 4, "row is shorter than its header: \(elements.map(\.label))")
-        #expect(elements.last?.detail == .cell(row: 1, column: 1, columnHeader: "Age"))
-        #expect(elements.last?.frame.width ?? 0 > 0)
+        #expect(elements.allSatisfy { $0.frame.width > 0 })
+    }
+
+    /// A nested list item is still a list item. The model says so; if the
+    /// container never becomes an element, the reader hears plain text with no
+    /// position while its sibling announces "2 of 2".
+    @Test func aNestedListItemKeepsItsRoleAndPositionOnThePlatform() async throws {
+        let view = await self.view("- a\n  - b\n- c")
+        defer { view.dismantleRenderSession() }
+        let outer = try #require(self.elements(view).first)
+        #expect(outer.label == "a")
+        #expect(outer.role == .listItem, "exposed as \(outer.role) with no item semantics")
+        #expect(outer.detail == .listItem(position: 1, count: 2, checkbox: nil))
     }
 
     /// Coordinates and headers that never leave the model are not "correct table

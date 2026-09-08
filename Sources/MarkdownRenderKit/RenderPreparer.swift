@@ -92,7 +92,12 @@ private struct PreparationBuilder {
         var attrs = self.body()
         attrs.color = nil
         attrs.paragraph = PreparedParagraph(lineSpacing: 0)
-        return PreparedRun(text: "\n", attributes: attrs)
+        // Renders no leaf, like the materializer's own block separator: it is the
+        // join between two blocks, and a newline's segment sits at the end of the
+        // previous line.
+        return PreparedRun(
+            text: "\n", attributes: attrs, accessibilityOrdinal: PreparationBuilder.markerLeaf
+        )
     }
 
     mutating func text(_ value: String, attributes: PreparedAttributes, kind: PreparedRunKind = .text, resource: ResourceID? = nil, copyText: String? = nil, sourceText: String? = nil) -> PreparedRun {
@@ -246,7 +251,9 @@ private struct PreparationBuilder {
         case .bulletList(let items): return try self.list(items, start: nil)
         case .orderedList(let start, let items): return try self.list(items, start: start)
         case .thematicBreak:
+            let restore = self.accessibilityLeaf
             self.accessibilityLeaf = PreparationBuilder.markerLeaf
+            defer { self.accessibilityLeaf = restore }
             attrs.tinyFont = true; attrs.color = .clear
             attrs.paragraph = PreparedParagraph(lineSpacing: 0, spacing: 12, before: 12, height: 8)
             return [.run(self.text("\u{00A0}", attributes: attrs))]

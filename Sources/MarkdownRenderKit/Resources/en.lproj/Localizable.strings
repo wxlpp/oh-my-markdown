@@ -1,7 +1,6 @@
 "markdown.accessibility.image" = "Image";
 "markdown.accessibility.math" = "Formula";
-"markdown.accessibility.row" = "row";
-"markdown.accessibility.column" = "column";
-"markdown.accessibility.of" = "of";
+"markdown.accessibility.cellPosition" = "row %1$d, column %2$d";
+"markdown.accessibility.listPosition" = "%1$d of %2$d";
 "markdown.accessibility.checked" = "checked";
 "markdown.accessibility.unchecked" = "unchecked";

@@ -87,9 +87,10 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self._liveString = NSMutableAttributedString(attributedString: snapshot.attributedString)
         self.blockStarts = snapshot.blockStarts
         self.renderedDocument = snapshot.displayModel.preparedDocument
+        // Rebuilds the accessibility elements on the way out, once: the frames
+        // come from laid-out text segments, and `_syncTableOverlays` is the last
+        // step that can move them.
         self.resetLayout()
-        // After layout: element frames come from laid-out text segments.
-        self.rebuildAccessibilityElements()
         let range = NSRange(location: 0, length: snapshot.attributedString.length)
         self.triggerImageLoads(in: range)
         self.triggerMathLoads(in: range)
@@ -378,6 +379,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     var accessibilityElementStore: [AccessibilityNodeID: MarkdownAccessibilityElement] = [:]
     var orderedAccessibilityElements: [MarkdownAccessibilityElement] = []
     var isRebuildingAccessibilityElements = false
+    var needsAccessibilityRebuild = false
     /// The objects the accessibility client holds, reused across snapshots so a
     /// surviving leaf keeps the element a reader is focused on.
     var accessibilityWrapperStore: [AccessibilityNodeID: MarkdownAccessibilityNSElement] = [:]
