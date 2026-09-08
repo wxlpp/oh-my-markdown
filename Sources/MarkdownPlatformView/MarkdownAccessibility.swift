@@ -80,9 +80,10 @@ extension MarkdownLabelView {
     ///
     /// The re-entrant call is the pass that would correct the frames the outer
     /// pass computed *before* the overlay moved, so it is not discarded — it runs
-    /// once more. The loop is written here rather than by re-entering `defer`,
-    /// which would re-arm itself and leave the pass count decided by whether
-    /// layout happens to converge.
+    /// once more. A re-entry arriving during *that* pass is discarded, which
+    /// bounds staleness to the next snapshot or layout. The loop is written here
+    /// rather than by re-entering `defer`, which would re-arm itself and leave
+    /// the pass count decided by whether layout happens to converge.
     package func rebuildAccessibilityElements() {
         guard !self.isRebuildingAccessibilityElements else {
             self.needsAccessibilityRebuild = true
@@ -113,22 +114,21 @@ extension MarkdownLabelView {
         /// merged onto the first leaf inside it instead, which is the leaf
         /// carrying the item's own text, so a nested list item still says
         /// "1 of 2" rather than arriving as anonymous prose.
-        func visit(_ original: AccessibilityNode, block: Int, inherited: AccessibilityNode? = nil) {
+        /// Returns whether `inherited`'s detail reached a published element.
+        @discardableResult
+        func visit(_ original: AccessibilityNode, block: Int, inherited: AccessibilityNode? = nil) -> Bool {
             guard original.children.isEmpty else {
                 // The nearest enclosing item wins: taking the ancestor's made an
                 // inner list's only item announce the *outer* list's position.
                 var pending = (original.role == .listItem ? original : nil) ?? inherited
                 for child in original.children {
-                    // Only consumed once it has somewhere to land: a first child
+                    // Consumed only when the merge actually spoke: a first child
                     // that already carries its own detail — a code block, a table
-                    // cell — would otherwise swallow the item's position.
-                    let merged = pending.map { container in
-                        child.children.isEmpty && (child.role == .text || child.detail == nil) && container.detail != nil
-                    } ?? false
-                    visit(child, block: block, inherited: pending)
-                    if merged { pending = nil }
+                    // cell — or one dropped for want of a frame would otherwise
+                    // swallow the item's position with nothing to show for it.
+                    if visit(child, block: block, inherited: pending) { pending = nil }
                 }
-                return
+                return false
             }
             let node = inherited.map { container in
                 AccessibilityNode(
@@ -139,7 +139,9 @@ extension MarkdownLabelView {
             } ?? original
             // A leaf with no laid-out extent cannot be pointed at, so it is not
             // exposed rather than exposed at a wrong or empty rect.
-            guard let frame = frames[AccessibilityLeafKey(block: block, ordinal: node.id.ordinal)] else { return }
+            guard let frame = frames[AccessibilityLeafKey(block: block, ordinal: node.id.ordinal)] else {
+                return false
+            }
             if let existing = self.accessibilityElementStore[node.id] {
                 existing.update(node: node, frame: frame)
                 reused[node.id] = existing
@@ -149,6 +151,8 @@ extension MarkdownLabelView {
                 reused[node.id] = element
                 ordered.append(element)
             }
+            // Spoke only if the inheritance is what supplied the detail.
+            return inherited != nil && original.detail == nil
         }
 
         for (block, roots) in snapshot.displayModel.accessibilityRootsByBlock.enumerated() {

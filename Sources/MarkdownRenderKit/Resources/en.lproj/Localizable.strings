@@ -4,3 +4,4 @@
 "markdown.accessibility.listPosition" = "%1$d of %2$d";
 "markdown.accessibility.checked" = "checked";
 "markdown.accessibility.unchecked" = "unchecked";
+"markdown.accessibility.code" = "Empty code block";

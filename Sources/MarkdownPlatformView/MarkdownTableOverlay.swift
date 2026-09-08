@@ -97,6 +97,7 @@ extension MarkdownLabelView {
     /// registrations accumulate one per overlay recreation — every width and
     /// style change — for the life of the view.
     func observeTableOverlayScroll(_ scroll: NSScrollView) {
+        self.tableOverlayScrollObservers.insert(ObjectIdentifier(scroll.contentView))
         NotificationCenter.default.addObserver(
             self, selector: #selector(self.tableOverlayDidScroll),
             name: NSView.boundsDidChangeNotification, object: scroll.contentView
@@ -104,6 +105,7 @@ extension MarkdownLabelView {
     }
 
     func stopObservingTableOverlayScroll(_ scroll: NSScrollView) {
+        self.tableOverlayScrollObservers.remove(ObjectIdentifier(scroll.contentView))
         NotificationCenter.default.removeObserver(
             self, name: NSView.boundsDidChangeNotification, object: scroll.contentView
         )

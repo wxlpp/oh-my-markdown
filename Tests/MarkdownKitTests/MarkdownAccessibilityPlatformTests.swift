@@ -152,6 +152,46 @@ struct MarkdownAccessibilityPlatformTests {
         #expect(spoken.contains { $0.contains("1") && $0.contains("2") }, "item position never spoken: \(spoken)")
     }
 
+    /// The renderer draws `3.` and `4.`, and the marker is not a stop of its
+    /// own, so announcing "1 of 2" would be the only number the reader gets and
+    /// it would contradict the screen.
+    @Test func anOrderedListAnnouncesTheNumbersItDraws() async {
+        let view = await self.view("3. a\n4. b")
+        defer { view.dismantleRenderSession() }
+        let items = self.elements(view).filter { $0.role == .listItem }
+        #expect(items.map(\.detail) == [
+            .listItem(position: 3, count: 2, checkbox: nil),
+            .listItem(position: 4, count: 2, checkbox: nil),
+        ])
+    }
+
+    /// The tag/tree guard compares the *preparer*'s tags, but frames come from
+    /// the *materializer*, which drops a tag for a run of zero length. A leaf can
+    /// therefore satisfy the guard and still be unexposed — a class the guard is
+    /// structurally unable to see, so it is checked here instead.
+    @Test(arguments: [
+        "# Title\n\nalpha [one](https://a.test) beta",
+        "- a\n\n  b\n- c",
+        "| Name | Age |\n|---|---|\n| Ada |  |",
+        "> quoted\n>\n> $$\nx\n$$",
+        "- [x] done\n- [ ] todo",
+        "```swift\nlet a = 1\n```",
+    ])
+    func everyLeafWithSomethingToSayBecomesAnElement(markdown: String) async throws {
+        let view = await self.view(markdown)
+        defer { view.dismantleRenderSession() }
+        let snapshot = try #require(view.currentSnapshot)
+        func leaves(_ node: AccessibilityNode) -> [AccessibilityNode] {
+            node.children.isEmpty ? [node] : node.children.flatMap(leaves)
+        }
+        let speaking = snapshot.displayModel.accessibilityRootsByBlock
+            .flatMap { $0.flatMap(leaves) }
+            .filter { !($0.label ?? "").isEmpty }
+        let exposed = Set(self.elements(view).map(\.id))
+        let missing = speaking.filter { !exposed.contains($0.id) }
+        #expect(missing.isEmpty, "leaves with a label but no element: \(missing.map { $0.label ?? "" })")
+    }
+
     /// Coordinates and headers that never leave the model are not "correct table
     /// relationships": a reader has to hear them.
     @Test func cellsAndListItemsSpeakTheirRelationships() async throws {
@@ -242,31 +282,37 @@ struct MarkdownAccessibilityPlatformTests {
     #if canImport(AppKit) && !canImport(UIKit)
     /// Registrations accumulated one per overlay recreation — every width *and*
     /// style change — for the life of the view, because only two of the four
-    /// paths that discard an overlay unregistered. Counted rather than asserted
-    /// indirectly: a leaked observer is invisible until it fires on a dead view.
+    /// paths that discard an overlay unregistered.
+    ///
+    /// The first version of this test asserted `_tableOverlays.count <= 1`, a
+    /// tautology for a one-table fixture: review measured it passing with the fix
+    /// reverted while a stale observer still fired. It counts the registrations
+    /// themselves now.
     @MainActor @Test func tableOverlayScrollObserversAreBalanced() async {
-        final class Counter: NSObject {
-            var fired = 0
-            @objc func note() {
-                self.fired += 1
-            }
-        }
-        let view = await self.view("| a | b | c | d | e | f |\n|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 |", width: 80)
-        defer { view.dismantleRenderSession() }
+        let view = await self.view(
+            "| a | b | c | d | e | f |\n|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 |", width: 80
+        )
         #expect(!view._tableOverlays.isEmpty, "fixture no longer overflows")
-        // Churn the paths that discard an overlay: style, then width.
+        #expect(view.tableOverlayScrollObservers.count == view._tableOverlays.count)
+
+        // Every path that discards an overlay: style churn, then width.
         for size in [15.0, 17.0, 19.0] {
             var style = RenderStyle.default
             style.bodyFont = .systemFont(ofSize: size)
             view.renderStyle = style
             _ = await eventually { view.currentSnapshot != nil }
+            #expect(
+                view.tableOverlayScrollObservers.count == view._tableOverlays.count,
+                "leaked \(view.tableOverlayScrollObservers.count - view._tableOverlays.count) observer(s) on a style change"
+            )
         }
         view.frame = CGRect(x: 0, y: 0, width: 400, height: 4000)
         view.layoutSubtreeIfNeeded()
         _ = await eventually { view.currentSnapshot != nil }
-        // One live overlay at most means one live registration; a leak would
-        // rebuild the elements once per stale registration on a single scroll.
-        #expect(view._tableOverlays.count <= 1)
+        #expect(view.tableOverlayScrollObservers.count == view._tableOverlays.count)
+
+        view.dismantleRenderSession()
+        #expect(view.tableOverlayScrollObservers.isEmpty, "teardown left observers registered")
     }
 
     /// The view is flipped, AppKit's parent space is not. Publishing a top-down

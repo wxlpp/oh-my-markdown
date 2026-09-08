@@ -4,3 +4,4 @@
 "markdown.accessibility.listPosition" = "第 %1$d 项，共 %2$d 项";
 "markdown.accessibility.checked" = "已完成";
 "markdown.accessibility.unchecked" = "未完成";
+"markdown.accessibility.code" = "空代码块";

@@ -31,6 +31,9 @@ public enum AccessibilityTreeBuilder {
     public static let uncheckedLabel = NSLocalizedString(
         "markdown.accessibility.unchecked", bundle: .module, comment: "Spoken for an open task list item"
     )
+    public static let codeFallback = NSLocalizedString(
+        "markdown.accessibility.code", bundle: .module, comment: "Spoken for a code block with no content"
+    )
     public static let mathFallback = NSLocalizedString(
         "markdown.accessibility.math", bundle: .module, comment: "Spoken for a formula with no readable source"
     )
@@ -53,6 +56,10 @@ private struct Builder {
     let sourceGeneration: UInt64
     let imageFallback: String
     let mathFallback: String
+    var codeFallback: String {
+        AccessibilityTreeBuilder.codeFallback
+    }
+
     /// Position within the block, so two links in one paragraph — which share a
     /// lineage and a source anchor — differ. Advanced when a leaf *begins*, not
     /// when it is emitted, because `RenderPreparer` tags the runs on the same
@@ -123,16 +130,20 @@ private struct Builder {
         case .codeBlock(let language, let body):
             let trimmed = language?.trimmingCharacters(in: .whitespacesAndNewlines)
             self.advance()
+            let text = body.trimmingCharacters(in: .newlines)
             return [self.leaf(
-                .code, body.trimmingCharacters(in: .newlines),
+                .code, text.isEmpty ? self.codeFallback : text,
                 detail: .code(language: (trimmed?.isEmpty ?? true) ? nil : trimmed)
             )]
         case .blockquote(let blocks):
             return blocks.flatMap { self.blockNodes($0) }
         case .bulletList(let items):
             return self.listNodes(items)
-        case .orderedList(_, let items):
-            return self.listNodes(items)
+        case .orderedList(let start, let items):
+            // The renderer draws `start + index`, and the marker run is not a
+            // leaf, so announcing 1-based positions would be the only number the
+            // reader gets and it would contradict what is on screen.
+            return self.listNodes(items, start: start)
         case .htmlBlock(let text):
             // Rendered as visible text, so a reader has to get it as well.
             self.advance()
@@ -149,7 +160,7 @@ private struct Builder {
         }
     }
 
-    mutating func listNodes(_ items: [ListItem]) -> [AccessibilityNode] {
+    mutating func listNodes(_ items: [ListItem], start: Int = 1) -> [AccessibilityNode] {
         items.enumerated().compactMap { position, item -> AccessibilityNode? in
             let checkbox: Bool? = switch item.checkbox {
             case .checked: true
@@ -157,7 +168,7 @@ private struct Builder {
             case nil: nil
             }
             let detail = AccessibilityDetail.listItem(
-                position: position + 1, count: items.count, checkbox: checkbox
+                position: start + position, count: items.count, checkbox: checkbox
             )
             let children = item.blocks.flatMap { self.blockNodes($0) }
             // An item with nothing readable in it is not a stop. It is also the

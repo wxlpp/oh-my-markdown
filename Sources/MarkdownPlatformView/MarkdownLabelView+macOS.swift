@@ -379,6 +379,11 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     var accessibilityElementStore: [AccessibilityNodeID: MarkdownAccessibilityElement] = [:]
     var orderedAccessibilityElements: [MarkdownAccessibilityElement] = []
     var isRebuildingAccessibilityElements = false
+    /// One entry per live scroll observer. A registration outlives the overlay
+    /// that owns it unless every discard path removes it, and "one live overlay"
+    /// does not imply "one live registration" — that inference is what produced
+    /// the leak. Counting them makes the balance checkable.
+    var tableOverlayScrollObservers: Set<ObjectIdentifier> = []
     var needsAccessibilityRebuild = false
     /// The objects the accessibility client holds, reused across snapshots so a
     /// surviving leaf keeps the element a reader is focused on.

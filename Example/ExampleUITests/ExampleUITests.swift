@@ -29,6 +29,8 @@ final class ExampleUITests: XCTestCase {
 
         let texts = app.staticTexts
         XCTAssertTrue(texts.element(boundBy: 0).waitForExistence(timeout: 10))
+        // First five only: XCUITest's element queries are slow enough that
+        // walking a whole rendered document dominates the suite's runtime.
         for index in 0 ..< min(texts.count, 5) {
             XCTAssertFalse(texts.element(boundBy: index).label.isEmpty, "an exposed element speaks nothing")
         }
