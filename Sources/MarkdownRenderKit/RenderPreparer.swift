@@ -305,7 +305,14 @@ private struct PreparationBuilder {
         for (index, item) in items.enumerated() {
             try self.checkCancellation()
             let bare = PreparedAttributes(role: nil, color: nil)
-            if index > 0 { result.append(.run(self.text("\n", attributes: bare))) }
+            if index > 0 {
+                // The join between two items, like the block separator: it
+                // renders no leaf of its own.
+                let restore = self.accessibilityLeaf
+                self.accessibilityLeaf = PreparationBuilder.markerLeaf
+                result.append(.run(self.text("\n", attributes: bare)))
+                self.accessibilityLeaf = restore
+            }
             let marker = start.map { "\($0 + index).\t" } ?? "•\t"
             let checkbox = switch item.checkbox { case .checked: "☑ "; case .unchecked: "☐ "; case nil: "" }
             var attrs = self.body()

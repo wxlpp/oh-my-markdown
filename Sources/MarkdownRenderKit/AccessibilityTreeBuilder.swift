@@ -60,7 +60,10 @@ private struct Builder {
     /// which costs nothing since only uniqueness and stability matter.
     var leafOrdinal = 0
     /// Containers are numbered apart so they never consume a leaf's ordinal.
-    /// Their role already separates them from any leaf sharing a number.
+    /// `AccessibilityNodeID` also carries the role, so a container and a leaf
+    /// sharing a number are still distinct identities — but the *frame* key does
+    /// not, so a container that reaches the platform as a leaf would take another
+    /// leaf's rect. Containers must never be published as leaves.
     var containerOrdinal = 0
 
     mutating func advance() {
@@ -147,7 +150,7 @@ private struct Builder {
     }
 
     mutating func listNodes(_ items: [ListItem]) -> [AccessibilityNode] {
-        items.enumerated().map { position, item in
+        items.enumerated().compactMap { position, item -> AccessibilityNode? in
             let checkbox: Bool? = switch item.checkbox {
             case .checked: true
             case .unchecked: false
@@ -157,8 +160,11 @@ private struct Builder {
                 position: position + 1, count: items.count, checkbox: checkbox
             )
             let children = item.blocks.flatMap { self.blockNodes($0) }
-            // A one-leaf item speaks as itself rather than as a container with a
-            // single silent child, so the reader hears one stop, not two.
+            // An item with nothing readable in it is not a stop. It is also the
+            // steady state of a streamed list — the next marker has arrived, its
+            // text has not — and exposing it published an empty element whose
+            // frame key, which carries no role, collided with a real leaf's.
+            guard !children.isEmpty else { return nil }
             // A one-leaf item speaks as itself rather than as a container with a
             // single silent child, so the reader hears one stop, not two — but it
             // keeps the child's role, or an item holding only an image or a code

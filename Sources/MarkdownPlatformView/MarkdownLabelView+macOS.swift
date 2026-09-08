@@ -143,7 +143,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self._liveString = NSMutableAttributedString(string: "")
         self.blockStarts = []
         self.renderedDocument = nil
-        self._tableOverlays.values.forEach { $0.scroll.removeFromSuperview() }
+        self._tableOverlays.values.forEach { self.stopObservingTableOverlayScroll($0.scroll); $0.scroll.removeFromSuperview() }
         self._tableOverlays.removeAll()
         self.sessionDriver?.send(.dismantle)
         self.sessionRegistry.revokeAndUnregister(self.sessionID)
@@ -185,7 +185,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             guard !self.renderStyle.isSemanticallyEqual(to: oldValue) else {
                 return
             }
-            self._tableOverlays.values.forEach { $0.scroll.removeFromSuperview() }
+            self._tableOverlays.values.forEach { self.stopObservingTableOverlayScroll($0.scroll); $0.scroll.removeFromSuperview() }
             self._tableOverlays.removeAll()
             self.updateContent()
         }

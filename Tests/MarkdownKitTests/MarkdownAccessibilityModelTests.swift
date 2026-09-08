@@ -196,6 +196,13 @@ struct MarkdownAccessibilityModelTests {
             "> # h\n>\n> ---\n>\n> [l](https://a.test)",
             "> a\n>\n> | x |\n> |---|\n> | y |",
             "> ![alt](https://i.test/p.png)\n>\n> tail",
+            // Round-3 review: an item with no content is the steady state of a
+            // streamed list — the next marker has arrived, its text has not.
+            "- a\n\n  b\n-",
+            "- a\n\n  b\n- ",
+            "-\n- a",
+            "- x\n- - a\n\n    b\n- z",
+            "- ```\n  code\n  ```\n\n  b\n- c",
         ] {
             let configuration = RenderStyle.default.snapshot(generation: 0)
             let input = RenderInput(

@@ -66,6 +66,7 @@ struct MarkdownAccessibilityPlatformTests {
         // The link sits to the right of the text before it, on the same line.
         #expect(frames[2].minX > frames[1].minX)
         #expect(frames[3].minX > frames[2].minX)
+        #expect(Set(frames.map(\.debugDescription)).count == frames.count, "two leaves share one rect")
     }
 
     @Test func aLinkElementActivatesThroughThePolicy() async throws {
@@ -104,6 +105,7 @@ struct MarkdownAccessibilityPlatformTests {
         let elements = self.elements(view)
         #expect(elements.count == 4, "row is shorter than its header: \(elements.map(\.label))")
         #expect(elements.allSatisfy { $0.frame.width > 0 })
+        #expect(elements.last?.detail == .cell(row: 1, column: 1, columnHeader: elements[1].label))
     }
 
     /// A nested list item is still a list item. The model says so; if the
@@ -116,6 +118,38 @@ struct MarkdownAccessibilityPlatformTests {
         #expect(outer.label == "a")
         #expect(outer.role == .listItem, "exposed as \(outer.role) with no item semantics")
         #expect(outer.detail == .listItem(position: 1, count: 2, checkbox: nil))
+    }
+
+    /// The steady state of a streamed list: the next marker has arrived, its
+    /// text has not. An item with nothing readable is not a stop, and publishing
+    /// it took another leaf's rect — the frame key carries no role, so a
+    /// container's ordinal collides with a leaf's.
+    @Test(arguments: ["- a\n\n  b\n-", "- a\n\n  b\n- ", "-\n- a"])
+    func anItemWithNothingInItIsNotExposed(markdown: String) async {
+        let view = await self.view(markdown)
+        defer { view.dismantleRenderSession() }
+        let elements = self.elements(view)
+        #expect(elements.allSatisfy { !$0.label.isEmpty }, "empty element: \(elements.map(\.label))")
+        let frames = elements.map(\.frame)
+        #expect(Set(frames.map(\.debugDescription)).count == frames.count, "two elements share a rect: \(frames)")
+    }
+
+    /// The nearest enclosing item wins. Taking the ancestor's made an inner
+    /// list's only item announce the outer list's position.
+    @Test func aNestedItemAnnouncesItsOwnListsPosition() async throws {
+        let view = await self.view("- x\n- - a\n\n    b\n- z")
+        defer { view.dismantleRenderSession() }
+        let inner = try #require(self.elements(view).first { $0.label == "a" })
+        #expect(inner.detail == .listItem(position: 1, count: 1, checkbox: nil), "announced \(String(describing: inner.detail))")
+    }
+
+    /// A first child that carries its own detail must not swallow the item's
+    /// position: a code block in a list still needs "1 of 2".
+    @Test func anItemWhoseFirstBlockCarriesDetailKeepsItsPosition() async {
+        let view = await self.view("- ```\n  code\n  ```\n\n  b\n- c")
+        defer { view.dismantleRenderSession() }
+        let spoken = self.elements(view).compactMap(\.spokenValue)
+        #expect(spoken.contains { $0.contains("1") && $0.contains("2") }, "item position never spoken: \(spoken)")
     }
 
     /// Coordinates and headers that never leave the model are not "correct table
@@ -206,6 +240,35 @@ struct MarkdownAccessibilityPlatformTests {
     }
 
     #if canImport(AppKit) && !canImport(UIKit)
+    /// Registrations accumulated one per overlay recreation — every width *and*
+    /// style change — for the life of the view, because only two of the four
+    /// paths that discard an overlay unregistered. Counted rather than asserted
+    /// indirectly: a leaked observer is invisible until it fires on a dead view.
+    @MainActor @Test func tableOverlayScrollObserversAreBalanced() async {
+        final class Counter: NSObject {
+            var fired = 0
+            @objc func note() {
+                self.fired += 1
+            }
+        }
+        let view = await self.view("| a | b | c | d | e | f |\n|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 |", width: 80)
+        defer { view.dismantleRenderSession() }
+        #expect(!view._tableOverlays.isEmpty, "fixture no longer overflows")
+        // Churn the paths that discard an overlay: style, then width.
+        for size in [15.0, 17.0, 19.0] {
+            var style = RenderStyle.default
+            style.bodyFont = .systemFont(ofSize: size)
+            view.renderStyle = style
+            _ = await eventually { view.currentSnapshot != nil }
+        }
+        view.frame = CGRect(x: 0, y: 0, width: 400, height: 4000)
+        view.layoutSubtreeIfNeeded()
+        _ = await eventually { view.currentSnapshot != nil }
+        // One live overlay at most means one live registration; a leak would
+        // rebuild the elements once per stale registration on a single scroll.
+        #expect(view._tableOverlays.count <= 1)
+    }
+
     /// The view is flipped, AppKit's parent space is not. Publishing a top-down
     /// TextKit rect as-is mirrors every element about the view's midpoint, so
     /// the first line is reported at the bottom.

@@ -74,25 +74,30 @@ package final class MarkdownAccessibilityElement {
 extension MarkdownLabelView {
     /// Rebuilt whenever a snapshot lands. Elements whose identity survives are
     /// reused in place: replacing the object a reader is focused on moves focus.
+    /// Re-entrant by construction: the rebuild lays out the table overlay, which
+    /// can move that overlay's scroll position, which calls back in here. Without
+    /// a bound the Example app hung for 285 s on rotation.
+    ///
+    /// The re-entrant call is the pass that would correct the frames the outer
+    /// pass computed *before* the overlay moved, so it is not discarded — it runs
+    /// once more. The loop is written here rather than by re-entering `defer`,
+    /// which would re-arm itself and leave the pass count decided by whether
+    /// layout happens to converge.
     package func rebuildAccessibilityElements() {
-        // Re-entrant by construction: the rebuild lays out the overlay, which can
-        // move its scroll position, which calls back in here. Without this the
-        // Example app hangs on a rotation.
         guard !self.isRebuildingAccessibilityElements else {
-            // Not dropped: the re-entrant call is the pass that would correct the
-            // frames the outer pass computed *before* the overlay moved, so it is
-            // deferred to one bounded extra pass rather than discarded.
             self.needsAccessibilityRebuild = true
             return
         }
         self.isRebuildingAccessibilityElements = true
-        defer {
-            self.isRebuildingAccessibilityElements = false
-            if self.needsAccessibilityRebuild {
-                self.needsAccessibilityRebuild = false
-                self.rebuildAccessibilityElements()
-            }
-        }
+        defer { self.isRebuildingAccessibilityElements = false }
+        self.needsAccessibilityRebuild = false
+        self.performAccessibilityRebuild()
+        guard self.needsAccessibilityRebuild else { return }
+        self.needsAccessibilityRebuild = false
+        self.performAccessibilityRebuild()
+    }
+
+    private func performAccessibilityRebuild() {
         guard let snapshot = self.currentSnapshot else {
             self.accessibilityElementStore = [:]
             self.orderedAccessibilityElements = []
@@ -110,10 +115,18 @@ extension MarkdownLabelView {
         /// "1 of 2" rather than arriving as anonymous prose.
         func visit(_ original: AccessibilityNode, block: Int, inherited: AccessibilityNode? = nil) {
             guard original.children.isEmpty else {
-                var pending = inherited ?? (original.role == .listItem ? original : nil)
+                // The nearest enclosing item wins: taking the ancestor's made an
+                // inner list's only item announce the *outer* list's position.
+                var pending = (original.role == .listItem ? original : nil) ?? inherited
                 for child in original.children {
+                    // Only consumed once it has somewhere to land: a first child
+                    // that already carries its own detail — a code block, a table
+                    // cell — would otherwise swallow the item's position.
+                    let merged = pending.map { container in
+                        child.children.isEmpty && (child.role == .text || child.detail == nil) && container.detail != nil
+                    } ?? false
                     visit(child, block: block, inherited: pending)
-                    pending = nil
+                    if merged { pending = nil }
                 }
                 return
             }
