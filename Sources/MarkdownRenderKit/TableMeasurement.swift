@@ -21,19 +21,24 @@ extension NSAttributedString.Key {
     public static let markdownTableNaturalWidth = NSAttributedString.Key("MarkdownKit.tableNaturalWidth")
     /// Natural widths for each rendered table column, used by platform views to draw separators.
     public static let markdownTableColumnWidths = NSAttributedString.Key("MarkdownKit.tableColumnWidths")
+    /// Semantic text to substitute for a character that carries no readable text
+    /// of its own — an attachment, or an overflow table's placeholder. Only ever
+    /// one character long: `renderedCopyText` emits the whole value for any
+    /// sub-range that touches it, so a longer run would make a partial selection
+    /// paste more than was selected. Pinned by `everyCopyTextRunIsExactlyOneCharacter`.
+    public static let markdownCopyText = NSAttributedString.Key("MarkdownKit.copyText")
+    /// Layout-only character, dropped from a copy. Carried by a table row's
+    /// *leading indent* tab only — don't add it to the tabs between cells, which
+    /// are the separators a copied table needs.
+    public static let markdownCopySkip = NSAttributedString.Key("MarkdownKit.copySkip")
+    /// Markdown syntax for a character whose block carries no parser source range.
+    public static let markdownCopySource = NSAttributedString.Key("MarkdownKit.copySource")
     /// Marks the single transparent placeholder line that reserves vertical
     /// space for an overflowing (horizontally-scrolling) table. The real table is
     /// drawn by the platform scroll overlay; the reserved height is computed *at
     /// render time* by `TableMeasurement.height` (the same algorithm the overlay's
     /// `TableContentView` uses), so the main-stack reservation and the overlay
     /// height are constructively equal — no platform write-back needed.
-    /// Semantic text to substitute for a character that carries no readable text
-    /// of its own — an attachment, or an overflow table's placeholder.
-    public static let markdownCopyText = NSAttributedString.Key("MarkdownKit.copyText")
-    /// Layout-only character: present for tab stops, never part of a copy.
-    public static let markdownCopySkip = NSAttributedString.Key("MarkdownKit.copySkip")
-    /// Markdown syntax for a character whose block carries no parser source range.
-    public static let markdownCopySource = NSAttributedString.Key("MarkdownKit.copySource")
     public static let markdownOverflowTablePlaceholder
         = NSAttributedString.Key("MarkdownKit.overflowTablePlaceholder")
 }

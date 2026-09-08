@@ -22,9 +22,14 @@ public struct MarkdownCopyResult: Sendable, Equatable {
     }
 }
 
-/// Title of the explicit source-copy command. Hosts override it when their menu
-/// uses different wording; the default is localized by the package.
+/// Titles of the copy commands. Hosts override them when their menu uses
+/// different wording; the defaults are localized by the package.
+///
+/// Process-global rather than per view: two hosts in one process cannot differ.
 @MainActor public enum MarkdownCopyCommandTitle {
+    public static var copy: String = NSLocalizedString(
+        "markdown.copy.rendered", bundle: .module, comment: "Menu command copying the selected rendered text"
+    )
     public static var markdownSource: String = NSLocalizedString(
         "markdown.copy.source", bundle: .module, comment: "Menu command copying the selected Markdown source"
     )

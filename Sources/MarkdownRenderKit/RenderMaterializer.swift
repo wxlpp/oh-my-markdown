@@ -234,7 +234,20 @@ package struct RenderMaterializer {
                 return self.attachment(image: image, bounds: CGRect(x: 0, y: -4, width: image.size.width * scale, height: image.size.height * scale), attributes: semantic)
             }
             attrs[.markdownImageSource] = source
-            return NSAttributedString(string: run.text, attributes: attrs)
+            // The reader sees "🖼 alt" here and an image once it loads; both must
+            // copy as the alt text alone, so the marker is dropped from copies
+            // rather than substituted — substitution is for characters that read
+            // as nothing, and it may only cover one character at a time.
+            let placeholder = NSMutableAttributedString(string: run.text, attributes: attrs)
+            // UTF-16 units, not Characters: the marker is an emoji and a range is
+            // measured the way the attributed string is.
+            let markerLength = (run.text as NSString).length - (copy as NSString).length
+            if run.text.hasSuffix(copy), markerLength > 0 {
+                placeholder.addAttribute(
+                    .markdownCopySkip, value: true, range: NSRange(location: 0, length: markerLength)
+                )
+            }
+            return placeholder
         case .math(let id, let latex, let display, let width, let staticPlaceholder, let resolves):
             let para = attrs[.paragraphStyle]
             if resolves, case .math(let owner) = resources.values[id] {

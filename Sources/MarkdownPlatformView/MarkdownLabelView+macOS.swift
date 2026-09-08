@@ -326,6 +326,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     override public func menu(for event: NSEvent) -> NSMenu? {
         guard self.currentRenderedSelectionRange() != nil else { return nil }
         let menu = NSMenu()
+        menu.addItem(withTitle: MarkdownCopyCommandTitle.copy, action: #selector(self.copy(_:)), keyEquivalent: "")
         menu.addItem(withTitle: MarkdownCopyCommandTitle.markdownSource, action: #selector(self.copyMarkdownSource(_:)), keyEquivalent: "")
         menu.items.forEach { $0.target = self }
         return menu
@@ -787,14 +788,6 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         }
     }
 
-    private func performCopy() {
-        guard let copied = self._copiedStringForCurrentSelection() else {
-            return
-        }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(copied, forType: .string)
-    }
-
     /// Single source of truth for "current selection → copied original-source
     /// string": resolve the active TextKit2 selection, convert it to a
     /// rendered-plain-text offset range, and map that range back to the
@@ -831,7 +824,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     func markdownSourceCopy(
         forRenderedRange range: NSRange, renderedPlainText: String,
         renderedFallback: @escaping (NSRange) -> String,
-        reconstructedSource: @escaping (NSRange) -> (text: String, hadSource: Bool)
+        reconstructedSource: @escaping (NSRange) -> String
     ) -> MarkdownCopyResult {
         MarkdownPlatformView.markdownSourceCopy(
             renderedRange: range,

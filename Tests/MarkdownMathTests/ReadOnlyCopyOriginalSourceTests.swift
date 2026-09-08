@@ -103,6 +103,12 @@ struct ReadOnlyCopyOriginalSourceTests {
         let rendered = view.renderedSelectionResult()
         #expect(rendered?.text.contains("# 标题") == false, "原生 Copy 不应包含 markdown 语法")
         #expect(rendered?.text.contains("标题") == true)
+        // 这是唯一真正命中 attachment 的套件（上面已断言 attachmentCount >= 2），
+        // 所以「渲染复制不留占位符」这条只有在这里才是非平凡的。
+        #expect(
+            rendered?.text.contains("\u{FFFC}") == false,
+            "渲染复制仍含 object-replacement：\(rendered?.text ?? "")"
+        )
         // 还原源后不应再有 attachment 占位符残留。
         #expect(
             objectReplacementCount == 0,

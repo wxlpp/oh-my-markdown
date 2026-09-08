@@ -206,8 +206,9 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     // MARK: Copy action
 
     /// Don't widen this to `super` for the default menu: returning `false` for
-    /// everything but copy is what keeps Share, Look Up and Translate — each of
-    /// which can hand a URL to the system — off a rendered link.
+    /// everything but the two copy commands is what keeps Share, Look Up and
+    /// Translate — each of which can hand a URL to the system — off a rendered
+    /// link.
     override public func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(self.copy(_:)) || action == #selector(self.copyMarkdownSource(_:)) {
             return !(self.layoutManager.textSelections.first?.textRanges.first?.isEmpty ?? true)
@@ -231,6 +232,10 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         UIPasteboard.general.string = result.text
     }
 
+    /// Adds the command to the **main menu**, which is the menu bar on iPad and
+    /// Mac Catalyst. It does not reach the selection callout: that menu is
+    /// presented by `UITextInteraction`, not built from this responder. SwiftUI
+    /// hosts reach the command through `MarkdownSelectionProxy` instead.
     override public func buildMenu(with builder: any UIMenuBuilder) {
         super.buildMenu(with: builder)
         let command = UICommand(
@@ -391,7 +396,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     func markdownSourceCopy(
         forRenderedRange range: NSRange, renderedPlainText: String,
         renderedFallback: @escaping (NSRange) -> String,
-        reconstructedSource: @escaping (NSRange) -> (text: String, hadSource: Bool)
+        reconstructedSource: @escaping (NSRange) -> String
     ) -> MarkdownCopyResult {
         MarkdownPlatformView.markdownSourceCopy(
             renderedRange: range,

@@ -78,7 +78,7 @@ func markdownSourceCopy(
     renderedLength: Int,
     originalSource: String,
     renderedFallback: ((NSRange) -> String)?,
-    reconstructedSource: ((NSRange) -> (text: String, hadSource: Bool))? = nil
+    reconstructedSource: ((NSRange) -> String)? = nil
 )
     -> MarkdownCopyResult {
     func fallback() -> MarkdownCopyResult {
@@ -133,91 +133,94 @@ func markdownSourceCopy(
 
     // Blocks the parser produced by transforming the source — a block formula
     // lifted out of a paragraph, a paragraph rebuilt around inline math — carry
-    // no source range. Their original bytes are still recoverable: consecutive
-    // blocks are contiguous in the source, so a run of source-less blocks spans
-    // exactly the gap between the ranges that bracket it. That returns the real
-    // bytes, where re-serializing the runs would only approximate them.
-    if (lower ... upper).contains(where: { parsedBlocks[$0].sourceRange == nil }) {
-        func upperBoundBefore(_ index: Int) -> Int? {
-            (0 ..< index).reversed().lazy.compactMap { parsedBlocks[$0].sourceRange?.upperBound }.first
+    // no source range. Their bytes are still recoverable at the *edges* of the
+    // selection: consecutive blocks are contiguous in the source, so a run of
+    // source-less blocks that starts exactly where the selection starts begins
+    // where the previous block's range ended.
+    //
+    // Only the two boundary bytes are needed. Everything between them is copied
+    // verbatim, which keeps the original inter-block bytes — indentation,
+    // separator lines, list markers — that re-joining pieces would destroy.
+    func upperBoundBefore(_ index: Int) -> Int {
+        (0 ..< index).reversed().lazy.compactMap { parsedBlocks[$0].sourceRange?.upperBound }.first ?? 0
+    }
+    func lowerBoundAfter(_ index: Int) -> Int {
+        ((index + 1) ..< parsedBlocks.count).lazy.compactMap { parsedBlocks[$0].sourceRange?.lowerBound }.first
+            ?? originalSource.utf8.count
+    }
+    /// Start of the maximal run of source-less blocks containing `index`.
+    func runStart(_ index: Int) -> Int {
+        var start = index
+        while start > 0, parsedBlocks[start - 1].sourceRange == nil {
+            start -= 1
         }
-        func lowerBoundAfter(_ index: Int) -> Int? {
-            ((index + 1) ..< parsedBlocks.count).lazy.compactMap { parsedBlocks[$0].sourceRange?.lowerBound }.first
+        return start
+    }
+    func runEnd(_ index: Int) -> Int {
+        var end = index
+        while end + 1 < parsedBlocks.count, parsedBlocks[end + 1].sourceRange == nil {
+            end += 1
         }
-        func slice(_ lowerByte: Int, _ upperByte: Int) -> String? {
-            guard
-                lowerByte <= upperByte,
-                let start = utf8StringIndex(in: originalSource, at: lowerByte),
-                let end = utf8StringIndex(in: originalSource, at: upperByte),
-                start <= end else { return nil }
-            return String(originalSource[start ..< end])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        var pieces: [String] = []
-        var everyBlockYieldedSource = true
-        var index = lower
-        while index <= upper {
-            if let range = parsedBlocks[index].sourceRange, let text = slice(range.lowerBound, range.upperBound) {
-                pieces.append(text)
-                index += 1
-                continue
-            }
-            var runEnd = index
-            while runEnd + 1 <= upper, parsedBlocks[runEnd + 1].sourceRange == nil {
-                runEnd += 1
-            }
-            let bracketed = slice(
-                upperBoundBefore(index) ?? 0, lowerBoundAfter(runEnd) ?? originalSource.utf8.count
-            )
-            if let bracketed, !bracketed.isEmpty {
-                pieces.append(bracketed)
-            } else {
-                // No source to bracket at all: programmatic blocks. The runs can
-                // still name their own syntax, but plain text cannot, so the
-                // result stops being source and says so. A caller that supplied
-                // no reconstruction wants the whole legacy fallback, not a
-                // per-block one, so give it that unchanged.
-                guard let reconstructedSource else { return fallback() }
-                everyBlockYieldedSource = false
-                for block in index ... runEnd {
-                    let rendered = NSRange(
-                        location: blockStarts[block],
-                        length: max(0, contentEnd(of: block) - blockStarts[block])
-                    )
-                    pieces.append(reconstructedSource(rendered).text)
-                }
-            }
-            index = runEnd + 1
-        }
-        let text = pieces.filter { !$0.isEmpty }.joined(separator: "\n\n")
-        guard everyBlockYieldedSource else {
-            return MarkdownCopyResult(text: text, granularity: .renderedFallback)
-        }
-        return MarkdownCopyResult(text: text, granularity: coversEveryOverlappedBlock ? .exact : .blockExpanded)
+        return end
     }
 
-    // Continuous original-source span: first overlapped block's lowerBound to
-    // last overlapped block's upperBound. Preserves original block separators.
-    //
-    // Known block-level limitation: if the first or last overlapped block has
-    // `sourceRange == nil` (e.g. blocks injected via `setBlocks` without a
-    // Markdown source), the *entire* selection — including any middle blocks that
-    // do carry a sourceRange — falls back to rendered plain text (all-or-nothing,
-    // determined by the boundary blocks). Per-block mixed restoration is deferred
-    // to a future version.
-    guard
-        let lowerByte = parsedBlocks[lower].sourceRange?.lowerBound,
-        let upperByte = parsedBlocks[upper].sourceRange?.upperBound,
-        lowerByte <= upperByte,
+    var trimmedLeading = false
+    var trimmedTrailing = false
+    var lowerByte: Int?
+    if let range = parsedBlocks[lower].sourceRange {
+        lowerByte = range.lowerBound
+    } else if runStart(lower) == lower {
+        // The run starts where the selection starts, so the gap before it is the
+        // selection's own. A run reaching further back would drag in the bytes of
+        // blocks the user did not select.
+        lowerByte = upperBoundBefore(lower)
+        trimmedLeading = true
+    }
+    var upperByte: Int?
+    if let range = parsedBlocks[upper].sourceRange {
+        upperByte = range.upperBound
+    } else if runEnd(upper) == upper {
+        upperByte = lowerBoundAfter(upper)
+        trimmedTrailing = true
+    }
+
+    if
+        let lowerByte, let upperByte, lowerByte <= upperByte,
         let startIndex = utf8StringIndex(in: originalSource, at: lowerByte),
         let endIndex = utf8StringIndex(in: originalSource, at: upperByte),
-        startIndex <= endIndex else {
-        return fallback()
+        startIndex <= endIndex {
+        var text = String(originalSource[startIndex ..< endIndex])
+        // Trim only an edge a bracket produced: a block's own range is already
+        // exact, and its leading whitespace can be load-bearing — four spaces
+        // are the difference between a code block and a paragraph.
+        if trimmedLeading {
+            text = String(text.drop(while: { $0.isWhitespace || $0.isNewline }))
+        }
+        if trimmedTrailing {
+            while let last = text.last, last.isWhitespace || last.isNewline {
+                text.removeLast()
+            }
+        }
+        if !text.isEmpty {
+            return MarkdownCopyResult(
+                text: text, granularity: coversEveryOverlappedBlock ? .exact : .blockExpanded
+            )
+        }
+    }
+
+    // No byte range reaches the selection's edges: either there is no source at
+    // all (programmatic blocks), or a source-less run continues past the
+    // selection so bracketing it would copy blocks the user did not select. The
+    // runs can still name their own syntax, but rendered text cannot be proven
+    // to be source, so this is never reported as source.
+    guard let reconstructedSource else { return fallback() }
+    let pieces = (lower ... upper).map { block in
+        reconstructedSource(NSRange(
+            location: blockStarts[block], length: max(0, contentEnd(of: block) - blockStarts[block])
+        ))
     }
     return MarkdownCopyResult(
-        text: String(originalSource[startIndex ..< endIndex]),
-        granularity: coversEveryOverlappedBlock ? .exact : .blockExpanded
+        text: pieces.filter { !$0.isEmpty }.joined(separator: "\n\n"), granularity: .renderedFallback
     )
 }
 
@@ -249,17 +252,17 @@ func renderedCopyText(from attributed: NSAttributedString, range: NSRange) -> St
 }
 
 /// Markdown syntax for a rendered range whose block has no parser source range.
-/// `hadSource` is false when some character could only contribute rendered text,
-/// which is what stops the caller from calling the result exact source.
-func reconstructedSourceText(from attributed: NSAttributedString, range: NSRange) -> (text: String, hadSource: Bool) {
+/// Approximate by construction — a run that recorded its own syntax contributes
+/// it, everything else contributes rendered text, which has already lost its
+/// delimiters. Never reported as source; the caller returns `.renderedFallback`.
+func reconstructedSourceText(from attributed: NSAttributedString, range: NSRange) -> String {
     let clamped = NSRange(
         location: min(max(0, range.location), attributed.length),
         length: max(0, min(range.length, attributed.length - min(max(0, range.location), attributed.length)))
     )
-    guard clamped.length > 0 else { return ("", true) }
+    guard clamped.length > 0 else { return "" }
     let plain = attributed.string as NSString
     var result = ""
-    var hadSource = true
     attributed.enumerateAttributes(in: clamped, options: []) { attributes, range, _ in
         if attributes[.markdownCopySkip] != nil { return }
         if let source = attributes[.markdownCopySource] as? String {
@@ -267,18 +270,12 @@ func reconstructedSourceText(from attributed: NSAttributedString, range: NSRange
             return
         }
         if let semantic = attributes[.markdownCopyText] as? String {
-            hadSource = false
             result += semantic
             return
         }
-        // Rendered text is not source: emphasis, links and list markers have
-        // already lost their delimiters by the time they reach this string, and
-        // nothing here can put them back. Only a run that recorded its own
-        // syntax above counts as source.
-        hadSource = false
         result += plain.substring(with: range)
     }
-    return (result, hadSource)
+    return result
 }
 
 // MARK: - View-facing copy API

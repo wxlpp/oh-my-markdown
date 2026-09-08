@@ -23,7 +23,11 @@ public final class MarkdownSelectionProxy {
     /// The Markdown source the selection covers. Check `granularity` before
     /// pasting it somewhere that must not receive more than the user selected:
     /// inline source offsets do not exist, so a partial selection reports
-    /// `.blockExpanded`.
+    /// `.blockExpanded`. `MarkdownCopyGranularity` lives in `MarkdownPlatformView`,
+    /// which a consumer of `MarkdownKit` alone has to import to name its cases.
+    ///
+    /// One proxy tracks one view: with several Markdown views under a single
+    /// `MarkdownSelectionReader`, the last one to update wins.
     public var markdownSourceSelection: MarkdownCopyResult? {
         self.view?.markdownSourceSelectionResult()
     }
