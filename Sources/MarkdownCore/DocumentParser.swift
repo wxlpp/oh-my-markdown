@@ -671,7 +671,10 @@ enum MathBackfill {
                     fingerprint: nil,
                     sourceAnchor: node.sourceAnchor,
                     sourceAnchorEnd: node.sourceRange?.upperBound ?? node.sourceAnchorEnd,
-                    splitOrdinal: $0.offset
+                    splitOrdinal: $0.offset,
+                    // Carried, or the pieces of a node whose anchor is a
+                    // placeholder would claim it as a real source offset.
+                    documentOrdinal: node.documentOrdinal
                 )
             }
         }

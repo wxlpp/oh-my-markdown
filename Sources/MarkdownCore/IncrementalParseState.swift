@@ -321,7 +321,13 @@ extension IncrementalSourceBuffer {
 private func equivalentForSplice(_ old: ParsedBlockNode, _ new: ParsedBlockNode, metrics: inout ParseWorkMetrics) throws -> Bool {
     try Task.checkCancellation()
     metrics.recordMetadata(MemoryLayout<ParsedBlockNode>.stride)
-    guard old.sourceRange == new.sourceRange, old.fingerprint == new.fingerprint, old.lineage == new.lineage else { return false }
+    // `sourceAnchorEnd` has to be compared here and nowhere else: `lineage` is a
+    // fixed-size identity key that deliberately hashes no end, and `==` ignores
+    // it, so this guard is the only thing that stops a splice keeping a node
+    // whose origin block's end has since moved. Source copy reads it as a
+    // boundary proof, and a stale one truncates the bytes it hands over.
+    guard old.sourceRange == new.sourceRange, old.fingerprint == new.fingerprint,
+          old.sourceAnchorEnd == new.sourceAnchorEnd, old.lineage == new.lineage else { return false }
     let work = ParseWorkAccumulator(metrics, cancellable: true)
     defer { metrics = work.metrics }
     try accountComparison(new.block, work: work)

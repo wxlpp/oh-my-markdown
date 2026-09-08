@@ -7,6 +7,11 @@ public enum MarkdownCopyGranularity: Sendable, Equatable {
     /// include source that belongs to no block, such as a link reference
     /// definition sitting between two selected paragraphs. That is deliberate:
     /// dropping it would leave `[text][ref]` links in the copy unresolvable.
+    /// The start is also extended to the first block's line start, so an indented
+    /// code block keeps the indent that makes it one.
+    ///
+    /// For a rendered copy this is always the granularity: rendered copy has no
+    /// notion of source and always serializes precisely the selection.
     case exact
     /// The selection cut into a block, and the whole block's source is returned
     /// because inline source offsets do not exist. Callers that must not paste

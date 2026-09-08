@@ -11,6 +11,42 @@ import AppKit
 
 @Suite("Incremental parsing differential")
 struct IncrementalParseDifferentialTests {
+    /// `parsedBlocks ==` ignores `sourceAnchor`/`sourceAnchorEnd` by design, so
+    /// the other differential tests cannot see a splice that keeps a node whose
+    /// origin block's bytes have since moved. Source copy reads those two fields
+    /// as boundary proofs, so a stale one silently truncates or overruns.
+    @Test("Streamed and full parses agree on every source anchor and end")
+    func streamedAnchorsMatchAFullParse() throws {
+        let corpus = [
+            "text $x$  \n\nnext\n",
+            "head $x$\n===\n\nbody $y$",
+            "- a $x$\n- b $y$\n\nafter $z$",
+            "alpha\n\n$$\n  x  \n$$\n\nomega",
+            "para\n\n[ref]: /t\n\n$$\ny\n$$\n",
+        ]
+        for source in corpus {
+            let bytes = Array(source.utf8)
+            var buffer = IncrementalSourceBuffer()
+            var metrics = ParseWorkMetrics()
+            var previous: IncrementalParseResult?
+            for index in bytes.indices {
+                try buffer.append(bytes: [bytes[index]], metrics: &metrics)
+                previous = try buffer.parse(previous: previous)
+                let prefix = String(decoding: bytes[...index], as: UTF8.self)
+                let streamed = try #require(previous).document.parsedBlocks
+                let full = MarkdownDocument(parsing: prefix).parsedBlocks
+                #expect(
+                    streamed.map(\.sourceAnchor) == full.map(\.sourceAnchor),
+                    "anchors diverged after \(index + 1) bytes of \(source.debugDescription)"
+                )
+                #expect(
+                    streamed.map(\.sourceAnchorEnd) == full.map(\.sourceAnchorEnd),
+                    "ends diverged after \(index + 1) bytes of \(source.debugDescription)"
+                )
+            }
+        }
+    }
+
     @Test("Public heading levels use renderer-normalized lineage across the entire Int domain", arguments: [
         (-1, 1), (Int.min, 1), (0, 1), (1, 1), (2, 2), (6, 6), (7, 6), (Int.max, 6),
     ])

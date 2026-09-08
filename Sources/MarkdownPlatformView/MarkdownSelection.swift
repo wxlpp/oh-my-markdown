@@ -36,11 +36,12 @@ private func utf8StringIndex(in source: String, at byteOffset: Int) -> String.In
 /// indentation, list markers, blank-line separators — exactly as written.
 ///
 /// A boundary is provable when the block owns a `sourceRange`, or, for a block
-/// the parser rebuilt, from its `sourceAnchor` at the start and from the end of
-/// the document at the end. Nothing else is: source can belong to no block at
-/// all (a link reference definition renders nowhere), so index adjacency does
-/// not imply byte adjacency, and a bracket to a neighbour's bound would hand
-/// over bytes the reader never selected.
+/// the parser rebuilt, from its own `sourceAnchor` and `sourceAnchorEnd` — and
+/// those bound the whole run of pieces one origin block became, so they are
+/// usable only when the run starts and ends where the selection does. Nothing
+/// else is: source can belong to no block at all (a link reference definition
+/// renders nowhere), so index adjacency does not imply byte adjacency, and
+/// neither a neighbour's bound nor the document's length is a proof.
 ///
 /// `renderedFallback` supplies the semantic rendered text used when no source
 /// mapping exists; without it the raw plain substring is used, which still
@@ -120,10 +121,20 @@ func markdownSourceCopy(
     // verbatim, so interior bytes — indentation, separator lines, list markers —
     // survive, where re-joining per-block pieces would destroy them.
 
-    /// Start of the maximal run of source-less blocks containing `index`.
+    /// The pieces one rebuilt block was split into share its anchor and its end,
+    /// so that pair identifies the origin block exactly. Grouping merely by
+    /// "adjacent and source-less" would merge two neighbouring formulas and leave
+    /// neither copyable, though each has both boundaries of its own.
+    func sameOrigin(_ a: Int, _ b: Int) -> Bool {
+        parsedBlocks[a].sourceRange == nil && parsedBlocks[b].sourceRange == nil
+            && parsedBlocks[a].sourceAnchor == parsedBlocks[b].sourceAnchor
+            && parsedBlocks[a].sourceAnchorEnd == parsedBlocks[b].sourceAnchorEnd
+    }
+
+    /// Start of the run of pieces `index` belongs to.
     func runStart(_ index: Int) -> Int {
         var start = index
-        while start > 0, parsedBlocks[start - 1].sourceRange == nil {
+        while start > 0, sameOrigin(start - 1, start) {
             start -= 1
         }
         return start
@@ -156,10 +167,10 @@ func markdownSourceCopy(
         lowerByte = lineStart(before: parsedBlocks[lower].sourceAnchor)
     }
 
-    /// End of the maximal run of source-less blocks containing `index`.
+    /// End of the run of pieces `index` belongs to.
     func runEnd(_ index: Int) -> Int {
         var end = index
-        while end + 1 < parsedBlocks.count, parsedBlocks[end + 1].sourceRange == nil {
+        while end + 1 < parsedBlocks.count, sameOrigin(end, end + 1) {
             end += 1
         }
         return end
@@ -191,10 +202,10 @@ func markdownSourceCopy(
         }
     }
 
-    // No boundary byte is provable: programmatic blocks, a source-less run that
-    // starts before the selection, or a source-less block with more document
-    // after it. Reconstructing the selected blocks returns only what they render,
-    // never bytes belonging to something else, and is never called source.
+    // No boundary byte is provable: programmatic blocks, or a run of rebuilt
+    // pieces that starts before or ends after the selection. Reconstructing the
+    // selected blocks returns only what they render, never bytes belonging to
+    // something else, and is never called source.
     guard let reconstructedSource else { return fallback() }
     let pieces = (lower ... upper).compactMap { block -> String? in
         // Clamped to the selection, like the plain fallback: reconstructing a
@@ -253,6 +264,14 @@ func reconstructedSourceText(from attributed: NSAttributedString, range: NSRange
         /// A whole value may only stand in for a range the selection covers
         /// whole. Partially selecting an image's placeholder text must not paste
         /// the image's URL.
+        ///
+        /// `effectiveRange` returns the *attribute-dictionary* run — the same
+        /// partition `enumerateAttributes` walks — not the maximal run of this
+        /// one key, so this equality means "the enumerated run was not clipped by
+        /// the selection", which is the test wanted. Measured: with copySource
+        /// over [0,10) and copySkip over [0,3), `effectiveRange` at 3 gives
+        /// {3,7} where `longestEffectiveRange` gives {0,10}; the longest form
+        /// would stop emitting the syntax even for a whole-placeholder selection.
         func covered(_ key: NSAttributedString.Key) -> Bool {
             var effective = NSRange(location: 0, length: 0)
             _ = attributed.attribute(key, at: range.location, effectiveRange: &effective)
@@ -286,6 +305,8 @@ extension MarkdownLabelView {
         return self.renderedSelectionResult(forRenderedRange: range)
     }
 
+    /// Always `.exact` by construction: rendered copy has no notion of source, so
+    /// it can always serialize precisely the selection.
     func renderedSelectionResult(forRenderedRange range: NSRange) -> MarkdownCopyResult? {
         guard let attributed = renderedAttributedStringForCopy else { return nil }
         return MarkdownCopyResult(text: renderedCopyText(from: attributed, range: range), granularity: .exact)

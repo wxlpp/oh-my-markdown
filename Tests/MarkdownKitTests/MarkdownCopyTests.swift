@@ -140,18 +140,19 @@ struct MarkdownCopyTests {
         #expect(result.text.contains("programmatic text"))
     }
 
-    /// A rebuilt block's start comes from its own `sourceAnchor`, and one anchor
-    /// bounds the whole run it belongs to, so it may only be used when the run
-    /// starts where the selection starts.
-    @Test func aSourcelessRunReachingPastTheSelectionIsNotPassedOffAsExactSource() async throws {
-        let view = await self.view("alpha $x$ one\n\nbeta $y$ two")
+    /// One anchor and one end bound a whole run of pieces, so they may only be
+    /// used when the run starts and ends where the selection does. A paragraph
+    /// with a block formula in the middle splits into three pieces that share
+    /// them; selecting only the first must not claim the other two's bytes.
+    @Test func selectingOnePieceOfARunIsNotPassedOffAsExactSource() async throws {
+        let view = await self.view("lead $$x$$ trail")
         defer { view.dismantleRenderSession() }
         let starts = try #require(view.currentSnapshot).blockStarts
-        #expect(starts.count == 2)
-        let firstBlock = NSRange(location: starts[0], length: starts[1] - 1 - starts[0])
-        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: firstBlock))
-        #expect(!result.text.contains("beta"), "copied a block the selection never covered: \(result.text)")
-        #expect(result.granularity != .exact)
+        #expect(starts.count == 3, "fixture no longer splits, so it stopped testing a run")
+        let firstPiece = NSRange(location: starts[0], length: max(1, starts[1] - 1 - starts[0]))
+        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: firstPiece))
+        #expect(result.granularity != .exact, "claimed the whole run's bytes: \(result.text.debugDescription)")
+        #expect(!result.text.contains("trail"))
     }
 
     /// A document made entirely of rebuilt blocks still has both boundaries:
@@ -261,13 +262,78 @@ struct MarkdownCopyTests {
 
     /// The reconstruction path must respect the selection inside a block, or a
     /// three-character selection pastes a whole paragraph including a URL.
+    /// Programmatic blocks have no source at all, so they always reconstruct.
     @Test func reconstructionIsClampedToTheSelection() async throws {
-        let view = await self.view("text $x$ here\n\n![alt](https://never-rendered.test/p.png) and $y$ tail")
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 360, height: 10000))
+        defer { view.dismantleRenderSession() }
+        #if canImport(UIKit)
+        view.layoutIfNeeded()
+        #else
+        view.layoutSubtreeIfNeeded()
+        #endif
+        view.blocks = MarkdownDocument(parsing: "first paragraph\n\nsecond ![alt](https://never-rendered.test/p.png)").blocks
+        _ = await eventually { view.currentSnapshot != nil }
+        let sliver = NSRange(location: 2, length: 3)
+        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: sliver))
+        #expect(result.granularity == .renderedFallback)
+        #expect(!result.text.contains("never-rendered.test"), "reconstruction ignored the selection: \(result.text.debugDescription)")
+        #expect(result.text == "rst")
+    }
+
+    /// A partial selection inside a block with provable boundaries returns that
+    /// block's whole source and says so, which is what `.blockExpanded` is for.
+    @Test func aPartialSelectionInsideARebuiltBlockReportsThatItExpanded() async throws {
+        let view = await self.view("text $x$ here\n\nsecond ![alt](https://e.com/p.png) and $y$ tail")
         defer { view.dismantleRenderSession() }
         let starts = try #require(view.currentSnapshot).blockStarts
         let sliver = NSRange(location: starts[1] + 2, length: 3)
         let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: sliver))
-        #expect(!result.text.contains("never-rendered.test"), "reconstruction ignored the selection: \(result.text.debugDescription)")
+        #expect(result.granularity == .blockExpanded)
+        #expect(result.text.hasPrefix("second "))
+    }
+
+    /// Two adjacent rebuilt paragraphs are two origin blocks, not one run: each
+    /// has its own provable anchor and end, so each is copyable on its own.
+    @Test func adjacentRebuiltBlocksAreSeparatelyCopyable() async throws {
+        let view = await self.view("alpha $x$ one\n\nbeta $y$ two")
+        defer { view.dismantleRenderSession() }
+        let starts = try #require(view.currentSnapshot).blockStarts
+        let firstOnly = NSRange(location: starts[0], length: starts[1] - 1 - starts[0])
+        let result = try #require(view.markdownSourceSelectionResult(forRenderedRange: firstOnly))
+        #expect(result.text == "alpha $x$ one")
+        #expect(result.granularity == .exact)
+        #expect(!result.text.contains("beta"))
+    }
+
+    /// A streamed document and a one-shot one are the same document, so they must
+    /// copy identically. The node-level differential cannot see this: `==` on
+    /// `ParsedBlockNode` ignores the anchors source copy reads as proofs.
+    @Test func streamingProducesTheSameCopyAsSettingTheWholeSource() async throws {
+        let source = "text $x$  \n\nmiddle\n\n$$\n  y  \n$$\n\ntail"
+        let whole = await self.view(source)
+        defer { whole.dismantleRenderSession() }
+        let streamed = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 360, height: 10000))
+        defer { streamed.dismantleRenderSession() }
+        #if canImport(UIKit)
+        streamed.layoutIfNeeded()
+        #else
+        streamed.layoutSubtreeIfNeeded()
+        #endif
+        streamed.setMarkdown("")
+        for chunk in source.map(String.init) {
+            streamed.appendMarkdown(chunk)
+        }
+        #expect(await eventually { streamed.currentSnapshot?.displayModel.source == source })
+        let starts = try #require(whole.currentSnapshot).blockStarts
+        #expect(try #require(streamed.currentSnapshot).blockStarts == starts)
+        for index in starts.indices {
+            let end = index + 1 < starts.count ? starts[index + 1] - 1 : try #require(whole.currentSnapshot).attributedString.length
+            let range = NSRange(location: starts[index], length: max(0, end - starts[index]))
+            let a = whole.markdownSourceSelectionResult(forRenderedRange: range)
+            let b = streamed.markdownSourceSelectionResult(forRenderedRange: range)
+            #expect(a?.text == b?.text, "block \(index) copied differently when streamed")
+            #expect(a?.granularity == b?.granularity, "block \(index) granularity differs when streamed")
+        }
     }
 
     // MARK: Commands and resources
