@@ -4,8 +4,9 @@ import SwiftUI
 extension EnvironmentValues {
     @Entry public var markdownRemoteImageConfiguration: MarkdownRemoteImageConfiguration = .disabled
     @Entry public var markdownResourceErrorHandler: MarkdownResourceErrorHandler? = nil
-    /// `nil` leaves each view on its own web-only default; the type is
-    /// `@MainActor`, so it cannot carry a main-actor default into this context.
+    /// The type is `@MainActor`, so it cannot carry a main-actor default into this
+    /// context; `nil` therefore means "unset", and a view that has had a
+    /// configuration installed reverts to the web-only default when it is cleared.
     @Entry public var markdownLinkConfiguration: MarkdownLinkConfiguration? = nil
 }
 

@@ -99,6 +99,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
         var lastImageReplacementID: UUID?
+        var hasInstalledLinkConfiguration = false
     }
 
     let source: MarkdownStreamingSource
@@ -135,7 +136,15 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         // Always forwarded, like the view's own didSet: identity is derived from
         // the policy's type, so a host that tightens a stateful policy produces an
         // equal identity. Suppressing here would leave the old policy deciding.
-        if let link = self.linkConfiguration { uiView.linkConfiguration = link }
+        // Clearing it reverts, once, on the edge: a host that revokes the
+        // configuration must not keep the permissive one it installed earlier.
+        if let link = self.linkConfiguration {
+            uiView.linkConfiguration = link
+            context.coordinator.hasInstalledLinkConfiguration = true
+        } else if context.coordinator.hasInstalledLinkConfiguration {
+            uiView.linkConfiguration = .platformDefault
+            context.coordinator.hasInstalledLinkConfiguration = false
+        }
         if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
             uiView.remoteImages = self.remoteImages
             context.coordinator.lastImageReplacementID = self.remoteImages.replacementID
@@ -193,6 +202,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         var lastMathRenderer: MathRendererConfiguration?
         var lastSVGBlockRenderer: SVGRendererConfiguration?
         var lastImageReplacementID: UUID?
+        var hasInstalledLinkConfiguration = false
     }
 
     let source: MarkdownStreamingSource
@@ -225,7 +235,15 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         // Always forwarded, like the view's own didSet: identity is derived from
         // the policy's type, so a host that tightens a stateful policy produces an
         // equal identity. Suppressing here would leave the old policy deciding.
-        if let link = self.linkConfiguration { nsView.linkConfiguration = link }
+        // Clearing it reverts, once, on the edge: a host that revokes the
+        // configuration must not keep the permissive one it installed earlier.
+        if let link = self.linkConfiguration {
+            nsView.linkConfiguration = link
+            context.coordinator.hasInstalledLinkConfiguration = true
+        } else if context.coordinator.hasInstalledLinkConfiguration {
+            nsView.linkConfiguration = .platformDefault
+            context.coordinator.hasInstalledLinkConfiguration = false
+        }
         if context.coordinator.lastImageReplacementID != self.remoteImages.replacementID {
             nsView.remoteImages = self.remoteImages
             context.coordinator.lastImageReplacementID = self.remoteImages.replacementID

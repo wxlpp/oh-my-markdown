@@ -216,6 +216,53 @@ struct MarkdownLinkPolicyTests {
         withExtendedLifetime(host) {}
     }
 
+    /// Revoking the configuration is the third shape of the same fail-open:
+    /// tightening a policy, replacing it, and taking it away entirely must all
+    /// reach the view. The environment entry is public and optional, so a host
+    /// can write `trusted ? config : nil` against one stable view identity.
+    @Test @MainActor func clearingTheConfigurationRevertsTheViewToTheWebOnlyDefault() async throws {
+        let handler = RecordingLinkHandler()
+        func content(installing configuration: MarkdownLinkConfiguration?) -> some View {
+            MarkdownText("[a](myapp://open)")
+                .environment(\.markdownLinkConfiguration, configuration)
+        }
+        let permissive = MarkdownLinkConfiguration(policy: AllowEverythingPolicy(), handler: handler)
+        #if canImport(UIKit)
+        let host = UIHostingController(rootView: content(installing: permissive))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        host.view.layoutIfNeeded()
+        #else
+        let host = NSHostingView(rootView: content(installing: permissive))
+        host.frame = CGRect(x: 0, y: 0, width: 320, height: 200)
+        host.layoutSubtreeIfNeeded()
+        #endif
+        let label = try #require(await settleForLabel(in: host))
+        #expect(await eventually { label.currentSnapshot != nil })
+        #expect(label.activateLink(at: 0))
+        #expect(await eventually { handler.opened.count == 1 })
+
+        host.rootView = content(installing: nil)
+        #if canImport(UIKit)
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        #else
+        host.needsLayout = true
+        host.layoutSubtreeIfNeeded()
+        #endif
+        let driver = try #require(label.sessionDriver)
+        #expect(await eventually { driver.linkConfiguration.policyID == WebOnlyMarkdownLinkPolicy.identity })
+
+        #expect(label.activateLink(at: 0))
+        for _ in 0 ..< 300 {
+            await Task.yield()
+        }
+        #expect(handler.opened.count == 1, "the revoked policy still opened a custom scheme")
+        withExtendedLifetime(host) {}
+    }
+
     @Test @MainActor func replacementBumpsTheConfigurationGenerationOnTheRealDriver() async throws {
         let handler = RecordingLinkHandler()
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
@@ -492,6 +539,15 @@ struct MarkdownEditorLinkAttributeTests {
         let textView = try #require(scrollView.documentView as? NSTextView)
         let storage = try #require(textView.textStorage)
         #expect(!textView.isRichText)
+        // `isRichText` does not gate link detection: with detection on, typing a
+        // URL into a plain-text view produces a real `.link` run.
+        #expect(!textView.isAutomaticLinkDetectionEnabled)
+        #expect(textView.enabledTextCheckingTypes & NSTextCheckingResult.CheckingType.link.rawValue == 0)
+        // Edit > Substitutions > Smart Links must not be able to turn it back on.
+        textView.toggleAutomaticLinkDetection(nil)
+        #expect(!textView.isAutomaticLinkDetectionEnabled)
+        // And however a run got there, the click is consumed rather than opened.
+        #expect(try editor.textView(textView, clickedOnLink: #require(URL(string: "https://evil.test/x")), at: 0))
         #endif
         #expect(storage.length > 0)
         var found: [NSRange] = []

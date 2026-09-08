@@ -27,7 +27,7 @@ for required in "$handler" "$editor" "$markup"; do
     fi
 done
 
-openers='(?:^|[^A-Za-z0-9])(?:UIApplication|NSWorkspace|LSApplicationWorkspace|LSOpen\w*|SFSafariViewController|SFAuthenticationSession|ASWebAuthenticationSession|WKWebView|UIWindowScene|UIScene|OpenURLAction|openURL|UIDocumentInteractionController|UIActivityViewController|NSSharingService\w*|NSTask|Process|posix_spawn\w*|execv\w*|NSAppleScript|NSDocumentController|NSHelpManager|SKStoreProductViewController|MFMailComposeViewController|dataDetectorTypes)\b'
+openers='(?:^|[^A-Za-z0-9])(?:UIApplication|NSWorkspace|LSApplicationWorkspace|LSOpen\w*|SFSafariViewController|SFAuthenticationSession|ASWebAuthenticationSession|WKWebView|UIWindowScene|UIScene|OpenURLAction|openURL|UIDocumentInteractionController|UIActivityViewController|NSSharingService\w*|NSTask|Process|posix_spawn\w*|execv\w*|popen|NSAppleScript|NSDocumentController|NSHelpManager|SKStoreProductViewController|MFMailComposeViewController|dataDetectorTypes)\b'
 # A text view opens a `.link` run by itself. `NSTextField` is the same mechanism
 # reached under another name: it vends an `NSTextView` as its field editor.
 # Not a leading `\b`: `\bLSOpen` does not match `_LSOpenURLsWithRole`, and
@@ -37,7 +37,7 @@ text_views='\b(?:UITextView|NSTextView|NSTextField)\b'
 # SwiftUI renders a `.link` run in an AttributedString through the environment's
 # OpenURLAction, with no opener name anywhere in the source. Confining the views
 # that can render one is the only lever this instrument has on that family.
-swiftui_views='\b(?:Link|Text)\b'
+swiftui_views='\b(?:Link|Text|ShareLink|TextEditor|TextField)\b'
 
 count=0
 while IFS= read -r -d '' file; do
@@ -56,7 +56,12 @@ while IFS= read -r -d '' file; do
     # real and worth knowing: code inside a string interpolation, a name reached
     # through NSClassFromString, and a function-typed indirection such as
     # `var open: ((URL) -> Void)?` — which names nothing at all — are invisible
-    # here. This is a regression tripwire, not a proof.
+    # here. `system` is deliberately absent: the word is too common to inventory
+    # without false positives. This is a regression tripwire, not a proof.
+    #
+    # The blanking relies on leftmost-match, not on alternation order: a `"""`
+    # inside a comment cannot swallow code, because the comment alternative starts
+    # earlier and therefore wins.
     blanked="$(perl -0777 -e '
         open(my $handle, "<", $ARGV[0]) or exit 1;
         my $text = do { local $/; <$handle> };

@@ -16,8 +16,11 @@ public struct MarkdownLinkRequest: Sendable, Equatable {
     /// materializes them. Kept because the decision contract is public API and a
     /// policy that discriminates by position needs it; do not read it as dead.
     public let sourceRange: MarkdownSourceRange?
-    /// Configuration generation the activation was captured at. Revalidated
-    /// against the live generation before the handler runs.
+    /// Render configuration generation the activation was captured at, carried
+    /// for the policy's own use. It is **not** what gates activation: the
+    /// generation also moves on width and style changes, so a private
+    /// link-configuration revision is revalidated instead. Do not assume a
+    /// generation change voids a tap.
     public let configurationGeneration: UInt64
     public init(url: URL, sourceRange: MarkdownSourceRange? = nil, configurationGeneration: UInt64) {
         self.url = url

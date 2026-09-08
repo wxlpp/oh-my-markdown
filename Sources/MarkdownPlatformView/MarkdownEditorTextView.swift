@@ -722,6 +722,15 @@ public final class MarkdownEditorTextView: NSView, NSTextViewDelegate {
         self.onSelectionChange?(MarkdownEditorSelection(selection))
     }
 
+    /// Consumes the click. This view shows raw markdown source, so no run in it
+    /// may reach an opener — and `isRichText = false` does not prevent one from
+    /// existing: the standard Edit > Substitutions > Smart Links menu item calls
+    /// `toggleAutomaticLinkDetection` on a plain-text view, after which typing a
+    /// URL puts a real `.link` run in the storage. Returning `true` means handled.
+    public func textView(_: NSTextView, clickedOnLink _: Any, at _: Int) -> Bool {
+        true
+    }
+
     public func textView(
         _ textView: NSTextView,
         shouldChangeTextIn affectedCharRange: NSRange,
@@ -889,6 +898,7 @@ public final class MarkdownEditorTextView: NSView, NSTextViewDelegate {
         self.textView.isAutomaticQuoteSubstitutionEnabled = self.editorOptions.smartQuotesEnabled
         self.textView.isAutomaticDashSubstitutionEnabled = self.editorOptions.smartDashesEnabled
         self.textView.isContinuousSpellCheckingEnabled = !self.editorOptions.autocorrectionDisabled
+        self.textView.isAutomaticLinkDetectionEnabled = false
         self.scrollView.hasVerticalScroller = self.editorOptions.isScrollEnabled
     }
 
@@ -1099,6 +1109,10 @@ private final class PlatformEditorTextView: NSTextView {
     override var undoManager: UndoManager? {
         super.undoManager ?? self.fallbackUndoManager
     }
+
+    /// Standard Edit > Substitutions > Smart Links. Left as a no-op so the editor
+    /// cannot start writing `.link` runs into a source buffer.
+    override func toggleAutomaticLinkDetection(_: Any?) {}
 
     weak var owner: MarkdownEditorTextView?
 
