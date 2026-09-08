@@ -69,6 +69,10 @@ public struct MarkdownStreamingText: View {
     }
 
     public var body: some View {
+        // The platform view is an accessibility *container*: it publishes one
+        // element per semantic leaf. Without this, SwiftUI collapses a
+        // representable's children into a single node and VoiceOver reads the
+        // whole document in one breath, which is what a reader actually got.
         _MarkdownStreamingTextRepresentable(
             source: self.source,
             style: self.style,
@@ -79,6 +83,7 @@ public struct MarkdownStreamingText: View {
             selectionProxy: self.selectionProxy,
             resourceErrorHandler: self.resourceErrorHandler
         )
+        .accessibilityElement(children: .contain)
     }
 
     @Environment(\.markdownStyle) private var style

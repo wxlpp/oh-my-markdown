@@ -11,7 +11,7 @@
       "合法公式 → .rendered，尺寸为正",
       "Smoke markdown parses one heading",
       "testRootDemoIsAccessible()",
-      "testRenderedMarkdownReachesTheAccessibilityTree()",
+      "testRenderedMarkdownIsTraversedElementByElement()",
       "testTheRenderedDocumentGrowsWithTheTextSize()"
     ]
   },
@@ -48,6 +48,7 @@
     ],
     "requiredTests": [
       "theExposedLeafSequenceIsTheDocumentReadInOrder()",
+      "theLabelIsNeverALeafEvenWhenToldToBeOne()",
       "everyElementHasItsOwnRealLayoutFrame()",
       "aLinkElementActivatesThroughThePolicy()",
       "appendingReusesThePlatformObjectsOfSurvivingLeaves()"

@@ -13,27 +13,41 @@ final class ExampleUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["markdownkit.example.root"].waitForExistence(timeout: 10))
     }
 
-    /// End-to-end check that rendered markdown reaches the accessibility tree
-    /// with something to say.
+    /// The rendered document must reach the accessibility tree as **many**
+    /// elements in reading order, not as one.
     ///
-    /// It deliberately does *not* assert one element per semantic leaf. Through
-    /// SwiftUI hosting the XCUITest tree shows the whole document as a single
-    /// element, while the view itself exposes four (see
-    /// `MarkdownAccessibilityPlatformTests`); which of the two VoiceOver actually
-    /// traverses could not be determined in this environment, and the Task 10
-    /// record carries the measurement.
-    func testRenderedMarkdownReachesTheAccessibilityTree() {
+    /// It read as one for the whole of this branch until a reader reported it:
+    /// the view conforms to `UITextInput`, and UIKit answers `isAccessibilityElement`
+    /// with `true` for such a view whatever the stored property says, so the 134
+    /// elements the view had built were never asked for. Counting elements here
+    /// is the only place that can catch that — the view's own array was correct
+    /// throughout.
+    @MainActor
+    func testRenderedMarkdownIsTraversedElementByElement() {
         let app = XCUIApplication()
         app.launch()
-        XCTAssertTrue(app.otherElements["markdownkit.example.root"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.otherElements["markdownkit.example.root"].waitForExistence(timeout: 15))
 
         let texts = app.staticTexts
         XCTAssertTrue(texts.element(boundBy: 0).waitForExistence(timeout: 10))
-        // First five only: XCUITest's element queries are slow enough that
-        // walking a whole rendered document dominates the suite's runtime.
-        for index in 0 ..< min(texts.count, 5) {
-            XCTAssertFalse(texts.element(boundBy: index).label.isEmpty, "an exposed element speaks nothing")
+        // The sample document has well over a hundred leaves; the nav title alone
+        // is one element, which is what a collapsed document used to look like.
+        XCTAssertGreaterThan(texts.count, 20, "the document collapsed into a single element")
+
+        // Reading order, from the top of the sample: title, its paragraph, the
+        // next heading. Only the first few, because a query per element is slow.
+        let labels = (0 ..< min(texts.count, 6)).map { texts.element(boundBy: $0).label }
+        for label in labels {
+            XCTAssertFalse(label.isEmpty, "an exposed element speaks nothing")
         }
+        XCTAssertTrue(
+            labels.contains { $0.hasPrefix("基于 TextKit 2") },
+            "the opening paragraph is not its own element: \(labels)"
+        )
+        XCTAssertTrue(
+            labels.contains("文字格式"),
+            "the second heading is not its own element: \(labels)"
+        )
     }
 
     /// The reader's text size has to reach the rendered document through the real

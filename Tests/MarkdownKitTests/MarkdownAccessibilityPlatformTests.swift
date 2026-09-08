@@ -345,3 +345,22 @@ struct MarkdownAccessibilityPlatformTests {
         #expect(self.elements(view).first !== before)
     }
 }
+
+#if canImport(UIKit)
+@MainActor
+@Suite(.timeLimit(.minutes(1)), .serialized)
+struct AccessibilityContainerRoleTests {
+    /// The view must report itself as a container, and it must keep reporting so
+    /// after an assignment. UIKit answers `true` for a `UITextInput` view
+    /// regardless of the stored property, which is why this is an override — and
+    /// why a future refactor back to `self.isAccessibilityElement = false` has to
+    /// turn this red.
+    @Test func theLabelIsNeverALeafEvenWhenToldToBeOne() {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        defer { view.dismantleRenderSession() }
+        #expect(!view.isAccessibilityElement)
+        view.isAccessibilityElement = true
+        #expect(!view.isAccessibilityElement, "the view reported itself as one element")
+    }
+}
+#endif
