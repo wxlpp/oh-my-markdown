@@ -6,4 +6,6 @@ Each fixture ID is SHA-256 of source, layout width and placeholder mode joined w
 
 Reproduction: create a detached temporary worktree at the base commit. Instrument `RenderMigrationParityTests.assertParity` to export the legacy side with the `canonicalAttributes` and layout functions in the current test. Export the two overflow table oracle strings separately at their natural width. Run `swift test --filter RenderMigrationParityTests` and `xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:MarkdownKitTests/RenderMigrationParityTests`.
 
+Task 11 amended the list-item paragraph rows of the two list fixtures: their `defaultTabInterval` moved from 0 to the item tab stop. It is the only field that changed, and it changed because a paragraph with no interval past its last tab stop drops the rest of a line whose marker passes that stop — `10.` at an accessibility text size lost its item text. Nothing else in schema 1 is re-exported.
+
 Changes to these expectations require explicit review against the base implementation. Runtime logs and export hashes are recorded in the Task 4C report.

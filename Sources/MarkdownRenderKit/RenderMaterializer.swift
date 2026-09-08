@@ -164,7 +164,13 @@ package struct RenderMaterializer {
         result.minimumLineHeight = value.height
         result.maximumLineHeight = value.height
         if value.centered { result.alignment = .center }
-        if let tab = value.tab { result.tabStops = [NSTextTab(textAlignment: .natural, location: tab)] }
+        if let tab = value.tab {
+            result.tabStops = [NSTextTab(textAlignment: .natural, location: tab)]
+            // Past its last tab stop a paragraph has nowhere to put a tab, and
+            // TextKit drops the rest of the line instead of wrapping it: `10.` at
+            // an accessibility size is wider than `tab` and would lose its item.
+            result.defaultTabInterval = tab
+        }
         return result.copy() as! NSParagraphStyle
     }
 

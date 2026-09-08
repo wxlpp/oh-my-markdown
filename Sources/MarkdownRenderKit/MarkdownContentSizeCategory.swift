@@ -90,6 +90,17 @@ extension MarkdownContentSizeCategory {
 }
 #endif
 
+/// The same font at a different size. AppKit's initialiser is failable and its
+/// only documented failure is a descriptor it cannot realize, which a font we
+/// were just handed is not.
+func resized(_ font: PlatformFont, to size: CGFloat) -> PlatformFont {
+    #if canImport(UIKit)
+    UIFont(descriptor: font.fontDescriptor, size: size)
+    #else
+    NSFont(descriptor: font.fontDescriptor, size: size) ?? font
+    #endif
+}
+
 /// A custom font that follows the reader's text-size setting.
 ///
 /// A font set directly on `RenderStyle` is a fixed size by design — a host that

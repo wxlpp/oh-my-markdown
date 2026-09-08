@@ -29,11 +29,13 @@ struct DynamicTypeTests {
     @Test(arguments: [
         MarkdownTextRole.body, .code, .heading(level: 1), .heading(level: 3), .heading(level: 6),
     ])
-    func defaultMetricsGrowMonotonicallyWithTheCategory(role: MarkdownTextRole) {
+    func defaultMetricsGrowMonotonicallyWithTheCategory(role: MarkdownTextRole) throws {
         let sizes = Self.ascending.map { self.sizes($0, role: role) }
         #expect(sizes.allSatisfy { $0 > 0 })
         #expect(zip(sizes, sizes.dropFirst()).allSatisfy { $0 <= $1 }, "\(role) is not monotonic: \(sizes)")
-        #expect(sizes.last! > sizes.first!, "\(role) never grows: \(sizes)")
+        let first = try #require(sizes.first)
+        let last = try #require(sizes.last)
+        #expect(last > first, "\(role) never grows: \(sizes)")
     }
 
     /// The accessibility categories are the point of the feature: a reader who
@@ -57,6 +59,24 @@ struct DynamicTypeTests {
         // And ordered among themselves.
         let headings = (1 ... 6).map { self.sizes(category, role: .heading(level: $0)) }
         #expect(zip(headings, headings.dropFirst()).allSatisfy { $0 >= $1 }, "heading order inverted: \(headings)")
+    }
+
+    /// Ordering alone is not hierarchy: on iOS each heading follows its own text
+    /// style's curve, which damps where `.body`'s does not, and the default h2
+    /// fell to 1.07x body at the maximum category while h4 fell below it. A
+    /// scaled heading keeps at least the square root of the ratio it was declared
+    /// at, which is the declared ratio itself at the default size.
+    @Test(arguments: MarkdownContentSizeCategory.allCases)
+    func headingsKeepAtLeastTheSquareRootOfTheirDeclaredRatio(category: MarkdownContentSizeCategory) {
+        let declaredBody = self.sizes(.large, role: .body)
+        let body = self.sizes(category, role: .body)
+        for level in 1 ... 6 {
+            let role = MarkdownTextRole.heading(level: level)
+            let ratio = self.sizes(.large, role: role) / declaredBody
+            let floor = body * min(ratio, ratio.squareRoot())
+            let resolved = self.sizes(category, role: role)
+            #expect(resolved >= floor - 0.001, "h\(level) is \(resolved) at \(category), under its floor of \(floor)")
+        }
     }
 
     /// A host that set an exact font is documenting an exact size. It must not
@@ -93,23 +113,27 @@ struct DynamicTypeTests {
     /// The category is part of what a snapshot *is*, so a change to it has to be
     /// a different configuration — otherwise a cached render is reused at the
     /// wrong size.
-    @Test func theCategoryParticipatesInConfigurationIdentity() {
+    @Test func theCategoryParticipatesInConfigurationIdentity() throws {
         let large = MarkdownRenderConfiguration.default(contentSizeCategory: .large)
         let huge = MarkdownRenderConfiguration.default(contentSizeCategory: .accessibilityLarge)
         #expect(large.configurationID != huge.configurationID)
         #expect(large.configurationID == MarkdownRenderConfiguration.default(contentSizeCategory: .large).configurationID)
-        #expect(large.snapshot(generation: 0).typography.pointSizes[.body]! < huge.snapshot(generation: 0).typography.pointSizes[.body]!)
+        let largeBody = try #require(large.snapshot(generation: 0).typography.pointSizes[.body])
+        let hugeBody = try #require(huge.snapshot(generation: 0).typography.pointSizes[.body])
+        #expect(largeBody < hugeBody)
     }
 
     /// A host style keeps the identity the host gave it, so a size change has to
     /// arrive as a new generation rather than a new id.
-    @Test func aHostStyleKeepsItsIdentityAndStillResolvesAtTheCategory() {
+    @Test func aHostStyleKeepsItsIdentityAndStillResolvesAtTheCategory() throws {
         let id = MarkdownConfigurationID.semantic(namespace: "host-style", version: 1)
         var style = RenderStyle.fixedDefault
         style.scaleFontWithContentSize(for: .body)
         let large = MarkdownRenderConfiguration(style: style, configurationID: id, contentSizeCategory: .large)
         let huge = MarkdownRenderConfiguration(style: style, configurationID: id, contentSizeCategory: .accessibilityExtraExtraExtraLarge)
         #expect(large.configurationID == huge.configurationID)
-        #expect(large.snapshot(generation: 0).typography.pointSizes[.body]! < huge.snapshot(generation: 1).typography.pointSizes[.body]!)
+        let largeBody = try #require(large.snapshot(generation: 0).typography.pointSizes[.body])
+        let hugeBody = try #require(huge.snapshot(generation: 1).typography.pointSizes[.body])
+        #expect(largeBody < hugeBody)
     }
 }

@@ -229,7 +229,7 @@ private struct PreparationBuilder {
         case .blockquote(let children):
             let old = (width, mode, quoteColor, resolves, quoteIndent)
             let indent = self.quoteIndent ?? self.configuration.spacing.quoteIndent
-            self.width = .greatestFiniteMagnitude; self.mode = .streaming; self.quoteColor = true; self.resolves = false; self.quoteIndent = indent + 16
+            self.width = .greatestFiniteMagnitude; self.mode = .streaming; self.quoteColor = true; self.resolves = false; self.quoteIndent = indent + 16 * self.configuration.spacing.chromeScale
             var result: [PreparedPiece] = []
             for (index, child) in children.enumerated() {
                 try self.checkCancellation()
@@ -316,7 +316,14 @@ private struct PreparationBuilder {
             let marker = start.map { "\($0 + index).\t" } ?? "•\t"
             let checkbox = switch item.checkbox { case .checked: "☑ "; case .unchecked: "☐ "; case nil: "" }
             var attrs = self.body()
-            attrs.paragraph = PreparedParagraph(lineSpacing: 3, spacing: depth == 0 ? 4 : 2, head: Double(24 * (depth + 1)), first: Double(24 * depth), tab: Double(24 * (depth + 1)))
+            let indent = self.configuration.spacing.listIndent
+            // The gap between two items is what separates them from a wrapped
+            // line of one item, so it has to grow with the line it separates.
+            let chrome = self.configuration.spacing.chromeScale
+            attrs.paragraph = PreparedParagraph(
+                lineSpacing: 3 * chrome, spacing: (depth == 0 ? 4 : 2) * chrome,
+                head: indent * Double(depth + 1), first: indent * Double(depth), tab: indent * Double(depth + 1)
+            )
             let itemLeaf = self.accessibilityLeaf
             self.accessibilityLeaf = PreparationBuilder.markerLeaf
             result.append(.run(self.text(marker + checkbox, attributes: attrs)))

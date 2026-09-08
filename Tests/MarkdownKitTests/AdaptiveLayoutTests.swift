@@ -38,13 +38,23 @@ struct AdaptiveLayoutTests {
     | a value | another value | a third value | a fourth value |
     """
 
+    /// Ordered items only: the wide table in `source` is laid out at its natural
+    /// width on purpose, so it cannot share a horizontal-containment assertion.
+    /// It starts at 9 so the run crosses into two-digit markers, which are wide
+    /// enough to pass the item tab stop at an accessibility size.
+    private static let orderedListSource = """
+    9. A ninth item with enough text that it has to wrap onto a further line here
+    10. tenth
+    11. eleventh
+    """
+
     private static let width: CGFloat = 320
 
     /// The math block is appended rather than parsed, and it is display math on
     /// purpose: only display math reserves a static placeholder attachment, and
     /// that attachment's bounds are the ones taken from the body metric.
     private static func blocks() -> [BlockNode] {
-        MarkdownDocument(parsing: source).blocks + [.mathBlock(latex: "x^2 + y^2 = z^2")]
+        MarkdownDocument(parsing: self.source).blocks + [.mathBlock(latex: "x^2 + y^2 = z^2")]
     }
 
     /// Lays the produced string out in the same TextKit 2 configuration the label
@@ -66,6 +76,27 @@ struct AdaptiveLayoutTests {
             return true
         }
         return rects
+    }
+
+    /// The text TextKit actually placed into line fragments, which is not the
+    /// string that went in: an unplaceable run leaves no fragment behind.
+    private static func laidOutText(_ string: NSAttributedString, width: CGFloat) -> String {
+        let contentStorage = NSTextContentStorage()
+        let layoutManager = NSTextLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: width, height: 0))
+        container.lineFragmentPadding = 0
+        layoutManager.textContainer = container
+        contentStorage.addTextLayoutManager(layoutManager)
+        contentStorage.attributedString = string
+        layoutManager.ensureLayout(for: layoutManager.documentRange)
+        var placed = ""
+        layoutManager.enumerateTextLayoutFragments(from: nil, options: [.ensuresLayout]) { fragment in
+            for line in fragment.textLineFragments {
+                placed += line.attributedString.attributedSubstring(from: line.characterRange).string
+            }
+            return true
+        }
+        return placed
     }
 
     @Test(arguments: [MarkdownContentSizeCategory.extraSmall, .large, .accessibilityLarge, .accessibilityExtraExtraExtraLarge])
@@ -100,6 +131,25 @@ struct AdaptiveLayoutTests {
         // Chrome alone moves this document by 1.07x; the text moves it by 5.27x.
         // The threshold is what separates "the type scaled" from "only the margins did".
         #expect(height(.accessibilityExtraExtraExtraLarge) > large * 2)
+    }
+
+    /// An ordered marker is as wide as the type it is set in, so at accessibility
+    /// sizes `1.` is wider than a fixed 24 pt tab stop. A run that overflows its
+    /// paragraph's last tab stop is not wrapped — TextKit drops the rest of the
+    /// line, and the item keeps its height while losing its text.
+    @Test(arguments: [MarkdownContentSizeCategory.large, .accessibilityLarge, .accessibilityExtraExtraExtraLarge])
+    func anOrderedItemKeepsItsTextAtEveryCategory(category: MarkdownContentSizeCategory) {
+        var fixture = MaterializationFixture(availableWidth: Self.width, placeholderMode: .static)
+        fixture.contentSizeCategory = category
+        let string = fixture.render(MarkdownDocument(parsing: Self.orderedListSource).blocks)
+        let placed = Self.laidOutText(string, width: Self.width)
+        #expect(placed.contains("further line here"), "the ninth item lost its tail at \(category): \(placed.debugDescription)")
+        #expect(placed.contains("tenth"), "a two-digit item lost its text at \(category): \(placed.debugDescription)")
+        #expect(placed.contains("eleventh"))
+        for rect in Self.fragments(string, width: Self.width) {
+            #expect(rect.minX < Self.width, "a line begins past the container at \(category): \(rect)")
+            #expect(rect.maxX <= Self.width + 0.5, "a line runs past the container at \(category): \(rect)")
+        }
     }
 
     /// A table that already overflows must keep overflowing rather than being

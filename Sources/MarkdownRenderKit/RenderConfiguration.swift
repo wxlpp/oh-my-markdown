@@ -75,12 +75,26 @@ public struct SpacingTokens: Sendable, Equatable {
     public let block: Double
     public let codeInsets: Double
     public let quoteIndent: Double
+    /// Where a list item's text starts, per nesting level, and the item
+    /// paragraph's tab interval: a marker wider than one level lands on the next
+    /// one rather than passing the paragraph's last tab stop.
+    public let listIndent: Double
+    /// What the reader's text size multiplies a chrome constant by. Exposed so
+    /// the incidental gaps that have no token of their own — list item spacing,
+    /// the nested-quote step — follow the text instead of staying at their
+    /// default-size value.
+    public let chromeScale: Double
 
-    public init(paragraph: Double, block: Double, codeInsets: Double, quoteIndent: Double = 0) {
+    public init(
+        paragraph: Double, block: Double, codeInsets: Double, quoteIndent: Double = 0,
+        listIndent: Double = 24, chromeScale: Double = 1
+    ) {
         self.paragraph = paragraph
         self.block = block
         self.codeInsets = codeInsets
         self.quoteIndent = quoteIndent
+        self.listIndent = listIndent
+        self.chromeScale = chromeScale
     }
 }
 

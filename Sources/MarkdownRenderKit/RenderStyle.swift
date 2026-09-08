@@ -278,14 +278,32 @@ public struct RenderStyle {
                 .resolve(contentSizeCategory: contentSizeCategory)
         }
         let body = font(.body, self.bodyFont)
+        /// A heading follows its own text style's curve, and those damp where
+        /// `.body` does not: on iOS at the maximum category the default h2 lands
+        /// at 1.07x body rather than the 1.50x it was declared at, and h4 falls
+        /// below body. Hierarchy is what a heading is for, so a scaled heading
+        /// keeps at least the square root of its declared ratio — the full ratio
+        /// at the default size, damped but never collapsed at the largest.
+        func hierarchical(_ role: MarkdownTextRole, _ resolved: PlatformFont) -> PlatformFont {
+            guard let declared = self.scaledBaseSizes[role], Double(self.font(for: role).pointSize) == declared,
+                  let declaredBody = self.scaledBaseSizes[.body], Double(self.bodyFont.pointSize) == declaredBody
+            else { return resolved }
+            let ratio = declared / declaredBody
+            let floor = Double(body.pointSize) * min(ratio, ratio.squareRoot())
+            guard Double(resolved.pointSize) < floor else { return resolved }
+            return resized(resolved, to: CGFloat(floor))
+        }
+        func heading(_ level: Int, _ fixed: PlatformFont) -> PlatformFont {
+            hierarchical(.heading(level: level), font(.heading(level: level), fixed))
+        }
         let fonts: [MarkdownTextRole: PlatformFont] = [
             .body: body, .code: font(.code, self.codeFont),
-            .heading(level: 1): font(.heading(level: 1), self.h1Font),
-            .heading(level: 2): font(.heading(level: 2), self.h2Font),
-            .heading(level: 3): font(.heading(level: 3), self.h3Font),
-            .heading(level: 4): font(.heading(level: 4), self.h4Font),
-            .heading(level: 5): font(.heading(level: 5), self.h5Font),
-            .heading(level: 6): font(.heading(level: 6), self.h6Font),
+            .heading(level: 1): heading(1, self.h1Font),
+            .heading(level: 2): heading(2, self.h2Font),
+            .heading(level: 3): heading(3, self.h3Font),
+            .heading(level: 4): heading(4, self.h4Font),
+            .heading(level: 5): heading(5, self.h5Font),
+            .heading(level: 6): heading(6, self.h6Font),
             .listMarker: body, .table: body, .caption: body,
         ]
         let descriptors = fonts.mapValues {
@@ -309,8 +327,9 @@ public struct RenderStyle {
         // maximum-category document scaled linearly is mostly margin.
         let chrome = contentSizeCategory.chromeScale
         let spacing = SpacingTokens(
-            paragraph: Double(paragraphSpacing) * chrome, block: Double(paragraphSpacing) * chrome,
-            codeInsets: 8 * chrome, quoteIndent: Double(quoteIndent) * chrome
+            paragraph: Double(self.paragraphSpacing) * chrome, block: Double(self.paragraphSpacing) * chrome,
+            codeInsets: 8 * chrome, quoteIndent: Double(self.quoteIndent) * chrome,
+            listIndent: 24 * chrome, chromeScale: chrome
         )
         /// The built-in identity includes every normalized token. Length-prefixed
         /// strings avoid ambiguity; sorted roles/keys avoid dictionary order.
@@ -334,7 +353,7 @@ public struct RenderStyle {
         for key in additional.keys.sorted() {
             identity += field(key) + field(color(additional[key]!))
         }
-        for value in [spacing.paragraph, spacing.block, spacing.codeInsets, spacing.quoteIndent, Double(self.mathScale)] {
+        for value in [spacing.paragraph, spacing.block, spacing.codeInsets, spacing.quoteIndent, spacing.listIndent, spacing.chromeScale, Double(self.mathScale)] {
             identity += field(String(value == 0 ? 0 : value))
         }
         let id = configurationID ?? (usesPreferredMetrics ? .semantic(namespace: "MarkdownKit.default:" + identity, version: 1) : .uniqueInstance())
