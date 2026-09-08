@@ -469,3 +469,21 @@ struct MarkdownImageLoaderTests {
         }
     }
 }
+
+@Suite(.timeLimit(.minutes(1)))
+struct SanitizedOriginDescriptionTests {
+    /// The description is what a host logs or shows, so it must carry no more
+    /// than the type promises: never a path, a query or a fragment.
+    @Test(arguments: [
+        ("https://example.test/secret/path?token=abc#frag", "https://example.test"),
+        ("http://example.test:8080/a", "http://example.test:8080"),
+        ("https://example.test:443/a", "https://example.test"),
+        ("http://example.test:80/a", "http://example.test"),
+        ("https://EXAMPLE.test/A", "https://example.test"),
+    ])
+    func theDescriptionIsSchemeHostAndOnlyANonDefaultPort(source: String, expected: String) throws {
+        let url = try #require(URL(string: source))
+        let origin = try #require(SanitizedMarkdownOrigin(url: url))
+        #expect(origin.description == expected)
+    }
+}

@@ -71,6 +71,15 @@ public struct SanitizedMarkdownOrigin: Sendable, Equatable {
     }
 }
 
+extension SanitizedMarkdownOrigin: CustomStringConvertible {
+    /// `scheme://host` with the port only when it is not the scheme's default.
+    /// Safe to log or show: by construction there is no path, query or fragment
+    /// here to leak.
+    public var description: String {
+        self.port.map { "\(self.scheme)://\(self.host):\($0)" } ?? "\(self.scheme)://\(self.host)"
+    }
+}
+
 public struct MarkdownResourceFailure: Sendable, Equatable {
     public let category: MarkdownResourceError
     public let origin: SanitizedMarkdownOrigin?
