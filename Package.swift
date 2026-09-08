@@ -5,6 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "MarkdownKit",
+    defaultLocalization: "en",
     platforms: [.iOS(.v18), .macOS(.v15)],
     products: [
         // Consumer-facing umbrella product — import MarkdownKit to get SwiftUI views.
@@ -59,7 +60,8 @@ let package = Package(
         // Handles text selection and streaming updates at the native layer.
         .target(
             name: "MarkdownPlatformView",
-            dependencies: ["MarkdownRenderKit"]
+            dependencies: ["MarkdownRenderKit"],
+            resources: [.process("Resources")]
         ),
 
         // MARK: - MarkdownKit

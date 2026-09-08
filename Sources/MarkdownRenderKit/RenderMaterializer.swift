@@ -207,8 +207,18 @@ package struct RenderMaterializer {
         return self.syntaxIndex < self.syntaxSpans.count ? self.syntaxSpans[self.syntaxIndex].spans : []
     }
 
+    /// A copy must never contain the object-replacement character an attachment
+    /// occupies, so every attachment carries the text that stands in for it.
+    private func copyText(of run: PreparedRun) -> String {
+        run.copyText ?? run.text
+    }
+
     private mutating func materializeRun(_ run: PreparedRun, resources: ResolvedResourceSnapshot, owners: inout [any ResourceResidencyOwner]) -> NSAttributedString {
         var attrs = self.attributes(run.attributes)
+        let copy = self.copyText(of: run)
+        if let source = run.sourceText { attrs[.markdownCopySource] = source }
+        var semantic: [NSAttributedString.Key: Any] = [.markdownCopyText: copy]
+        if let source = run.sourceText { semantic[.markdownCopySource] = source }
         switch run.kind {
         case .text: return NSAttributedString(string: run.text, attributes: attrs)
         case .code:
@@ -221,7 +231,7 @@ package struct RenderMaterializer {
                 owners.append(owner)
                 let maxWidth = width.isFinite ? max(1, width) : 280
                 let scale = image.size.width > maxWidth ? maxWidth / image.size.width : 1
-                return self.attachment(image: image, bounds: CGRect(x: 0, y: -4, width: image.size.width * scale, height: image.size.height * scale))
+                return self.attachment(image: image, bounds: CGRect(x: 0, y: -4, width: image.size.width * scale, height: image.size.height * scale), attributes: semantic)
             }
             attrs[.markdownImageSource] = source
             return NSAttributedString(string: run.text, attributes: attrs)
@@ -231,12 +241,12 @@ package struct RenderMaterializer {
                 let image = owner.image
                 let baseline = owner.baselineOffset
                 owners.append(owner)
-                return self.attachment(image: image, bounds: CGRect(x: 0, y: baseline, width: image.size.width, height: image.size.height), attributes: display ? [.paragraphStyle: para!] : [:])
+                return self.attachment(image: image, bounds: CGRect(x: 0, y: baseline, width: image.size.width, height: image.size.height), attributes: display ? semantic.merging([.paragraphStyle: para!]) { a, _ in a } : semantic)
             }
             let payload = "\(display ? "1" : "0")\u{1F}\(latex)"
             if staticPlaceholder {
                 let pointSize = self.configuration.typography.pointSizes[.body] ?? 16
-                return self.attachment(image: nil, bounds: CGRect(x: 0, y: 0, width: width.isFinite ? width : pointSize * 10, height: max(1, pointSize * 2)), attributes: [.paragraphStyle: para!, .markdownMathSource: payload])
+                return self.attachment(image: nil, bounds: CGRect(x: 0, y: 0, width: width.isFinite ? width : pointSize * 10, height: max(1, pointSize * 2)), attributes: semantic.merging([.paragraphStyle: para!, .markdownMathSource: payload]) { a, _ in a })
             }
             attrs[.markdownMathSource] = payload
             return NSAttributedString(string: run.text, attributes: attrs)
@@ -250,10 +260,10 @@ package struct RenderMaterializer {
             if resolves, case .svg(let owner) = resources.values[id] {
                 let image = owner.image
                 owners.append(owner)
-                return self.attachment(image: image, bounds: CGRect(origin: .zero, size: image.size), attributes: [.paragraphStyle: self.paragraph(centered)])
+                return self.attachment(image: image, bounds: CGRect(origin: .zero, size: image.size), attributes: semantic.merging([.paragraphStyle: self.paragraph(centered)]) { a, _ in a })
             }
             if staticPlaceholder {
-                return self.attachment(image: nil, bounds: CGRect(x: 0, y: 0, width: placeholderWidth, height: placeholderHeight), attributes: [.paragraphStyle: self.paragraph(centered), .markdownSVGBlockSource: source])
+                return self.attachment(image: nil, bounds: CGRect(x: 0, y: 0, width: placeholderWidth, height: placeholderHeight), attributes: semantic.merging([.paragraphStyle: self.paragraph(centered), .markdownSVGBlockSource: source]) { a, _ in a })
             }
             let result = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(run.text, spans: spans, font: self.font(for: .code), defaultColor: self.preparedColor(.code)))
             result.addAttributes([.paragraphStyle: attrs[.paragraphStyle]!, .markdownSVGBlockSource: source], range: NSRange(location: 0, length: result.length))
@@ -312,7 +322,9 @@ package struct RenderMaterializer {
             var attrs = body
             if index == 0 { attrs[.font] = self.font(for: .body).bold() }
             attrs[.paragraphStyle] = para.copy() as! NSParagraphStyle
-            let line = NSMutableAttributedString(string: "\t", attributes: attrs)
+            var leading = attrs
+            leading[.markdownCopySkip] = true
+            let line = NSMutableAttributedString(string: "\t", attributes: leading)
             for (cellIndex, value) in row.enumerated() {
                 if cellIndex > 0 { line.append(NSAttributedString(string: "\t", attributes: attrs)) }
                 let content = NSMutableAttributedString(attributedString: value)
@@ -326,11 +338,12 @@ package struct RenderMaterializer {
         }
         if natural > table.width + 0.5 {
             let height = TableMeasurement.height(of: result, naturalWidth: natural)
+            let tsv = TableMeasurement.copyText(of: result)
             if table.overlayEligible {
                 overlays[self.currentBlockIndex] = RenderTableOverlay(attributedString: result, naturalWidth: natural, height: height, style: self.resolvedStyle(), resourceOwners: Array(owners[ownerStart...]))
             }
             let para = self.paragraph(PreparedParagraph(lineSpacing: 0, head: table.quoteIndent, first: table.quoteIndent, height: height))
-            return NSAttributedString(string: "\u{00A0}", attributes: [.font: PlatformFont.systemFont(ofSize: 1), .foregroundColor: PlatformColor.clear, .paragraphStyle: para, .markdownTableSection: 0, .markdownTableColumns: count, .markdownTableColumnWidths: widths, .markdownTableNaturalWidth: natural, .markdownOverflowTablePlaceholder: true])
+            return NSAttributedString(string: "\u{00A0}", attributes: [.font: PlatformFont.systemFont(ofSize: 1), .foregroundColor: PlatformColor.clear, .paragraphStyle: para, .markdownTableSection: 0, .markdownTableColumns: count, .markdownTableColumnWidths: widths, .markdownTableNaturalWidth: natural, .markdownOverflowTablePlaceholder: true, .markdownCopyText: tsv])
         }
         if table.quoteIndent != 0 {
             result.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: result.length)) { value, range, _ in

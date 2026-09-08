@@ -173,16 +173,18 @@ struct RenderMigrationParityTests {
         #expect(markdownSourceForRenderedSelection(renderedRange: NSRange(location: 1, length: 2), renderedPlainText: snapshot.attributedString.string, blockStarts: snapshot.blockStarts, parsedBlocks: document.parsedBlocks, renderedLength: snapshot.attributedString.length, originalSource: "") == "😀")
     }
 
+    /// Task 9 replaced the all-or-nothing fallback this used to pin: a block the
+    /// math transform rebuilt carries no source range, but its bytes still lie
+    /// between the ranges of the blocks around it, so they are recoverable.
     @Test
-    func mathBackfillWithoutSourceRangesKeepsLegacyCopyFallback() async throws {
+    func mathBackfillWithoutSourceRangesRecoversBytesBetweenNeighbouringRanges() async throws {
         let source = "**A😀**\n\n$$\nx\n$$\n\nlast"
         let pair = try await render(source, width: 120, mode: .static)
         let blocks = try #require(pair.snapshot.displayModel.preparedBlocks)
         #expect(blocks[1].sourceRange == nil)
         #expect(pair.snapshot.blockStarts == [0, 4, 6])
-        for text in [pair.snapshot.attributedString] {
-            #expect(markdownSourceForRenderedSelection(renderedRange: NSRange(location: 1, length: 4), renderedPlainText: text.string, blockStarts: [0, 4, 6], parsedBlocks: blocks, renderedLength: text.length, originalSource: source) == "😀\n\u{FFFC}")
-        }
+        let text = pair.snapshot.attributedString
+        #expect(markdownSourceForRenderedSelection(renderedRange: NSRange(location: 1, length: 4), renderedPlainText: text.string, blockStarts: [0, 4, 6], parsedBlocks: blocks, renderedLength: text.length, originalSource: source) == "**A😀**\n\n$$\nx\n$$")
     }
 
     @Test
@@ -357,13 +359,25 @@ struct RenderMigrationParityTests {
     }
 }
 
+/// Copy metadata is not rendering: it changes no glyph, and leaving it in would
+/// also split runs at boundaries the golden fixtures never had. Stripped before
+/// comparison; `MarkdownCopyTests` is what pins it.
+func strippingCopyMetadata(_ text: NSAttributedString) -> NSAttributedString {
+    let stripped = NSMutableAttributedString(attributedString: text)
+    let whole = NSRange(location: 0, length: stripped.length)
+    for key in [NSAttributedString.Key.markdownCopyText, .markdownCopySource, .markdownCopySkip] {
+        stripped.removeAttribute(key, range: whole)
+    }
+    return stripped
+}
+
 @MainActor
 func canonicalAttributes(_ text: NSAttributedString) -> [[String: String]] {
     func number(_ value: CGFloat) -> String {
         String(format: "%.6f", Double(value))
     }
     var rows: [[String: String]] = []
-    text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, range, _ in
+    strippingCopyMetadata(text).enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, range, _ in
         var row = ["range": "\(range.location):\(range.length)"]
         for (key, value) in attributes {
             let encoded: String

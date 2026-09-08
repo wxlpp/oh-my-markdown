@@ -305,9 +305,30 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     /// AppKit first-responder copy entry point (Edit menu / `cmd+C`); mirrors the
     /// iOS copy entry point (not an NSView override — NSView has no `copy(_:)`).
     /// `@objc` is sufficient for responder-chain dispatch; `public` is not needed.
+    /// Cmd-C and the Edit menu: exactly the selected text, as a reader sees it.
+    /// Copying the Markdown source is a separate, explicit command — before
+    /// Task 9 this pasted the whole source block of anything the selection
+    /// touched, which is more than the user selected.
     @objc
     func copy(_: Any?) {
-        self.performCopy()
+        guard let result = renderedSelectionResult() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(result.text, forType: .string)
+    }
+
+    @objc
+    public func copyMarkdownSource(_: Any?) {
+        guard let result = markdownSourceSelectionResult() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(result.text, forType: .string)
+    }
+
+    override public func menu(for event: NSEvent) -> NSMenu? {
+        guard self.currentRenderedSelectionRange() != nil else { return nil }
+        let menu = NSMenu()
+        menu.addItem(withTitle: MarkdownCopyCommandTitle.markdownSource, action: #selector(self.copyMarkdownSource(_:)), keyEquivalent: "")
+        menu.items.forEach { $0.target = self }
+        return menu
     }
 
     @objc
@@ -320,6 +341,23 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             ),
         ]
         needsDisplay = true
+    }
+
+    /// Rendered offsets of the active selection, or `nil` when nothing is
+    /// selected. Kept per platform so the shared copy code needs no access to
+    /// the private TextKit objects.
+    func currentRenderedSelectionRange() -> NSRange? {
+        guard
+            let selection = layoutManager.textSelections.first,
+            let range = selection.textRanges.first else { return nil }
+        let start = self.contentStorage.offset(from: self.contentStorage.documentRange.location, to: range.location)
+        let end = self.contentStorage.offset(from: self.contentStorage.documentRange.location, to: range.endLocation)
+        guard start < end else { return nil }
+        return NSRange(location: start, length: end - start)
+    }
+
+    var renderedAttributedStringForCopy: NSAttributedString? {
+        self.contentStorage.attributedString
     }
 
     /// Test-support: select the entire document. Mirrors the iOS seam so the
@@ -790,6 +828,23 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     /// Maps a rendered selection range to the original Markdown source it
     /// covers (block-level). Symmetric with the iOS implementation; shared
     /// logic lives in the file-scope `markdownSourceForRenderedSelection`.
+    func markdownSourceCopy(
+        forRenderedRange range: NSRange, renderedPlainText: String,
+        renderedFallback: @escaping (NSRange) -> String,
+        reconstructedSource: @escaping (NSRange) -> (text: String, hadSource: Bool)
+    ) -> MarkdownCopyResult {
+        MarkdownPlatformView.markdownSourceCopy(
+            renderedRange: range,
+            renderedPlainText: renderedPlainText,
+            blockStarts: self.blockStarts,
+            parsedBlocks: self.parsedBlocks,
+            renderedLength: self._liveString.length,
+            originalSource: self.lastParsedSource,
+            renderedFallback: renderedFallback,
+            reconstructedSource: reconstructedSource
+        )
+    }
+
     func copyString(forRenderedRange range: NSRange, renderedPlainText: String) -> String {
         markdownSourceForRenderedSelection(
             renderedRange: range,

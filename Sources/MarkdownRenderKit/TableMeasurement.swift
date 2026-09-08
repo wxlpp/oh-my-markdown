@@ -27,6 +27,13 @@ extension NSAttributedString.Key {
     /// render time* by `TableMeasurement.height` (the same algorithm the overlay's
     /// `TableContentView` uses), so the main-stack reservation and the overlay
     /// height are constructively equal — no platform write-back needed.
+    /// Semantic text to substitute for a character that carries no readable text
+    /// of its own — an attachment, or an overflow table's placeholder.
+    public static let markdownCopyText = NSAttributedString.Key("MarkdownKit.copyText")
+    /// Layout-only character: present for tab stops, never part of a copy.
+    public static let markdownCopySkip = NSAttributedString.Key("MarkdownKit.copySkip")
+    /// Markdown syntax for a character whose block carries no parser source range.
+    public static let markdownCopySource = NSAttributedString.Key("MarkdownKit.copySource")
     public static let markdownOverflowTablePlaceholder
         = NSAttributedString.Key("MarkdownKit.overflowTablePlaceholder")
 }
@@ -43,6 +50,22 @@ extension NSAttributedString.Key {
 /// happen to agree within a tolerance.
 @MainActor
 public enum TableMeasurement {
+    /// Text of an already-materialized table: cells keep the tabs between them,
+    /// rows keep their newlines, and layout-only characters are dropped.
+    package static func copyText(of table: NSAttributedString) -> String {
+        let plain = table.string as NSString
+        var result = ""
+        table.enumerateAttributes(in: NSRange(location: 0, length: table.length), options: []) { attributes, range, _ in
+            if attributes[.markdownCopySkip] != nil { return }
+            if let semantic = attributes[.markdownCopyText] as? String {
+                result += semantic
+                return
+            }
+            result += plain.substring(with: range)
+        }
+        return result
+    }
+
     /// The single height arithmetic core: `ceil(usageBoundsForTextContainer
     /// .height) + 16` (the +16 chrome inset). Both entry points
     /// (`height(of:naturalWidth:)` building its own stack, and

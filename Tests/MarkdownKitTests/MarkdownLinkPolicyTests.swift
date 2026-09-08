@@ -499,7 +499,7 @@ private func resourceIdentifiers(of snapshot: RenderSnapshot) -> Set<String> {
 }
 
 @MainActor
-private func settleForLabel(in root: Any) async -> MarkdownLabelView? {
+func settleForLabel(in root: Any) async -> MarkdownLabelView? {
     for _ in 0 ..< 200 {
         if let found = firstLabel(in: root) { return found }
         await Task.yield()
@@ -508,7 +508,7 @@ private func settleForLabel(in root: Any) async -> MarkdownLabelView? {
 }
 
 @MainActor
-private func firstLabel(in root: Any) -> MarkdownLabelView? {
+func firstLabel(in root: Any) -> MarkdownLabelView? {
     #if canImport(UIKit)
     guard let view = (root as? UIViewController)?.view ?? root as? UIView else { return nil }
     if let label = view as? MarkdownLabelView { return label }

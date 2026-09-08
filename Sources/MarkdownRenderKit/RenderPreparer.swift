@@ -78,11 +78,11 @@ private struct PreparationBuilder {
         return PreparedRun(text: "\n", attributes: attrs)
     }
 
-    mutating func text(_ value: String, attributes: PreparedAttributes, kind: PreparedRunKind = .text, resource: ResourceID? = nil) -> PreparedRun {
+    mutating func text(_ value: String, attributes: PreparedAttributes, kind: PreparedRunKind = .text, resource: ResourceID? = nil, copyText: String? = nil, sourceText: String? = nil) -> PreparedRun {
         // String values are shared here; no source payload is inspected or copied.
         self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, MemoryLayout<DisplayRun>.stride + MemoryLayout<PreparedRun>.stride)
         self.runs.append(DisplayRun(text: resource != nil && self.mode == .static ? "\u{FFFC}" : value, role: attributes.role ?? .body, sourceRange: self.sourceRange, resourceID: resource))
-        return PreparedRun(text: value, attributes: attributes, kind: kind)
+        return PreparedRun(text: value, attributes: attributes, kind: kind, copyText: copyText, sourceText: sourceText)
     }
 
     mutating func resource(_ make: (ResourceID) -> UnresolvedResource) -> ResourceID {
@@ -124,11 +124,11 @@ private struct PreparationBuilder {
                 attrs.color = .image
                 let label = alt.isEmpty ? (source.isEmpty ? "image" : source) : alt
                 try self.payload(label.utf8.count + 5)
-                result.append(self.text("🖼 \(label)", attributes: attrs, kind: .image(id: id, source: source, width: self.width, resolves: self.resolves), resource: id))
+                result.append(self.text("🖼 \(label)", attributes: attrs, kind: .image(id: id, source: source, width: self.width, resolves: self.resolves), resource: id, copyText: label, sourceText: "![\(alt)](\(source))"))
             case .math(let latex):
                 let id = self.resource { .math(id: $0, latex: latex, display: false) }
                 attrs.role = .code; attrs.traits = []; attrs.color = .secondary
-                result.append(self.text(latex, attributes: attrs, kind: .math(id: id, latex: latex, display: false, width: self.width, staticPlaceholder: false, resolves: self.resolves), resource: id))
+                result.append(self.text(latex, attributes: attrs, kind: .math(id: id, latex: latex, display: false, width: self.width, staticPlaceholder: false, resolves: self.resolves), resource: id, sourceText: "$\(latex)$"))
             }
         }
         return result
@@ -178,7 +178,7 @@ private struct PreparationBuilder {
                     placeholderWidth = self.width.isFinite && self.width > 0 ? self.width : 480
                     placeholderHeight = placeholderWidth * 0.6
                 }
-                return [.run(self.text(trimmed, attributes: attrs, kind: .svg(id: id, source: body, placeholderWidth: placeholderWidth, placeholderHeight: max(1, placeholderHeight), staticPlaceholder: self.mode == .static, resolves: self.resolves), resource: id))]
+                return [.run(self.text(trimmed, attributes: attrs, kind: .svg(id: id, source: body, placeholderWidth: placeholderWidth, placeholderHeight: max(1, placeholderHeight), staticPlaceholder: self.mode == .static, resolves: self.resolves), resource: id, sourceText: "```svg\n\(body)\n```"))]
             }
             return [.run(self.text(trimmed, attributes: attrs, kind: .code(language: language)))]
         case .blockquote(let children):
@@ -214,7 +214,7 @@ private struct PreparationBuilder {
             let id = self.resource { .math(id: $0, latex: latex, display: true) }
             attrs.role = .code; attrs.color = .secondary
             attrs.paragraph = PreparedParagraph(lineSpacing: 0, spacing: self.configuration.spacing.paragraph, centered: true)
-            return [.run(self.text(latex, attributes: attrs, kind: .math(id: id, latex: latex, display: true, width: self.width, staticPlaceholder: self.mode == .static, resolves: self.resolves), resource: id))]
+            return [.run(self.text(latex, attributes: attrs, kind: .math(id: id, latex: latex, display: true, width: self.width, staticPlaceholder: self.mode == .static, resolves: self.resolves), resource: id, sourceText: "$$\(latex)$$"))]
         case .table(let columns, let head, let rows):
             var header = attrs; header.traits = [true]
             var preparedHead: [[PreparedRun]] = []

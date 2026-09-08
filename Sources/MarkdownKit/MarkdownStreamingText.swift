@@ -76,6 +76,7 @@ public struct MarkdownStreamingText: View {
             svgBlockRenderer: self.svgBlockRenderer,
             remoteImages: self.remoteImages,
             linkConfiguration: self.linkConfiguration,
+            selectionProxy: self.selectionProxy,
             resourceErrorHandler: self.resourceErrorHandler
         )
     }
@@ -85,6 +86,7 @@ public struct MarkdownStreamingText: View {
     @Environment(\.markdownSVGBlockRenderer) private var svgBlockRenderer
     @Environment(\.markdownRemoteImageConfiguration) private var remoteImages
     @Environment(\.markdownLinkConfiguration) private var linkConfiguration
+    @Environment(\.markdownSelectionProxy) private var selectionProxy
     @Environment(\.markdownResourceErrorHandler) private var resourceErrorHandler
 
     private let source: MarkdownStreamingSource
@@ -108,6 +110,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     let svgBlockRenderer: SVGRendererConfiguration?
     let remoteImages: MarkdownRemoteImageConfiguration
     let linkConfiguration: MarkdownLinkConfiguration?
+    let selectionProxy: MarkdownSelectionProxy?
     let resourceErrorHandler: MarkdownResourceErrorHandler?
 
     static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
@@ -138,6 +141,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         // equal identity. Suppressing here would leave the old policy deciding.
         // Clearing it reverts, once, on the edge: a host that revokes the
         // configuration must not keep the permissive one it installed earlier.
+        MarkdownSelectionProxy._attach(self.selectionProxy, to: uiView)
         if let link = self.linkConfiguration {
             uiView.linkConfiguration = link
             context.coordinator.hasInstalledLinkConfiguration = true
@@ -211,6 +215,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
     let svgBlockRenderer: SVGRendererConfiguration?
     let remoteImages: MarkdownRemoteImageConfiguration
     let linkConfiguration: MarkdownLinkConfiguration?
+    let selectionProxy: MarkdownSelectionProxy?
     let resourceErrorHandler: MarkdownResourceErrorHandler?
 
     static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
@@ -237,6 +242,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
         // equal identity. Suppressing here would leave the old policy deciding.
         // Clearing it reverts, once, on the edge: a host that revokes the
         // configuration must not keep the permissive one it installed earlier.
+        MarkdownSelectionProxy._attach(self.selectionProxy, to: nsView)
         if let link = self.linkConfiguration {
             nsView.linkConfiguration = link
             context.coordinator.hasInstalledLinkConfiguration = true

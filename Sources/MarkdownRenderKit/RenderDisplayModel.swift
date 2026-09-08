@@ -282,6 +282,14 @@ package struct PreparedRun: Equatable {
     package var text: String
     package var attributes: PreparedAttributes
     package var kind: PreparedRunKind = .text
+    /// What this run contributes to a *rendered* copy when it materializes as an
+    /// attachment and its `text` is therefore not in the string. `nil` means
+    /// `text` is already what a reader sees.
+    package var copyText: String?
+    /// The Markdown syntax this run came from, for blocks the parser could not
+    /// give a source range — a block-level formula lifted out of a paragraph has
+    /// none, so without this its source copy would silently lose the delimiters.
+    package var sourceText: String?
 }
 
 package struct PreparedTable: Equatable {
