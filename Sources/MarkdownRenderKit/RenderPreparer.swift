@@ -32,7 +32,15 @@ public struct RenderPreparer: Sendable {
             pieces += try builder.block(block.block, overlayEligible: true)
             builder.metadataBytes = ParseWorkMetrics.saturatingAdd(builder.metadataBytes, pieces.count * MemoryLayout<PreparedPiece>.stride)
             let display = DisplayBlock(lineage: builder.lineage, runs: builder.runs, sourceRange: block.sourceRange)
-            bundles.append(DisplayBlockBundle(block: display, resources: builder.resources, content: pieces, accessibilityRoots: []))
+            let accessibility = AccessibilityTreeBuilder.roots(
+                for: block.block, lineage: block.lineage, sourceRange: block.sourceRange,
+                sourceGeneration: self.configuration.generation,
+                imageFallback: AccessibilityTreeBuilder.imageFallback,
+                mathFallback: AccessibilityTreeBuilder.mathFallback
+            )
+            bundles.append(DisplayBlockBundle(
+                block: display, resources: builder.resources, content: pieces, accessibilityRoots: accessibility
+            ))
             builder.metadataBytes = ParseWorkMetrics.saturatingAdd(builder.metadataBytes, MemoryLayout<DisplayBlockBundle>.stride)
         }
         builder.metadataBytes = ParseWorkMetrics.saturatingAdd(builder.metadataBytes, 88)

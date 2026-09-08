@@ -51,7 +51,8 @@ let package = Package(
         // Platform-agnostic; no UIKit / AppKit / SwiftUI imports.
         .target(
             name: "MarkdownRenderKit",
-            dependencies: ["MarkdownCore"]
+            dependencies: ["MarkdownCore"],
+            resources: [.process("Resources")]
         ),
 
         // MARK: - MarkdownPlatformView

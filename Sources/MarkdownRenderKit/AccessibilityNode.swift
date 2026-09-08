@@ -13,13 +13,29 @@ public struct AccessibilityNodeID: Hashable, Sendable {
     public let role: AccessibilityRole
     public let startAnchor: Int
     public let lineage: UInt64
+    /// Position of the leaf inside its block. Two links in one paragraph share a
+    /// lineage and a source anchor — block ranges are the only ones the parser
+    /// records — so nothing else tells them apart. Not an end offset: it is
+    /// stable for every leaf before a growing tail, which is what keeps focus
+    /// from jumping on each streamed chunk.
+    public let ordinal: Int
 
-    public init(sourceGeneration: UInt64, role: AccessibilityRole, startAnchor: Int, lineage: UInt64) {
+    public init(
+        sourceGeneration: UInt64, role: AccessibilityRole, startAnchor: Int, lineage: UInt64, ordinal: Int = 0
+    ) {
         self.sourceGeneration = sourceGeneration
         self.role = role
         self.startAnchor = startAnchor
         self.lineage = lineage
+        self.ordinal = ordinal
     }
+}
+
+/// Role-specific metadata a screen reader needs beyond the label.
+public enum AccessibilityDetail: Sendable, Equatable {
+    case code(language: String?)
+    case cell(row: Int, column: Int, columnHeader: String?)
+    case listItem(position: Int, count: Int)
 }
 
 public enum AccessibilityActivation: Sendable, Equatable {
@@ -40,11 +56,12 @@ public struct AccessibilityNode: Sendable, Equatable {
     public let sourceRange: MarkdownSourceRange?
     public let children: [AccessibilityNode]
     public let activation: AccessibilityActivation?
+    public let detail: AccessibilityDetail?
 
     public init(
         id: AccessibilityNodeID, role: AccessibilityRole, label: String?,
         sourceRange: MarkdownSourceRange? = nil, children: [AccessibilityNode] = [],
-        activation: AccessibilityActivation? = nil
+        activation: AccessibilityActivation? = nil, detail: AccessibilityDetail? = nil
     ) {
         self.id = id
         self.role = role
@@ -52,5 +69,6 @@ public struct AccessibilityNode: Sendable, Equatable {
         self.sourceRange = sourceRange
         self.children = children
         self.activation = activation
+        self.detail = detail
     }
 }
