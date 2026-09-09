@@ -1,8 +1,8 @@
-import Testing
 import Foundation
-@testable import MarkdownPlatformView
 import MarkdownCore
+@testable import MarkdownPlatformView
 import MarkdownRenderKit
+import Testing
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -40,7 +40,7 @@ import AppKit
 /// 修复后预留高从首次渲染起即正确（RenderKit 渲染时按 naturalWidth 实测真实
 /// 高，与 overlay 同源），不依赖任何多趟回写收敛 → 单帧即等、无竞态。
 @MainActor
-@Suite("Wide table streaming reserved height == overlay height (Bug 1 redo)")
+@Suite("Wide table streaming reserved height == overlay height (Bug 1 redo)", .timeLimit(.minutes(1)))
 struct WideTableStreamingReservedHeightTests {
     /// 把一个明显宽于视图宽的多行表（needsScroll==true）切成若干 token，
     /// 表后紧跟 `## heading` 再加若干段 —— 这些尾段会让 tailReparseStartIndex
@@ -62,27 +62,6 @@ struct WideTableStreamingReservedHeightTests {
         return toks
     }
 
-    /// 仅等待流式 parse 把本 token 落地（blocks 数稳定一拍），**不**驱动任何
-    /// `layoutSubviews`/`layout()` 收敛——模拟快速流式中 token 比多趟 layout
-    /// 收敛更快的真实节奏。读取几何只走 `_blockFrameUnionForTesting` 内部的
-    /// `ensureLayout`（首帧必经的最小布局），故被测的就是「未收敛」状态。
-    private func waitForParse(_ view: MarkdownLabelView) async {
-        var lastCount = -1
-        var stable = 0
-        for _ in 0 ..< 40 {
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 10_000_000)
-            let c = view.blocks.count
-            if c == lastCount, c > 0 {
-                stable += 1
-                if stable >= 2 { return }
-            } else {
-                stable = 0
-            }
-            lastCount = c
-        }
-    }
-
     private func blockIndices(_ view: MarkdownLabelView) -> (table: Int?, heading: Int?) {
         var t: Int?
         var h: Int?
@@ -101,7 +80,7 @@ struct WideTableStreamingReservedHeightTests {
     /// naturalWidth 独立排版整表，与主文本布局无循环依赖。
     private func overlayTrueHeight(_ view: MarkdownLabelView, tableIndex: Int) -> CGFloat? {
         let viewWidth = view.bounds.width
-        let probeRenderer = AttributedStringRenderer(style: view.renderStyle, availableWidth: viewWidth)
+        let probeRenderer = MaterializationFixture(style: view.renderStyle, availableWidth: viewWidth)
         let probeRendered = probeRenderer.render(view.blocks)
         var naturalWidth: CGFloat = 0
         probeRendered.enumerateAttribute(
@@ -116,7 +95,7 @@ struct WideTableStreamingReservedHeightTests {
         guard naturalWidth > viewWidth + 0.5 else {
             return nil
         }
-        let tableRenderer = AttributedStringRenderer(style: view.renderStyle, availableWidth: naturalWidth)
+        let tableRenderer = MaterializationFixture(style: view.renderStyle, availableWidth: naturalWidth)
         let tableOnly = tableRenderer.renderBlock(view.blocks[tableIndex])
         let overlayContent = TableContentView(
             tableString: tableOnly,
@@ -129,7 +108,7 @@ struct WideTableStreamingReservedHeightTests {
     @Test("流式逐 token、仅首帧最小布局，宽表预留高恒等于 overlay 实测高（每个检查点无重叠）")
     func streamingPerTokenReservedHeightStaysEqualToOverlayHeight() async {
         let viewWidth: CGFloat = 360
-        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: viewWidth, height: 40_000))
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: viewWidth, height: 40000))
         // 初始一帧让 textContainer 宽度落定；此后不再驱动任何收敛布局趟数。
         #if canImport(UIKit)
         view.layoutIfNeeded()
@@ -138,16 +117,19 @@ struct WideTableStreamingReservedHeightTests {
         #endif
 
         let toks = Self.tokens()
+        let gate = ViewSnapshotGate()
+        var source = ""
         var checkpointFailures: [String] = []
         var checkpointsVerified = 0
 
         for (tokenIdx, tok) in toks.enumerated() {
+            source += tok
             if tokenIdx == 0 {
                 view.setMarkdown(tok)
             } else {
                 view.appendMarkdown(tok)
             }
-            await self.waitForParse(view)
+            await gate.wait(for: view) { view.currentSnapshot?.displayModel.source == source }
             // 故意不调用 layoutIfNeeded()/layoutSubtreeIfNeeded()：那会给
             // _writeBackOverflowTableHeight 的延迟再同步多趟收敛机会，掩盖竞态。
             // 几何只经 _blockFrameUnionForTesting 内部 ensureLayout 读取——这就

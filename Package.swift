@@ -5,7 +5,8 @@ import PackageDescription
 
 let package = Package(
     name: "MarkdownKit",
-    platforms: [.iOS(.v26), .macOS(.v26)],
+    defaultLocalization: "en",
+    platforms: [.iOS(.v18), .macOS(.v15)],
     products: [
         // Consumer-facing umbrella product — import MarkdownKit to get SwiftUI views.
         .library(name: "MarkdownKit", targets: ["MarkdownKit"]),
@@ -50,7 +51,8 @@ let package = Package(
         // Platform-agnostic; no UIKit / AppKit / SwiftUI imports.
         .target(
             name: "MarkdownRenderKit",
-            dependencies: ["MarkdownCore"]
+            dependencies: ["MarkdownCore"],
+            resources: [.process("Resources")]
         ),
 
         // MARK: - MarkdownPlatformView
@@ -59,7 +61,8 @@ let package = Package(
         // Handles text selection and streaming updates at the native layer.
         .target(
             name: "MarkdownPlatformView",
-            dependencies: ["MarkdownRenderKit"]
+            dependencies: ["MarkdownRenderKit"],
+            resources: [.process("Resources")]
         ),
 
         // MARK: - MarkdownKit
@@ -87,7 +90,8 @@ let package = Package(
 
         .testTarget(
             name: "MarkdownKitTests",
-            dependencies: ["MarkdownCore", "MarkdownRenderKit", "MarkdownPlatformView", "MarkdownKit"]
+            dependencies: ["MarkdownCore", "MarkdownRenderKit", "MarkdownPlatformView", "MarkdownKit"],
+            resources: [.copy("Fixtures/RenderGolden")]
         ),
         .testTarget(
             name: "MarkdownMathTests",

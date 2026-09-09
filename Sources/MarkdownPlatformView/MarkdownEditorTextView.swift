@@ -175,6 +175,14 @@ public final class MarkdownEditorTextView: UITextView, UITextViewDelegate {
         self.onSelectionChange?(MarkdownEditorSelection(selectedRange))
     }
 
+    /// Suppresses the system action for a `.link` run, the iOS counterpart of the
+    /// AppKit `clickedOnLink` backstop. This class *is* the text view on iOS, so a
+    /// host can set `dataDetectorTypes` on it directly; that plus
+    /// `isEditable = false` is system link activation with no policy behind it.
+    public func textView(_: UITextView, primaryActionFor _: UITextItem, defaultAction _: UIAction) -> UIAction? {
+        nil
+    }
+
     public func textView(
         _ textView: UITextView,
         shouldChangeTextIn range: NSRange,
@@ -242,7 +250,65 @@ public final class MarkdownEditorTextView: UITextView, UITextViewDelegate {
         smartDashesType = self.editorOptions.smartDashesEnabled ? .yes : .no
     }
 
+    private var syntaxRevision: UInt64 = 0
+    private(set) var syntaxTask: Task<Void, Never>?
+    package var prepareSyntax: @Sendable ([SyntaxHighlightKey]) async -> [SyntaxHighlightKey: [SyntaxHighlightSpan]] = { keys in
+        var spans: [SyntaxHighlightKey: [SyntaxHighlightSpan]] = [:]
+        for key in keys {
+            guard !Task.isCancelled else { return [:] }
+            spans[key] = await SyntaxHighlightCache.shared.spans(for: key.code, language: key.language)
+        }
+        return spans
+    }
+
+    package func cancelSyntaxHighlighting() {
+        self.syntaxRevision += 1
+        self.syntaxTask?.cancel()
+        self.syntaxTask = nil
+    }
+
+    private func scheduleSyntaxHighlighting() {
+        self.cancelSyntaxHighlighting()
+        let revision = self.syntaxRevision
+        let source = self.text ?? ""
+        let configuration = MarkdownRenderConfiguration(style: self.renderStyle).snapshot(generation: revision)
+        let requests = MarkdownSourceHighlighter(configuration: configuration).syntaxRequests(for: source)
+        guard !requests.isEmpty else { return }
+        let prepare = self.prepareSyntax
+        self.syntaxTask = Task { [weak self, prepare, source, configuration, requests] in
+            let spans = await prepare(requests)
+            guard !Task.isCancelled, let self, self.syntaxRevision == revision, self.text ?? "" == source else { return }
+            self.syntaxTask = nil
+            let highlighted = MarkdownSourceHighlighter(configuration: configuration).highlight(source, syntaxSpans: spans)
+            self.isApplyingProgrammaticChange = true
+            self.performWithoutUndoRegistration {
+                self.textStorage.beginEditing()
+                highlighted.enumerateAttributes(in: NSRange(location: 0, length: highlighted.length)) { attributes, range, _ in
+                    // `setAttributes`, not `addAttributes`: replacing wipes any
+                    // `.link` a detector or a paste left behind. Don't relax it.
+                    self.textStorage.setAttributes(attributes, range: range)
+                }
+                self.textStorage.endEditing()
+            }
+            self.isApplyingProgrammaticChange = false
+        }
+    }
+
+    isolated deinit { syntaxTask?.cancel() }
+
+    override public func didMoveToWindow() {
+        super.didMoveToWindow()
+        if self.window == nil { self.cancelSyntaxHighlighting() }
+    }
+
+    /// What makes this file's exemption from `check-link-activation.sh`'s text-view
+    /// inventory safe: the highlighter styles links with `.foregroundColor` and
+    /// never emits `.link`, so this storage holds nothing a text view would open.
+    /// `isRichText = false` does *not* provide that — it governs user-applied
+    /// attributes, not `setAttributedString`. Pinned by
+    /// `theEditorStorageNeverCarriesALinkAttribute`.
     private func applyCurrentHighlighting(preserving selection: NSRange? = nil) {
+        self.scheduleSyntaxHighlighting()
         let highlighted = MarkdownSourceHighlighter(style: renderStyle).highlight(text)
         let clampedSelection = (selection ?? selectedRange).clamped(to: highlighted.length)
         self.isApplyingProgrammaticChange = true
@@ -260,6 +326,7 @@ public final class MarkdownEditorTextView: UITextView, UITextViewDelegate {
     }
 
     private func applyIncrementalHighlighting(around editedRange: NSRange, preserving selection: NSRange) {
+        self.scheduleSyntaxHighlighting()
         let highlighter = MarkdownSourceHighlighter(style: renderStyle)
         let targetRange = highlighter.expandedHighlightRange(in: text, around: editedRange)
         guard targetRange.length > 0 else {
@@ -665,6 +732,15 @@ public final class MarkdownEditorTextView: NSView, NSTextViewDelegate {
         self.onSelectionChange?(MarkdownEditorSelection(selection))
     }
 
+    /// Consumes the click. This view shows raw markdown source, so no run in it
+    /// may reach an opener — and `isRichText = false` does not prevent one from
+    /// existing: the standard Edit > Substitutions > Smart Links menu item calls
+    /// `toggleAutomaticLinkDetection` on a plain-text view, after which typing a
+    /// URL puts a real `.link` run in the storage. Returning `true` means handled.
+    public func textView(_: NSTextView, clickedOnLink _: Any, at _: Int) -> Bool {
+        true
+    }
+
     public func textView(
         _ textView: NSTextView,
         shouldChangeTextIn affectedCharRange: NSRange,
@@ -832,10 +908,69 @@ public final class MarkdownEditorTextView: NSView, NSTextViewDelegate {
         self.textView.isAutomaticQuoteSubstitutionEnabled = self.editorOptions.smartQuotesEnabled
         self.textView.isAutomaticDashSubstitutionEnabled = self.editorOptions.smartDashesEnabled
         self.textView.isContinuousSpellCheckingEnabled = !self.editorOptions.autocorrectionDisabled
+        self.textView.isAutomaticLinkDetectionEnabled = false
         self.scrollView.hasVerticalScroller = self.editorOptions.isScrollEnabled
     }
 
+    private var syntaxRevision: UInt64 = 0
+    private(set) var syntaxTask: Task<Void, Never>?
+    package var prepareSyntax: @Sendable ([SyntaxHighlightKey]) async -> [SyntaxHighlightKey: [SyntaxHighlightSpan]] = { keys in
+        var spans: [SyntaxHighlightKey: [SyntaxHighlightSpan]] = [:]
+        for key in keys {
+            guard !Task.isCancelled else { return [:] }
+            spans[key] = await SyntaxHighlightCache.shared.spans(for: key.code, language: key.language)
+        }
+        return spans
+    }
+
+    package func cancelSyntaxHighlighting() {
+        self.syntaxRevision += 1
+        self.syntaxTask?.cancel()
+        self.syntaxTask = nil
+    }
+
+    private func scheduleSyntaxHighlighting() {
+        self.cancelSyntaxHighlighting()
+        let revision = self.syntaxRevision
+        let source = self.textView.string
+        let configuration = MarkdownRenderConfiguration(style: self.renderStyle).snapshot(generation: revision)
+        let requests = MarkdownSourceHighlighter(configuration: configuration).syntaxRequests(for: source)
+        guard !requests.isEmpty else { return }
+        let prepare = self.prepareSyntax
+        self.syntaxTask = Task { [weak self, prepare, source, configuration, requests] in
+            let spans = await prepare(requests)
+            guard !Task.isCancelled, let self, self.syntaxRevision == revision, self.textView.string == source else { return }
+            self.syntaxTask = nil
+            let highlighted = MarkdownSourceHighlighter(configuration: configuration).highlight(source, syntaxSpans: spans)
+            self.isApplyingProgrammaticChange = true
+            self.performWithoutUndoRegistration {
+                self.textView.textStorage?.beginEditing()
+                highlighted.enumerateAttributes(in: NSRange(location: 0, length: highlighted.length)) { attributes, range, _ in
+                    // `setAttributes`, not `addAttributes`: replacing wipes any
+                    // `.link` a detector or a paste left behind. Don't relax it.
+                    self.textView.textStorage?.setAttributes(attributes, range: range)
+                }
+                self.textView.textStorage?.endEditing()
+            }
+            self.isApplyingProgrammaticChange = false
+        }
+    }
+
+    isolated deinit { syntaxTask?.cancel() }
+
+    override public func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if self.window == nil { self.cancelSyntaxHighlighting() }
+    }
+
+    /// What makes this file's exemption from `check-link-activation.sh`'s text-view
+    /// inventory safe: the highlighter styles links with `.foregroundColor` and
+    /// never emits `.link`, so this storage holds nothing a text view would open.
+    /// `isRichText = false` does *not* provide that — it governs user-applied
+    /// attributes, not `setAttributedString`. Pinned by
+    /// `theEditorStorageNeverCarriesALinkAttribute`.
     private func applyCurrentHighlighting(preserving selection: NSRange? = nil) {
+        self.scheduleSyntaxHighlighting()
         let highlighted = MarkdownSourceHighlighter(style: renderStyle).highlight(self.textView.string)
         let clampedSelection = (selection ?? self.textView.selectedRange()).clamped(to: highlighted.length)
         self.isApplyingProgrammaticChange = true
@@ -850,6 +985,7 @@ public final class MarkdownEditorTextView: NSView, NSTextViewDelegate {
     }
 
     private func applyIncrementalHighlighting(around editedRange: NSRange, preserving selection: NSRange) {
+        self.scheduleSyntaxHighlighting()
         let highlighter = MarkdownSourceHighlighter(style: renderStyle)
         let targetRange = highlighter.expandedHighlightRange(in: self.textView.string, around: editedRange)
         guard targetRange.length > 0 else {
@@ -985,6 +1121,10 @@ private final class PlatformEditorTextView: NSTextView {
     override var undoManager: UndoManager? {
         super.undoManager ?? self.fallbackUndoManager
     }
+
+    /// Standard Edit > Substitutions > Smart Links. Left as a no-op so the editor
+    /// cannot start writing `.link` runs into a source buffer.
+    override func toggleAutomaticLinkDetection(_: Any?) {}
 
     weak var owner: MarkdownEditorTextView?
 

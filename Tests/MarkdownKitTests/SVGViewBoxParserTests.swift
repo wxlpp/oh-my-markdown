@@ -8,7 +8,7 @@ struct SVGViewBoxParserTests {
         let svg = #"<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320" viewBox="0 0 480 320"></svg>"#
         let aspect = SVGViewBoxParser.parseAspect(from: svg)
         #expect(aspect != nil)
-        #expect(abs((aspect ?? 0) - (320.0 / 480.0)) < 0.0001)   // h/w
+        #expect(abs((aspect ?? 0) - (320.0 / 480.0)) < 0.0001) // h/w
     }
 
     @Test func parsesDecimalViewBox() {
@@ -35,7 +35,7 @@ struct SVGViewBoxParserTests {
 
     @Test func returnsNilWhenWidthIsZero() {
         let svg = #"<svg viewBox="0 0 0 320"></svg>"#
-        #expect(SVGViewBoxParser.parseAspect(from: svg) == nil)   // 防 division by zero
+        #expect(SVGViewBoxParser.parseAspect(from: svg) == nil) // 防 division by zero
     }
 
     @Test func handlesSVGTagAfterXMLDeclaration() {
@@ -52,7 +52,7 @@ struct SVGViewBoxParserTests {
     @Test func bailsOutWhenSVGTagPastFirst4KB() {
         let padding = String(repeating: " ", count: 5000)
         let svg = padding + #"<svg viewBox="0 0 480 320"></svg>"#
-        #expect(SVGViewBoxParser.parseAspect(from: svg) == nil)   // 性能上限契约
+        #expect(SVGViewBoxParser.parseAspect(from: svg) == nil) // 性能上限契约
     }
 
     // MARK: parseSize — 完整 native viewBox 尺寸（fit-without-upscale 路径需要它）
@@ -81,7 +81,7 @@ struct SVGViewBoxParserTests {
     }
 
     @Test func parseSizeReturnsNilOnMalformedInputs() {
-        #expect(SVGViewBoxParser.parseSize(from: "<svg/>") == nil)            // 无 viewBox
+        #expect(SVGViewBoxParser.parseSize(from: "<svg/>") == nil) // 无 viewBox
         #expect(SVGViewBoxParser.parseSize(from: #"<svg viewBox="0 0 abc 320"></svg>"#) == nil)
         #expect(SVGViewBoxParser.parseSize(from: #"<svg viewBox="0 0 480"></svg>"#) == nil)
     }

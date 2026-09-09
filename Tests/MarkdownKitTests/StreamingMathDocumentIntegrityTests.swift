@@ -17,143 +17,144 @@ import Testing
 /// 实测得 block count==29、inlineMath==1、blockMath==1、宽表 cols=9 rows=5、
 /// 窄表 cols=3 rows=5；本守卫保留裸 `$` 原文，pandoc 规则下应得同一结构。
 @Suite("Streaming math document integrity (Bug 1)")
+@MainActor
 struct StreamingMathDocumentIntegrityTests {
     /// 与 Example/Sources/ContentView.swift StreamTab 完全一致的源文本。
     /// raw 多行字面量（自定义 `#"""…"""#` 定界符）：LaTeX 反斜杠与裸 `$`
     /// 均无需转义，内容逐字节忠实。
     private static let streamText = #"""
-# 流式输出演示
+    # 流式输出演示
 
-这段文字模拟了大语言模型 **逐 token** 输出的场景，覆盖了 MarkdownKit 支持的各类语法元素。
+    这段文字模拟了大语言模型 **逐 token** 输出的场景，覆盖了 MarkdownKit 支持的各类语法元素。
 
-## 工作原理
+    ## 工作原理
 
-每次收到新的文本 chunk，解析器会重新解析**整个累积字符串**，然后与上一次的块列表做 diff，只更新发生变化的区块，从而实现无闪烁的流式渲染。
+    每次收到新的文本 chunk，解析器会重新解析**整个累积字符串**，然后与上一次的块列表做 diff，只更新发生变化的区块，从而实现无闪烁的流式渲染。
 
-```swift
-// 核心增量渲染逻辑
-public func appendMarkdown(_ chunk: String) {
-    streamingSource += chunk
-    _parseTask?.cancel()          // 丢弃上一次未完成的解析
-    _parseTask = Task {
-        let newBlocks = await Task.detached(priority: .userInitiated) {
-            MarkdownDocument(parsing: streamingSource).blocks
-        }.value
-        applyBlocks(newBlocks,
-                    prevBlocks: prevBlocks,
-                    prevStarts: prevStarts)
-    }
-}
-```
-
-## 特性验证
-
-- [x] 增量渲染，无闪烁
-- [x] 标题实时出现，字体权重正确
-- [x] 代码块逐字显示，背景不跳动
-- [x] 表格实时建立，列宽稳定
-- [x] 引用块、列表、分割线
-- [ ] 代码语法高亮（规划中）
-- [ ] 图片内联（规划中）
-
-## 流式表格（窄）
-
-| 阶段 | 耗时 | 说明 |
-|------|-----:|------|
-| 解析 | ~0.3 ms | cmark 原生解析 |
-| 渲染 | ~0.5 ms | AttributedString 生成 |
-| 排版 | ~0.8 ms | TextKit 2 行片段 |
-| 绘制 | ~0.2 ms | Core Graphics |
-| **合计** | **~1.8 ms** | **60 fps 绰绰有余** |
-
-## 流式表格（宽 — 测试横向滚动）
-
-| 模型 | 提供商 | 上下文窗口 | 输出速度 | 多模态 | 函数调用 | 流式 | 延迟 | 价格/1M tokens |
-|------|--------|:----------:|:--------:|:------:|:--------:|:----:|:----:|---------------:|
-| GPT-4o | OpenAI | 128 k | 快 | ✅ | ✅ | ✅ | 低 | $5.00 |
-| Claude 4 Sonnet | Anthropic | 200 k | 快 | ✅ | ✅ | ✅ | 低 | $3.00 |
-| Gemini 2.5 Pro | Google | 1 M | 中 | ✅ | ✅ | ✅ | 中 | $3.50 |
-| Llama 3.3 70B | Meta | 128 k | 快 | ❌ | ✅ | ✅ | 低 | 开源 |
-| Qwen 2.5 72B | Alibaba | 128 k | 快 | ✅ | ✅ | ✅ | 低 | 开源 |
-
-## 适用场景
-
-1. **ChatGPT / Claude** 等 LLM 接口的实时响应展示
-2. **代码补全**预览，支持语法块渐进显示
-3. **文档生成**工具，边生成边预览
-4. 任何需要**渐进式文字展示**的场合
-
-## 代码示例 — SwiftUI 集成
-
-```swift
-struct ChatView: View {
-    @State private var markdown = ""
-
-    var body: some View {
-        ScrollView {
-            MarkdownText(markdown)
-                .padding()
+    ```swift
+    // 核心增量渲染逻辑
+    public func appendMarkdown(_ chunk: String) {
+        streamingSource += chunk
+        _parseTask?.cancel()          // 丢弃上一次未完成的解析
+        _parseTask = Task {
+            let newBlocks = await Task.detached(priority: .userInitiated) {
+                MarkdownDocument(parsing: streamingSource).blocks
+            }.value
+            applyBlocks(newBlocks,
+                        prevBlocks: prevBlocks,
+                        prevStarts: prevStarts)
         }
-        .task {
-            // 模拟流式接收
-            for try await token in llmStream {
-                markdown += token
+    }
+    ```
+
+    ## 特性验证
+
+    - [x] 增量渲染，无闪烁
+    - [x] 标题实时出现，字体权重正确
+    - [x] 代码块逐字显示，背景不跳动
+    - [x] 表格实时建立，列宽稳定
+    - [x] 引用块、列表、分割线
+    - [ ] 代码语法高亮（规划中）
+    - [ ] 图片内联（规划中）
+
+    ## 流式表格（窄）
+
+    | 阶段 | 耗时 | 说明 |
+    |------|-----:|------|
+    | 解析 | ~0.3 ms | cmark 原生解析 |
+    | 渲染 | ~0.5 ms | AttributedString 生成 |
+    | 排版 | ~0.8 ms | TextKit 2 行片段 |
+    | 绘制 | ~0.2 ms | Core Graphics |
+    | **合计** | **~1.8 ms** | **60 fps 绰绰有余** |
+
+    ## 流式表格（宽 — 测试横向滚动）
+
+    | 模型 | 提供商 | 上下文窗口 | 输出速度 | 多模态 | 函数调用 | 流式 | 延迟 | 价格/1M tokens |
+    |------|--------|:----------:|:--------:|:------:|:--------:|:----:|:----:|---------------:|
+    | GPT-4o | OpenAI | 128 k | 快 | ✅ | ✅ | ✅ | 低 | $5.00 |
+    | Claude 4 Sonnet | Anthropic | 200 k | 快 | ✅ | ✅ | ✅ | 低 | $3.00 |
+    | Gemini 2.5 Pro | Google | 1 M | 中 | ✅ | ✅ | ✅ | 中 | $3.50 |
+    | Llama 3.3 70B | Meta | 128 k | 快 | ❌ | ✅ | ✅ | 低 | 开源 |
+    | Qwen 2.5 72B | Alibaba | 128 k | 快 | ✅ | ✅ | ✅ | 低 | 开源 |
+
+    ## 适用场景
+
+    1. **ChatGPT / Claude** 等 LLM 接口的实时响应展示
+    2. **代码补全**预览，支持语法块渐进显示
+    3. **文档生成**工具，边生成边预览
+    4. 任何需要**渐进式文字展示**的场合
+
+    ## 代码示例 — SwiftUI 集成
+
+    ```swift
+    struct ChatView: View {
+        @State private var markdown = ""
+
+        var body: some View {
+            ScrollView {
+                MarkdownText(markdown)
+                    .padding()
+            }
+            .task {
+                // 模拟流式接收
+                for try await token in llmStream {
+                    markdown += token
+                }
             }
         }
     }
-}
-```
+    ```
 
-## 数学公式（流式）
+    ## 数学公式（流式）
 
-流式场景下数学公式同样增量渲染。行内：高斯求和 $1+2+\dots+n=\frac{n(n+1)}{2}$。块级：
+    流式场景下数学公式同样增量渲染。行内：高斯求和 $1+2+\dots+n=\frac{n(n+1)}{2}$。块级：
 
-$$e^{i\pi}+1=0$$
+    $$e^{i\pi}+1=0$$
 
-## 引用块测试
+    ## 引用块测试
 
-> **TextKit 2** 是苹果在 WWDC 2021 推出的全新文字排版引擎，以 `NSTextLayoutManager` 为核心。
->
-> 相比 TextKit 1，它提供了更精确的行片段布局、原生 RTL 支持以及更高效的懒加载渲染。
->
-> > 嵌套引用：`NSTextLayoutFragment` 是 TextKit 2 的最小布局单元，
-> > 每个段落、列表项、代码块都对应一个 fragment。
-> >
-> > > 三层嵌套：fragment 内部通过 `NSTextLineFragment` 表示单行，
-> > > 支持跨行的连字（ligature）与双向文字（bidi）。
+    > **TextKit 2** 是苹果在 WWDC 2021 推出的全新文字排版引擎，以 `NSTextLayoutManager` 为核心。
+    >
+    > 相比 TextKit 1，它提供了更精确的行片段布局、原生 RTL 支持以及更高效的懒加载渲染。
+    >
+    > > 嵌套引用：`NSTextLayoutFragment` 是 TextKit 2 的最小布局单元，
+    > > 每个段落、列表项、代码块都对应一个 fragment。
+    > >
+    > > > 三层嵌套：fragment 内部通过 `NSTextLineFragment` 表示单行，
+    > > > 支持跨行的连字（ligature）与双向文字（bidi）。
 
-## 嵌套列表
+    ## 嵌套列表
 
-- **解析层**
-  - `MarkdownParser` — 调用 swift-markdown，输出 `[BlockNode]`
-  - `BlockNode` — 统一的中间表示，与平台无关
-    - `.paragraph`, `.heading`, `.codeBlock`, `.table`…
-- **渲染层**
-  - `AttributedStringRenderer` — 值类型，线程安全
-    - 接收 `availableWidth`，内联计算 tab stops
-    - 溢出表格：文字置透明，写入 `.markdownTableNaturalWidth`
-- **显示层**
-  - `MarkdownLabelView` — 平台视图（UIView / NSView）
-    - TextKit 2 直接驱动，无中间层
-    - 溢出表格由 `_syncTableOverlays()` 注入独立 ScrollView
+    - **解析层**
+      - `MarkdownParser` — 调用 swift-markdown，输出 `[BlockNode]`
+      - `BlockNode` — 统一的中间表示，与平台无关
+        - `.paragraph`, `.heading`, `.codeBlock`, `.table`…
+    - **渲染层**
+      - `MaterializationFixture` — 值类型，线程安全
+        - 接收 `availableWidth`，内联计算 tab stops
+        - 溢出表格：文字置透明，写入 `.markdownTableNaturalWidth`
+    - **显示层**
+      - `MarkdownLabelView` — 平台视图（UIView / NSView）
+        - TextKit 2 直接驱动，无中间层
+        - 溢出表格由 `_syncTableOverlays()` 注入独立 ScrollView
 
----
+    ---
 
-## 性能指标
+    ## 性能指标
 
-在 iPhone 15 Pro 上，渲染 **500 行** Markdown（含表格、代码块、嵌套列表）：
+    在 iPhone 15 Pro 上，渲染 **500 行** Markdown（含表格、代码块、嵌套列表）：
 
-- 首次渲染：< **8 ms**
-- 流式追加（单 token）：< **2 ms**
-- 内存占用：< **4 MB**
-- CPU（持续流式）：< **3%**
+    - 首次渲染：< **8 ms**
+    - 流式追加（单 token）：< **2 ms**
+    - 内存占用：< **4 MB**
+    - CPU（持续流式）：< **3%**
 
-> 以上数据在 Release 模式、关闭 Instruments 附加的条件下测量。
+    > 以上数据在 Release 模式、关闭 Instruments 附加的条件下测量。
 
----
+    ---
 
-**流式输出完成！** 🎉 感谢体验 MarkdownKit。
-"""#
+    **流式输出完成！** 🎉 感谢体验 MarkdownKit。
+    """#
 
     /// Example 把源文本按 2 个字符切 token。
     private static func twoCharTokens(_ text: String) -> [String] {
@@ -188,10 +189,18 @@ $$e^{i\pi}+1=0$$
                 case .paragraph(let i), .heading(_, let i): walkInlines(i)
                 case .blockquote(let inner): walk(inner)
                 case .bulletList(let items), .orderedList(_, let items):
-                    for it in items { walk(it.blocks) }
+                    for it in items {
+                        walk(it.blocks)
+                    }
                 case .table(_, let head, let rows):
-                    for c in head { walkInlines(c.content) }
-                    for r in rows { for c in r { walkInlines(c.content) } }
+                    for c in head {
+                        walkInlines(c.content)
+                    }
+                    for r in rows {
+                        for c in r {
+                            walkInlines(c.content)
+                        }
+                    }
                 default: break
                 }
             }
@@ -203,7 +212,7 @@ $$e^{i\pi}+1=0$$
     private static func headingTexts(_ blocks: [BlockNode]) -> [String] {
         blocks.compactMap { b -> String? in
             guard case .heading(_, let ins) = b else { return nil }
-            return ins.compactMap { if case .text(let s) = $0 { return s } else { return nil } }.joined()
+            return ins.compactMap { if case .text(let s) = $0 { s } else { nil } }.joined()
         }
     }
 
@@ -241,7 +250,9 @@ $$e^{i\pi}+1=0$$
         for b in blocks {
             guard case .table(let c, let head, let rows) = b, c.count == 9 else { continue }
             var out = head.map { inlineText($0.content) }.joined(separator: "|")
-            for r in rows { out += "\n" + r.map { inlineText($0.content) }.joined(separator: "|") }
+            for r in rows {
+                out += "\n" + r.map { inlineText($0.content) }.joined(separator: "|")
+            }
             return out
         }
         return ""
@@ -267,7 +278,7 @@ $$e^{i\pi}+1=0$$
         #expect(hs.contains("代码示例 — SwiftUI 集成"), "[\(label)] '## 代码示例' heading swallowed")
         #expect(hs.contains("数学公式（流式）"), "[\(label)] '## 数学公式' heading swallowed")
         let codeBlocks = blocks.compactMap {
-            if case .codeBlock(_, let body) = $0 { return body } else { return nil as String? }
+            if case .codeBlock(_, let body) = $0 { body } else { nil as String? }
         }
         #expect(codeBlocks.count == 2, "[\(label)] expected 2 fenced code blocks, got \(codeBlocks.count)")
         // 裸价格列 `$` 必须以字面文本保留在宽表单元格 IR（未被当数学定界符吞掉，
@@ -279,7 +290,7 @@ $$e^{i\pi}+1=0$$
         #expect(!cells.contains("MATH("), "[\(label)] wide-table cell contains pseudo .math (bare $ mis-paired)")
         // 真实块级公式去定界符进 IR（不残留字面 $$）。
         let hasEuler = blocks.contains {
-            if case .mathBlock(let l) = $0 { return l == "e^{i\\pi}+1=0" } else { return false }
+            if case .mathBlock(let l) = $0 { l == "e^{i\\pi}+1=0" } else { false }
         }
         #expect(hasEuler, "[\(label)] block math e^{i\\pi}+1=0 not a clean mathBlock")
     }
@@ -287,7 +298,7 @@ $$e^{i\pi}+1=0$$
     @Test("忠实 Example 全量解析 MarkdownDocument(parsing:) 文档结构未损坏")
     func oneShotParseIntact() {
         let blocks = MarkdownDocument(parsing: Self.streamText).blocks
-        assertHealthy(blocks, "one-shot")
+        self.assertHealthy(blocks, "one-shot")
     }
 
     @Test("忠实 Example 流式 parsingAppend 逐 2-char token 文档结构未损坏")
@@ -302,7 +313,7 @@ $$e^{i\pi}+1=0$$
                 .parsingAppend(to: src, previousSource: prev)
             prev = src
         }
-        assertHealthy(doc.blocks, "streamed")
+        self.assertHealthy(doc.blocks, "streamed")
     }
 }
 
@@ -314,6 +325,7 @@ $$e^{i\pi}+1=0$$
 ///    在尾窗判定下返回 false（旧全篇扫描会 true），即含字面 `$` 文档流式
 ///    不再每 token 全量 = 消除 O(n²)。
 @Suite("Open math delimiter narrowed to reparse tail window (Bug 1 perf)")
+@MainActor
 struct OpenMathDelimiterTailWindowTests {
     /// 守卫 1（correctness）：尾窗内真·未闭合 `$x`，append 一个 `$` 应闭合
     /// 成 math。收窄后该真开界仍被 detect → 强制全量，结果与全量逐块一致。
@@ -343,8 +355,10 @@ struct OpenMathDelimiterTailWindowTests {
             "tail-window open `$x` must still be detected → force full parse"
         )
         // 增量路径结果与全量逐块一致（跨界 math 未被收窄重开损坏）。
-        #expect(incremental.blocks == full.blocks,
-                "incremental must match full parse when tail window has open delimiter")
+        #expect(
+            incremental.blocks == full.blocks,
+            "incremental must match full parse when tail window has open delimiter"
+        )
         // 闭合后应得 1 个行内 math（`x+1`）。
         var inlineMath = 0
         func walkInlines(_ ns: [InlineNode]) {
@@ -369,7 +383,7 @@ struct OpenMathDelimiterTailWindowTests {
     /// 返回 true（每 token 全量 = O(n²)），收窄后尾窗内无未闭合开界符 →
     /// false，走增量路径。
     @Test("中段稳定 $5.00 在尾窗判定下为 false（不再每 token 全量），增量与全量一致")
-    func midDocumentLiteralDollarNoLongerForcesFullParse() {
+    func midDocumentLiteralDollarNoLongerForcesFullParse() throws {
         // 中段：含字面 `$5.00` 的稳定段落，其后有空行（段落边界）与多段内容。
         let previousSource = """
         # Pricing
@@ -393,9 +407,11 @@ struct OpenMathDelimiterTailWindowTests {
             "whole-source scan returns true on mid-document literal $5.00 (old O(n^2) behavior)"
         )
         // 收窄后：reparse 尾窗起点 > 中段 `$5.00` 偏移 → 尾窗内无开界符 → false。
-        let dollarByteOffset = Array(previousSource.utf8).firstIndex(of: 0x24)!
-        #expect(reparseStart > dollarByteOffset,
-                "reparse boundary (\(reparseStart)) must be past mid-document $ (\(dollarByteOffset))")
+        let dollarByteOffset = try #require(Array(previousSource.utf8).firstIndex(of: 0x24))
+        #expect(
+            reparseStart > dollarByteOffset,
+            "reparse boundary (\(reparseStart)) must be past mid-document $ (\(dollarByteOffset))"
+        )
         #expect(
             !MarkdownDocument.previousSourceHasOpenMathDelimiter(
                 previousSource, fromReparseBoundary: reparseStart
@@ -405,8 +421,10 @@ struct OpenMathDelimiterTailWindowTests {
         // 谓词 false → 走增量路径；增量结果仍与全量逐块一致。
         let incremental = previous.parsingAppend(to: newSource, previousSource: previousSource)
         let full = MarkdownDocument(parsing: newSource)
-        #expect(incremental.blocks == full.blocks,
-                "incremental path (taken because predicate false) must still match full parse")
+        #expect(
+            incremental.blocks == full.blocks,
+            "incremental path (taken because predicate false) must still match full parse"
+        )
     }
 }
 

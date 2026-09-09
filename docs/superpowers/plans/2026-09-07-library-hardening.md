@@ -661,7 +661,7 @@ Expected: PASS before extraction.
 
 - [ ] **Step 2: Move shared helpers one responsibility at a time**
 
-Move source-selection helpers, table overlay/layout helpers, and iOS `UITextInput` helper types to their named files without renaming symbols or changing access. After each move rerun the Step 1 command; each run must remain green.
+Move source-selection helpers, table overlay/layout helpers, and iOS `UITextInput` helper types to their named files without renaming symbols or changing public/package API. Implementation-only declarations may be minimally promoted to `internal` only when cross-file access objectively requires it; audit each promotion with its cross-file callsite. After each move rerun the Step 1 command; each run must remain green.
 
 - [ ] **Step 3: Move the conditional UIKit and AppKit class bodies**
 
@@ -682,18 +682,47 @@ Dispatch `superpowers-reviewer` over only this commit and require behavior-only 
 ### Task 4B: Route both platform views through the session driver
 
 **Files:**
+- Modify: `Sources/MarkdownRenderKit/RenderPreparer.swift`
+- Modify: `Sources/MarkdownRenderKit/RenderMaterializer.swift`
+- Modify: `Sources/MarkdownRenderKit/RenderDisplayModel.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+iOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+macOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownRenderSession.swift`
 - Modify: `Sources/MarkdownKit/MarkdownText.swift`
 - Modify: `Sources/MarkdownKit/MarkdownStreamingText.swift`
 - Test: `Tests/MarkdownKitTests/PlatformSessionWiringTests.swift`
+- Test: `Tests/MarkdownKitTests/RenderMigrationParityTests.swift`
 
 **Interfaces:**
 - Consumes: Task 3 `MarkdownRenderSessionDriver` and Task 2 snapshots.
 - Produces: thin platform views that synchronously enqueue `RenderSessionEvent` values and receive snapshots through the weak sink registry.
+- Prerequisite to either consumer switch: complete legacy rendering parity in the Task 2 preparer/materializer. Task 2 intentionally supplies only the boundary and basic runs/resources; its initial implementation is not a production replacement for `AttributedStringRenderer`.
 
-- [ ] **Step 1: Write and run the failing driver wiring tests**
+- [ ] **Step 1: Establish differential migration tests while both views still use the legacy renderer**
+
+Add `RenderMigrationParityTests` that render the same source/programmatic IR, style, width, placeholder mode, and deterministic resolved-resource fixtures through the legacy renderer and the new preparation/materialization path. Assert attributed text and normalized attributes, measured TextKit layout, and semantic metadata/results; do not compare platform object identity or update expected output from the new implementation. Include explicit expected strings/URLs/source selections and attachment geometry so a shared omission cannot make both paths pass.
+
+The fixture matrix must cover emphasis/strong/strikethrough; link labels and destinations; inline/fenced code highlighting and backgrounds; nested quotes, ordered/unordered/task lists, table alignment/overflow; headings/body/custom fonts, all existing colors and paragraph styling; source-present and programmatic-source-absent copy mapping; static/streaming placeholders; resolved/missing/failed image/math/SVG resources; and narrow/wide `availableWidth` values. Compare attachment dimensions and baselines, line/fragment bounds, table measurements and overlays, rendered/source text mapping, and link activation metadata handed to the platform. Use the existing rendering, placeholder, SVG degradation, copy, table-measurement, and resource-relayout regression suites as the compatibility baseline on UIKit and AppKit.
+
+Run `swift test --filter RenderMigrationParityTests`; expected FAIL on the Task 2 implementation's missing styling/layout/semantic behavior. Keep both views on the legacy path during this RED phase and the following implementation step.
+
+- [ ] **Step 2: Complete legacy rendering semantics and pass the hard pre-switch gate**
+
+Extend `RenderPreparer`, `RenderDisplayModel`, and `RenderMaterializer` to preserve every existing output-affecting behavior in that matrix: emphasis/strong/strikethrough traits; link destinations and activation metadata handoff; code highlighting/backgrounds; quote/list/table formatting; existing source/copy mapping; placeholder and resolved-resource geometry, baseline/scale handling, and width-dependent layout; and typography/color/paragraph styling. Keep preparation values Sendable and resolve platform fonts/colors/attachments/TextKit state on MainActor. Preserve legacy resource adapters until Task 4C replaces them.
+
+This step migrates existing behavior only. Task 8 still owns the new typed link policy, handler configuration, and policy-generation activation checks; Task 9 owns the exact rendered-selection versus explicit source-copy behavior, typed granularity, and localized commands; Task 10 owns the semantic accessibility tree, virtual platform elements, focus, and announcements; Task 11 owns preferred-metric scaling, new trait-driven adaptation, and maximum-category layout policies. Preserve the current native accessibility exposure and the immutable accessibility data boundary here, but do not implement Task 10's tree/platform accessibility work. Preserve the legacy copy behavior in differential tests until Task 9 intentionally changes it.
+
+**Hard gate:** neither platform view may switch to the session's new snapshots until all differential attributed-string, layout, and semantic tests pass on both platforms and all existing pre-migration regression suites remain green. Missing parity cannot be waived as follow-up work in Tasks 8–11; those tasks add the enhanced policies above. Run these commands before adding driver wiring or changing either consumer:
+
+```bash
+swift test --filter 'RenderMigrationParityTests|MarkdownRenderKitTests|PlaceholderModeRendererTests|TableMeasurementLaidOutEquivalenceTests|ReadOnlyCopyOriginalSourceTests|AsyncMathWritebackRelayoutTests'
+swift test
+xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+```
+
+Record the differential tests and pre-migration suite results as checkpoint evidence. Expected: PASS while both views still use the legacy renderer. Only then proceed to driver wiring.
+
+- [ ] **Step 3: Write and run the failing driver wiring tests**
 
 Inject a `RecordingSessionDriver` conforming to:
 
@@ -708,7 +737,7 @@ extension MarkdownRenderSessionDriver: RenderSessionDriving {}
 
 Assert set, append, style/renderer change, scale change, and teardown each emit one ordered event; old sink tokens cannot apply snapshots. Run `swift test --filter PlatformSessionWiringTests`; expected FAIL because views do not accept the driver.
 
-- [ ] **Step 2: Install the driver and weak sink**
+- [ ] **Step 4: Install the driver and weak sink after the parity gate passes**
 
 Replace duplicated parse tasks/revision fields/direct source update pipelines with one driver. The main-actor driver/registry authorization is the final authority for the current commit token; the session carries that token through work but cannot authorize publication. Views keep only a diagnostic mirror, not an acceptance guard. Apply snapshots only through:
 
@@ -728,20 +757,20 @@ func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken) {
 
 Both platform views conform to `RenderSessionSink` and strongly retain the current snapshot for at least as long as TextKit retains its attachments. The monotonic assertion is diagnostic only; it is not a second acceptance guard. Dismantle clears TextKit content/current snapshot, sends `.dismantle`, unregisters the sink ID, and releases the driver. Wrap every legacy image/math/SVG object referenced by the published attributed string in Task 2's `LegacyResourceOwner`; add regression coverage proving those resources do not disappear during the migration. Keep old resource cache adapter calls until Task 4C.
 
-- [ ] **Step 3: Run focused green and commit**
+- [ ] **Step 5: Run focused green and commit**
 
 ```bash
-swift test --filter 'PlatformSessionWiringTests|MarkdownLabelViewRenderModeTests|TableMeasurementLaidOutEquivalenceTests'
+swift test --filter 'RenderMigrationParityTests|PlatformSessionWiringTests|MarkdownLabelViewRenderModeTests|TableMeasurementLaidOutEquivalenceTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
 xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
-git add Sources/MarkdownPlatformView Sources/MarkdownKit/MarkdownText.swift Sources/MarkdownKit/MarkdownStreamingText.swift Tests/MarkdownKitTests/PlatformSessionWiringTests.swift
+git add Sources/MarkdownRenderKit/RenderPreparer.swift Sources/MarkdownRenderKit/RenderMaterializer.swift Sources/MarkdownRenderKit/RenderDisplayModel.swift Sources/MarkdownPlatformView Sources/MarkdownKit/MarkdownText.swift Sources/MarkdownKit/MarkdownStreamingText.swift Tests/MarkdownKitTests/PlatformSessionWiringTests.swift Tests/MarkdownKitTests/RenderMigrationParityTests.swift
 git commit -m "refactor: route platform views through render sessions"
 ```
 
-- [ ] **Step 4: Review session migration**
+- [ ] **Step 6: Review session migration**
 
-Dispatch `superpowers-reviewer` over Task 4B with event ordering, weak sink ownership, stale snapshot rejection, driver task ownership, and UIKit/AppKit parity focus.
+Dispatch `superpowers-reviewer` over Task 4B with event ordering, weak sink ownership, stale snapshot rejection, driver task ownership, and UIKit/AppKit parity focus. Require recorded pre-switch differential and full regression evidence; inspect every legacy rendering/semantic behavior listed above and block a consumer switch that still relies on the incomplete Task 2 implementation. Confirm Tasks 8–11 retain ownership of their enhanced policies.
 
 ### Task 4C: Migrate math/SVG resources and remove compatibility render APIs
 
@@ -999,7 +1028,7 @@ Dispatch `superpowers-reviewer` with correctness/performance focus. Require it t
 
 **Interfaces:**
 - Consumes: Task 4 session configuration events and Task 2 `MarkdownConfigurationID`.
-- Produces: `MarkdownImageLoading`, untrusted `MarkdownImagePayload`, package-validated `MarkdownEncodedImage`, default disabled policy, sanitized failures, and SwiftUI `.markdownRemoteImages(_:)` configuration used by Task 7.
+- Produces: `MarkdownImageLoading`, untrusted `MarkdownImagePayload`, package-validated `MarkdownEncodedImage`, default disabled policy, sanitized failures, and SwiftUI `.markdownImages(_:)` configuration used by Task 7.
 
 - [ ] **Step 1: Write protocol, opt-in, generation, and cache-namespace tests**
 
@@ -1066,7 +1095,7 @@ public struct MarkdownResourceFailure: Sendable, Equatable {
 public typealias MarkdownResourceErrorHandler =
     @MainActor @Sendable (MarkdownResourceFailure) -> Void
 
-public struct MarkdownRemoteImageConfiguration: Sendable {
+public struct MarkdownImageConfiguration: Sendable {
     package let loader: (any MarkdownImageLoading)?
     public let configurationID: MarkdownConfigurationID
     public static let disabled: Self
@@ -1091,9 +1120,9 @@ Every loader result is untrusted `MarkdownImagePayload`. The session always pass
 
 The configuration wrapper, not a loader conformer, owns namespace identity. Custom loader wrappers get `.uniqueInstance()` by default even if two conformers are otherwise identical. `.defaultHTTPS` derives a deterministic semantic ID from the complete normalized built-in settings (timeouts, redirect/MIME policy, byte/metadata limits). Sharing requires an explicit caller-supplied versioned semantic ID. Task 6 tests only ID inequality/equality because no image cache exists yet; Task 7 Step 1 uses two custom loaders with the same internal label to prove default wrappers isolate actual cache entries and an explicit shared semantic ID permits completed-cache reuse.
 
-Expose `.markdownRemoteImages(_:)` and `.onMarkdownResourceError(_:)` from `MarkdownResourceModifiers.swift`. The environment default is `.disabled`; `.defaultHTTPS` constructs the deterministic built-in semantic configuration.
+Expose `.markdownImages(_:)` and `.onMarkdownResourceError(_:)` from `MarkdownResourceModifiers.swift`. The environment default is `.disabled`; `.defaultHTTPS` constructs the deterministic built-in semantic configuration.
 
-Add `RenderSessionEvent.replaceImageConfiguration(MarkdownRemoteImageConfiguration)`; every event increments session generation even when its cache namespace ID remains semantically equal.
+Add `RenderSessionEvent.replaceImageConfiguration(MarkdownImageConfiguration)`; every event increments session generation even when its cache namespace ID remains semantically equal.
 
 - [ ] **Step 3: Implement an isolated URLSession transport**
 
@@ -1579,13 +1608,13 @@ Dispatch `superpowers-reviewer` for semantic correctness and focus stability. Re
 - Consumes: immutable typography roles and session configuration replacement.
 - Produces: preferred-style default typography, custom-font scaling helper, trait-driven snapshot rebuilds, and non-overlapping maximum-size layouts.
 
-- [ ] **Step 1: Write scaling and maximum-layout failures**
+- [x] **Step 1: Write scaling and maximum-layout failures**
 
 Assert default body/code/h1–h6 metrics grow monotonically from `.large` to accessibility categories; custom fixed fonts remain fixed unless wrapped by the scaling helper. At maximum category, render long paragraphs, code, wide tables, image/math attachments, and assert positive/non-overlapping fragment bounds with horizontal table scrolling retained.
 
 Run `swift test --filter 'DynamicTypeTests|AdaptiveLayoutTests'`. Expected: FAIL because current fixed default point sizes do not scale.
 
-- [ ] **Step 2: Define semantic typography tokens and scaling helper**
+- [x] **Step 2: Define semantic typography tokens and scaling helper**
 
 ```swift
 public enum MarkdownContentSizeCategory: Sendable, Equatable {
@@ -1605,17 +1634,17 @@ Build default iOS fonts from preferred text styles/metrics. Scale line spacing, 
 
 Run `swift test --filter DynamicTypeTests`; expected PASS for default monotonic metrics and custom-font opt-in behavior.
 
-- [ ] **Step 3: Rebuild through session configuration on trait changes**
+- [x] **Step 3: Rebuild through session configuration on trait changes**
 
 Observe iOS content-size-category and relevant display-scale/color traits. Produce a new immutable render configuration generation and send one replacement event; do not mutate cached renderers or replace host custom style objects. On macOS, respond to accessibility text/display changes supported by the target runtime.
 
 Run `swift test --filter 'DynamicTypeTests|AdaptiveLayoutTests'`; expected PASS for generation replacement and non-overlapping maximum-size layout.
 
-- [ ] **Step 4: Capture and inspect required screenshots**
+- [x] **Step 4: Capture and inspect required screenshots**
 
 Run the Example on the iOS 18 simulator at normal and maximum Dynamic Type in light/dark modes and capture normal content, wide table, loading image, math, and SVG screens. Dispatch the configured `ios-visual-reviewer` with screenshot paths and source files; fix clipping, overlap, hierarchy, or polish findings before proceeding.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 swift test --filter 'DynamicTypeTests|AdaptiveLayoutTests'
@@ -1630,11 +1659,209 @@ git add Sources/MarkdownRenderKit Sources/MarkdownPlatformView Tests/MarkdownKit
 git commit -m "feat: support adaptive markdown typography"
 ```
 
-- [ ] **Step 6: Review checkpoint 7B**
+- [x] **Step 6: Review checkpoint 7B**
 
 Dispatch `superpowers-reviewer` over Task 11 after visual findings are resolved. Require Dynamic Type through accessibility sizes, preserved custom-style semantics, and layout/screenshot evidence.
 
+#### Task 11 record (2026-09-09)
+
+Steps 1–3 are `9ba8020`; steps 4–6 are `4e61dd4`, `46c9adc`, `1eec457`, `ff7df32`.
+
+Step 4's screenshots found two defects, both fixed and both covered by tests that
+fail without the fix:
+
+- **An ordered list lost its item text at the accessibility categories.** The item
+  tab stop was a fixed 24 pt while the marker is set in the reader's type — `1.`
+  is 28 pt wide at the maximum category and `10.` is wider than 24 pt already at
+  `accessibilityMedium`. Past its last tab stop a paragraph has nowhere to put a
+  tab and TextKit drops the rest of the line rather than wrapping it, so each item
+  kept its height and rendered as a bare number. The indent is now
+  `24 * chromeScale` and the item paragraph carries it as `defaultTabInterval`.
+- **Heading hierarchy collapsed.** Each heading follows its own text style's
+  metrics and those damp where `.body`'s do not: measured on iOS 18 at the maximum
+  category, h1/h2/h3 were 1.21/1.07/1.04x body against the 2.00/1.50/1.25x they
+  are declared at, and h4 was 0.93x. A scaled heading now keeps at least
+  `min(ratio, sqrt(ratio))` of body — 1.41/1.22/1.12/1.00x at the maximum, and
+  exactly the declared ratios at `.large`.
+
+The visual re-review then found that heading space-before, code-block insets and
+the thematic break were still at their default-size point values, so a maximum-
+category heading had less air above it than its own cap height. Those take
+`chromeScale` too, and `spacing.codeInsets` — a token nothing read — is now the
+code block's inset, corrected from 8 to the 16 pt the preparer was hardcoding.
+The `.large` render is pixel-identical before and after all of this: the only
+differing pixels between the two captures are the status-bar clock and the home
+indicator.
+
+**Golden fixtures.** Four files (two IDs × two platforms) gained
+`defaultTabInterval` on their list-item paragraph rows. It is the only field that
+changed, their layout frames were not re-exported and still match, and
+`Tests/MarkdownKitTests/Fixtures/RenderGolden/README.md` records why.
+
+**Deviations from the task's file list, deliberate:**
+- `Sources/MarkdownKit/Exports.swift` re-exports `MarkdownContentSizeCategory` and
+  `MarkdownScaledFont`; without it the new public types are unreachable from the
+  umbrella module.
+- `Sources/MarkdownRenderKit/MarkdownContentSizeCategory.swift` is a new file
+  rather than an addition to `RenderStyle.swift`.
+- `Tests/MarkdownKitTests/MaterializationFixture.swift` gained a
+  `contentSizeCategory` field so the layout tests drive the real
+  prepare/materialize boundary.
+- `RenderMaterializer.swift` needed no change for attachment bounds or table
+  widths — both already derive from `configuration.typography` — but did need the
+  `defaultTabInterval` above.
+- `MarkdownScaledFont` is not `@MainActor` as Step 2's sketch shows: it stores a
+  platform font, so it carries the same isolation as the `RenderStyle` it lives in
+  rather than a stricter one.
+- `RenderStyle` gained `pinFont(for:)` and `setFont(_:for:)` beyond the sketch.
+  Opting out is detected from the stored size, so a custom font assigned at
+  exactly the registered size kept scaling with no way for a host to say it meant
+  that size; and the sketch's `MarkdownScaledFont` had no way into a style at all.
+- Step 3's macOS half is not implemented: macOS 15 exposes no system text-size
+  setting to observe, so the macOS label view only mirrors what the host assigns.
+
+**Carried to Task 12:**
+- A resolved SVG block attachment does not follow the category, while math does.
+  The rasteriser's contract is `fit-width.no-upscale` and `SVGBlockRendering` is a
+  public protocol, so scaling it needs a protocol change and a cache-key change
+  with a migration story.
+- Table chrome (cell padding 24, outer 28, tab offsets, row spacing) and hairlines
+  (heading rule, quote bar width) are not scaled. Judgement calls, not oversights:
+  a hairline is a hairline, and scaling cell padding widens an overflow overlay
+  that is already the reader's escape hatch.
+- Migration notes for 0.1.x → 0.2.0: `RenderStyle.default` now follows Dynamic
+  Type, so a host that shipped a fixed-size document sees a behaviour change; and
+  `MarkdownRenderConfiguration.default`'s semantic id string gained the category
+  and two spacing fields, invalidating anything keyed on it across the upgrade.
+- Appearance findings that are present at the default size too, so not Dynamic
+  Type regressions: an overflowing table is cut with no scroll affordance; quote
+  body text is 3.34:1 against its panel and nested quotes draw no second bar; a
+  task-list item draws a bullet *and* a checkbox; inline-code background is a
+  square-cornered box with no horizontal padding that breaks into slabs when the
+  span wraps; `<hr>` is pixel-identical to the heading rule; an h2 rule is missing
+  whenever the next block has a background panel.
+- At the maximum category the h1 "MarkdownKit" breaks mid-word to a one-glyph
+  orphan — it misses fitting by about 1% of the column. A hyphenation or
+  tightening factor on the heading paragraph would absorb it; lowering the ratio
+  floor would not, it would undo the hierarchy fix.
+
+**Evidence:**
+- `Scripts/run-static-gates.sh` — every gate passed at `ff7df32`'s tree:
+  platform-floors, image-ownership, link-activation, `swift test` (511 tests),
+  `swift build -c release -Xswiftc -warnings-as-errors`, `swiftformat --lint .`.
+- `xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:MarkdownKitTests/DynamicTypeTests -only-testing:MarkdownKitTests/AdaptiveLayoutTests` — 20 tests passed, and `Scripts/assert-xcresult-tests.sh ios18-dynamic-type` passed against that bundle.
+- `xcodebuild test -project Example/Example.xcodeproj -scheme Example -only-testing:ExampleUITests` — 3 tests plus the launch measurements passed.
+- Screenshots of the whole Example render tab at `large` and
+  `accessibility-extra-extra-extra-large`, light and dark, reviewed by
+  `ios-visual-reviewer` twice.
+
+The Example has no image block, so Step 4's "loading image" screen does not exist
+there; the image transport is opt-in and the Example does not opt in.
+
+Reproducing the screenshot setup:
+```bash
+xcodebuild build -project Example/Example.xcodeproj -scheme Example \
+  -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -derivedDataPath <dd>
+xcrun simctl boot 8F2781CA-A58C-4B2B-96A1-59448E08BE78   # iPhone 16 Pro, iOS 18.0
+xcrun simctl install <device> <dd>/Build/Products/Debug-iphonesimulator/Example.app
+xcrun simctl ui <device> appearance light|dark
+xcrun simctl ui <device> content_size large|accessibility-extra-extra-extra-large
+xcrun simctl launch <device> com.evan.Example
+axe swipe --start-x 200 --start-y 650 --end-x 200 --end-y 360 --duration 0.5 --udid <device>
+xcrun simctl io <device> screenshot out.png
+```
+A swipe slower than about a second selects text instead of scrolling, and a flick
+overshoots by roughly two screens; the numbers above advance about one screen.
+**Reset both `content_size` to `large` and `appearance` to `light` when done.**
+The view seeds itself from the device trait, so a simulator left at the maximum
+makes `AdaptiveLayoutTests`' generation-bump assertions fail for an environment
+reason rather than a code one — and a simulator left in dark mode fails eight
+`RenderMigrationParityTests` cases, whose frozen fixtures record light-mode
+colours. `xcodebuild` clones the device, so it inherits both.
+
+One earlier obstacle, recorded so it is not re-diagnosed: a `SIGSEGV` in
+`outlined init with copy of RenderStyle` (retaining `0x3ff0000000000000`, the bit
+pattern of `Double` 1.0) came from stale incremental build artifacts after the new
+stored property changed the struct's layout. `rm -rf .build` fixed it; partial
+cleans of the individual `.build` module directories did not.
+
 ### Task 12: Finish deterministic tests, documentation, migration, and release gates
+
+**Carried from Task 7 (checkpoint 5B), disclosed rather than fixed there:**
+
+- ~~`Scripts/run-static-gates.sh` cannot exit 0 while `Sources/MarkdownRenderKit/RenderConfiguration.swift` fails `swiftformat --lint`.~~ Cleared during Task 8 (commit `249cad0`, labelled `style:`); `run-static-gates.sh` now exits 0 and is wirable as a CI gate. What was checked, precisely: `git diff -w` on that commit is *not* empty — it leaves 18 insertions / 8 deletions, all brace expansion, trailing-paren placement, and `self.` on three unshadowed stored properties (`resolvedDefault` correctly did not get one, being an `if let` rebinding). The file contains no `"""` literals, so `-w` cannot be hiding a semantic whitespace change inside a multiline string, and `MarkdownConfigurationID`'s `"instance:…"` / `"semantic:…"` raw-value formats — the values link-configuration replacement detection compares — are byte-identical. Note the cost: `RenderConfiguration.swift` is a Task 11 modify-target, so the reformat widens Task 11's conflict surface.
+- `SnapshotLeaseTransaction.commit` releases the owners an install declined. Deleting that release loop leaves every image test green, because `ResidencyRecordToken`'s `deinit` uncharges once the last reference drops — so the uncharge would silently move from deterministic-at-commit to whenever ARC runs. The over-release direction is covered by tests; the positive direction needs one that holds a strong reference to a declined owner and asserts it is already uncharged.
+- `Scripts/check-image-ownership.sh` is a lexical, name-based gate and two bypasses are known open: a container that erases or parameterizes its element type (`[String: Any]`, `Store<PlatformImage>`) names no forbidden symbol, and the residency-owner inventory matches on name only, so a same-named type in another module would pass. Neither yields a platform image outside the ten audited files.
+- `eventually`'s anti-hang budget is 180 s and `settle`'s is 400 rounds because two pre-existing tests run 60–120 s on the iOS simulator. Replacing the polling with deterministic gates is this task's item; the budgets can come back down with it.
+- `Scripts/check-image-ownership.sh` uses a non-nesting block-comment pattern, so a nested block comment produces a false positive. Fail-closed, and `Sources` has no nested block comments today.
+- Task 7's checkpoint review closed at **REVISE with "I would accept the checkpoint" and no merge-blocking findings**, not at a literal PASS. Six review rounds were spent (the brief allowed five; the sixth was user-authorised because round 5 was itself unreviewed). Final review notes are in `.superpowers/sdd/2026-09-07-library-hardening/task-7-report.md`, which is untracked — this list is the tracked record.
+
+**Carried from Task 10 (checkpoint 7A), disclosed rather than fixed there:**
+
+- Task 10 closed at **REVISE with "nothing here is merge-blocking"** after five review rounds — the brief's cap, no extension needed. The round-5 fixes in `ed92119` are themselves unreviewed, and the user authorised proceeding to Task 11 with that outstanding, as for Tasks 7–9. Every round found a Critical living in the *previous round's fix*, and four of the five rounds turned on the same two mistakes: a regression test that could not fail on the defect it was named for (four occurrences across this branch), and a comment asserting a property the code did not have (the frame key "carries the role" — it does not; "one bounded extra pass" — the `defer` re-armed itself; "one live overlay means one live registration" — registrations outlive their overlays; the observer leak "closed on every width and style change" — the style path was untouched). The reviewer found the next failing shape three rounds running by adding one entry to the tag/tree guard's hand-written corpus.
+
+- **The SwiftUI path may expose the document as one element.** The view itself exposes one element per semantic leaf — measured on the iOS 18 simulator: distinct labels, distinct TextKit frames, working activation — but hosted inside `UIHostingController`, XCUITest's tree shows `_UIHostingView` with a single accessibility element and `app.staticTexts.count == 1`. Two documented remedies were tried and neither changed that count: `.accessibilityElement(children: .contain)` on the representable, and `accessibilityContainerType = .semanticGroup` on the view. Both were reverted rather than left in, since neither could be shown to do anything. **What is not established is which tree VoiceOver traverses**: XCUITest's element tree and VoiceOver's traversal are not the same thing, and this environment cannot run VoiceOver. The UIKit-level capability is verified; the SwiftUI-level outcome is unknown, not known to be broken. Resolving it needs a device with VoiceOver, and if it is broken the fix is real subviews rather than virtual elements. `testRenderedMarkdownReachesTheAccessibilityTree` therefore asserts only that exposed elements speak something — it would pass with this whole task reverted, so do not read its manifest entry as coverage of the exposure itself.
+- Leaf identity is `(sourceGeneration, role, startAnchor, lineage, ordinal)`, anchored to a **document** generation that moves only when the document is replaced. It deliberately does *not* use the render configuration generation, which also moves on width and style changes — review measured that anchoring to it replaced every element on a rotation or a split-view resize, which is the focus jump the design exists to prevent. `aWidthChangeDoesNotChangeAnyIdentity` pins it.
+- The ordinal counts leaves *within a block* and advances when a leaf begins rather than when it is emitted. That rule is mirrored in `AccessibilityTreeBuilder` and in `RenderPreparer`'s run tagging, because the tree says what a reader stops on and the runs say where that stop is on screen. `everyLeafIsTaggedOnTheRunsThatRenderIt` is the only thing stopping them drifting, and a drift means an element pointing at the wrong place. It has caught eleven real mismatches so far: list markers, table-cell inlines, the block separator, sibling blocks in a blockquote or list item, list-item block joins, HTML blocks, thematic breaks, empty table cells, a thematic break *inside* a container (which left the counter at -1 and orphaned every leaf after it), the blockquote separator, and reading order. Its corpus is a hand-list, so **it holds for the shapes listed and says nothing about the ones that are not** — extending that corpus is the cheapest way to find the next one, and two rounds of review have found the next one that way each time. It now compares sequences rather than sets, because two leaves swapping ordinals produce the same set.
+- Table cells carry their ordinal on `PreparedTable` rather than on their runs, because an empty cell has no run to hold one and was being dropped — leaving a row one cell shorter than its header, which is exactly what a reader counting across a row relies on. The tag spans the separator before each cell so an empty one still has an extent; column 0 has no separator, so its tag starts at the row's leading tab instead. The first fix covered only cells after the first, and the test written for it covered only the last cell.
+- A table too wide for the view keeps only a placeholder character in the main document; its cells are laid out in the overlay's own text stack, so their frames are read from there and converted. That makes the frames depend on the overlay's scroll position, so the rebuild is also driven from the scroll observers as well as from `_syncTableOverlays` and `replaceSnapshot`, and each converted frame is clipped to the overlay's visible rect — unclipped, a scrolled-out cell was published at a point where a *different* cell is drawn, which for touch exploration is worse than being absent. Not addressed: the cells are virtual elements of the *label*, not of the scroll view, so the system will not auto-scroll the overlay to reveal a focused cell, and a cell scrolled fully out of view is simply not exposed.
+- Rebuilding resolves every leaf range with one advancing cursor rather than from the document start per leaf, which was quadratic: measured 410.7 ms for a 400-paragraph document before, 20.8 ms after. It ran **twice** per snapshot until review measured it — `resetLayout()` already reaches `_syncTableOverlays`, which rebuilds — and now runs once. Still not addressed: the scroll observer runs a full-document rebuild per scroll event, where only that overlay's keys can have changed.
+- The rebuild is re-entrant by construction and guarded against it: it lays out the table overlay, which can move that overlay's scroll position, which calls back in through the scroll observer added for stale cell frames. Without the guard the Example app hung on rotation — 285 s across all four appearance/orientation variants of `testLaunch`, found by the UI suite and not by any unit test. The guard **defers rather than discards**: the re-entrant call is precisely the pass that would correct the frames the outer pass computed before the overlay moved, so dropping it would leave them stale until the next snapshot. The bound is written as a loop of at most two passes rather than by re-entering the `defer`, which re-armed itself and left the pass count decided by whether layout happens to converge — the thing the 285 s hang showed it does not always do. **It still runs whether or not any assistive technology is active**; gating it behind `UIAccessibility.isVoiceOverRunning` / `NSWorkspace.shared.isVoiceOverEnabled` with a notification-driven first build is the remaining win.
+- Streaming announcements (plan Step 4's coalesced polite announcements through an injected clock) are **not implemented**, and neither is its other half — nothing posts a layout-change notification when a focused leaf disappears, so "choose the nearest surviving semantic neighbour" is left to the platform's own heuristics. Focus preservation *is* implemented: a surviving leaf keeps both its model element and the platform wrapper the accessibility client holds, which are different objects — reusing only the former, as the first version did, leaves the requirement unmet while the test still passes.
+- `AccessibilityTreeBuilder.roots` takes a `BlockNode` rather than the plan's `[DisplayBlock]`: `DisplayBlock` flattens a table to a list of cell texts with no rows or columns and drops a link's destination, so it cannot describe either. `MarkdownRenderKit` also gained its own resource bundle for the fallback and relationship labels rather than reaching into the one Task 9 added to `MarkdownPlatformView`, which sits above it — that is a second bundle shipped to consumers and belongs in the 0.1.x → 0.2.0 integration-surface list.
+- Containers are never published as their own stop — that would make a reader hear an item and then each of its parts — so a `.listItem` container's role and detail are merged onto the first leaf inside it, taking the **nearest** enclosing item rather than the outermost (which made an inner list's only item announce the outer list's position) and only when that leaf has somewhere to put it (a first child that already carries its own detail, such as a code block or a table cell, would otherwise swallow the item's position). A leaf can carry one position, so a doubly-nested item still announces only the innermost.
+- The tag/tree guard compares the **preparer's** tags, while frames come from the **materializer**, which drops the tag of a zero-length run. A leaf can therefore satisfy the guard and still be unexposed — a class the guard is structurally unable to see. `everyLeafWithSomethingToSayBecomesAnElement` covers it from the other side: every model leaf with a non-empty label must become an element.
+- List positions count *all* items, including ones dropped for having nothing readable, because the count has to match the markers on screen. An ordered list announces `start + index`, not `1 + index`, for the same reason: the marker run is not a stop, so the announced number is the only one a reader gets. Some measured consequences nobody would guess: `-\n- a` announces "2 of 2" from its single stop; `- ---\n- a` parses as two blocks, so `a` says "1 of 1" under two visible bullets; a doubly-nested item announces only the innermost position, because a leaf can carry one.
+- An item with nothing readable in it is not exposed at all. It is the steady state of a streamed list — the next marker has arrived, its text has not — and publishing it took *another leaf's rect*: `AccessibilityLeafKey` carries no role, so a container's ordinal collides with a leaf's in the frame map even though their identities differ. The guard caught this as soon as the shape entered its corpus, which is the third round running that the corpus blind spot was the finding. Without that merge the model's list-item semantics never reached either platform: a nested item was exposed as anonymous prose with no position while its sibling announced "2 of 2", and the test written for it asserted on the model node that never becomes an element.
+- No `.table` or `.row` element exists on either platform, so the AppKit row/column index ranges have no table ancestor to be interpreted against and there is no `UIAccessibilityContainerDataTable` on iOS. "Correct table relationships" is met by the spoken value alone.
+- macOS exposes headings with an `AXHeading` role and speaks the level through the value: `NSAccessibilityElement` has no level setter. A heading that also carries a detail — one inside a list item — therefore loses its level, since the value is already spoken for. iOS uses `.header` traits.
+- The relationship strings are localized as whole format strings rather than joined words — substituting six English fragments produced `第 2, 列 2` in zh-Hans, with a dangling measure word and no 行 at all.
+- macOS scroll observers are registered per overlay and removed at all four paths that discard one. The first fix covered only the two inside `_syncTableOverlays`, so a **style** change still leaked — the same example the comment used to say the leak was closed. iOS is clean by construction, since `UIScrollView.delegate` is weak.
+- Plan Step 3's "expose host overrides" for the fallback labels is **not implemented**: `AccessibilityTreeBuilder.roots` takes them as parameters but the only caller passes the package's own constants, and no public API sets them. `AccessibilityActivation.link`'s `sessionGeneration` is likewise written and never read — activation revalidates through the link policy rather than through it.
+- Blockquote structure is absent from the tree: `AccessibilityRole` has no case for it and quoted blocks are flattened, so a reader cannot tell quoted text from body text.
+
+**Carried from Task 9 (checkpoint 6), disclosed rather than fixed there:**
+
+- Task 9 closed at **REVISE with "nothing merge-blocking"** after **six** review rounds (the brief allowed five; the sixth was user-authorised). The round-6 fixes in `d20666f` are themselves unreviewed, and the user authorised proceeding to Task 10 with that outstanding — the same shape as Tasks 7 and 8. Rounds 1–4 each found a Critical living in the *previous round's fix*; every one was the same mistake, treating something that looked obvious as proved (index adjacency implies byte adjacency, a range includes its indentation, the last block reaches the end of the document, a new field has the same maintenance sites as an old one). Two of the regression tests written for those defects could not fail on them, and one review round had to point that out.
+
+- `MarkdownCopyGranularity.exact` means the copy is the contiguous source region between the selection's endpoints, and is only claimed when **both** boundary bytes are provable. Contiguous is not the same as "only what the selection covers": source that belongs to no block — a reference definition between two selected paragraphs — stays in, deliberately, because dropping it would leave `[text][ref]` links in the copy unresolvable. The doc comment now says this instead of "nothing more". `.blockExpanded` means the selection cut into a block: `InlineNode` carries no source ranges — only blocks do — so a partial selection inside a block cannot be extracted. Giving inline runs real source offsets is a `MarkdownCore` change, out of this task's file list.
+- Two facts about `sourceRange` make naive boundary arithmetic wrong, and both were found by review after being asserted as safe here. **A range starts at the block's *content column*, not its line start** — `IncrementalParseState` records the same fact and reparses the indentation — so taking the lower bound verbatim drops an indented code block's indent and the copy stops parsing as code. The boundary now walks back over spaces and tabs to the line start. **Source can belong to no block at all**: a link reference definition produces no `ParsedBlockNode`, so index adjacency does not imply byte adjacency, and bracketing to a neighbour's bound handed over a URL the document renders nowhere. The start boundary now comes from `sourceAnchor`, which math backfill preserves from the block a rebuilt block came from, and never from a neighbour.
+- **Deviation from this task's file list:** `MarkdownCore` was not in it, and `ParsedBlockNode` gained `sourceAnchorEnd` anyway. (Nine other files outside the literal list were touched — the two SwiftUI views, three `MarkdownRenderKit` files, four test files — but each is required by this task's own Steps 2 and 3, so `MarkdownCore` is the only real deviation.) Round 3 of review found the interim rule — treat "the last selected block is the last block" as proof that its bytes reach the end of the document — copying a trailing reference definition and calling it `.exact`, which is the same defect as the one before it. Both the leak and the capability loss came from a rebuilt block having no recorded end, and `MathBackfill.resolve` already had `node.sourceRange` in scope while deliberately nil'ing it, so carrying the end costs one stored property with the same lifetime as `sourceAnchor` (`IncrementalParseState` shifts it with the anchor). Degrading the product to stay inside a file list was the worse trade. A rebuilt run shares one anchor and one end, so both are usable only when the run starts and ends where the selection does — and a *run* is the pieces of one origin block, identified by that `(anchor, end)` pair, not merely adjacent source-less blocks. Grouping by adjacency alone (as the first version did) merged two neighbouring formulas and left neither copyable although each had both boundaries of its own.
+
+- **The deviation cost one site more than recorded.** The record first argued the new property was safe because it had "the same lifetime as `sourceAnchor`". That was false in the incremental path and is what hid the defect: `sourceAnchor` is maintained by **two** mechanisms — the window shift in `IncrementalParseState`, *and* `equivalentForSplice` via `lineage` — while the new field had only the first. A splice therefore kept nodes whose origin block's end had moved, so a streamed document copied different bytes than the same source parsed at once (measured: `"text $x$  "` came back as `"text $x$"`, dropping a hard line break, still labelled `.exact`). `sourceAnchorEnd` is now compared in the splice guard directly — not folded into `lineage`, which is a fixed-size identity key that deliberately hashes no end and which Task 10's accessibility IDs will inherit. Anyone adding another position field needs **three** sites, not two: the window shift, `MathBackfill.resolve`, and `MarkdownDocument.init(parsedBlocks:)`, which rebuilds through the package init and omits `sourceAnchorEnd`/`splitOrdinal` (harmless today because only placeholder-anchored nodes reach it). `streamedAnchorsMatchAFullParse` and `streamingProducesTheSameCopyAsSettingTheWholeSource` pin the invariant that `ParsedBlockNode ==` cannot see.
+- `documentOrdinal` had the same gap one field later and was fixed the same way: it is the flag saying an anchor is a placeholder, and the window shift was dropping it, which would have turned a placeholder into a real-looking offset. Unreachable today — no construction site produces a nil range for a top-level block — so it is a defensive carry, pinned by `aPlaceholderAnchorIsNeverUsedAsABoundary`, which drives `markdownSourceCopy` directly because nothing reaches that shape through the views.
+- The upper boundary's end proof is `runEnd(upper) == upper` plus the contiguity `equivalentForSplice` maintains; the `splitOrdinal` conjunct beside it proves the run *starts* at piece 0, not that it ends where claimed. `ParsedBlockNode` records no piece count, so nothing stronger is expressible, and removing `runEnd` would hand over a missing last piece's bytes. The conjunct also refuses a run that is a valid *suffix* of an origin block, which the previous round accepted: a deliberate fail-closed narrowing on a shape not reachable in production.
+- A recorded syntax is substituted per *key* run, not per attribute-dictionary run. Judging dictionary runs let a selection clipped at an image placeholder's **start** paste the image's URL, because the `🖼 ` marker's `.markdownCopySkip` splits the syntax run and the second half looked complete on its own. Found by the test written for the opposite direction; the round before had recorded "nothing splits a syntax run today", which was false.
+- Reconstruction (`$$latex$$`, `![alt](source)`, ```` ```svg ````) is approximate — emphasis and links have already lost their delimiters — and is **always** reported `.renderedFallback`; no path calls it source. It is clamped to the selection, like the plain fallback: reconstructing whole blocks pasted an image URL for a three-character selection. A recorded syntax stands in for a run only when the selection covers that run whole, for the same reason. It joins blocks with a blank line, because a single newline is one paragraph in Markdown.
+- `.markdownCopyText` substitution is only valid for one-character runs, because `renderedCopyText` emits the whole value for any sub-range that touches it. The invariant is structural, not merely tested: every application goes through `attachment(...)`, which builds a one-character string, or the one-character overflow-table placeholder. `everyCopyTextRunIsExactlyOneCharacter` guards the two placeholder paths a headless test can reach; the resolved image/math/SVG paths never resolve headlessly. It still earned its place — it failed on its first run, when a fix for the load-state inconsistency had attached the key to a 6-character placeholder. Decorative text a reader *does* see — the `🖼 ` marker on an unloaded image — is dropped with `.markdownCopySkip` instead, so a copy does not change meaning depending on whether the image loaded.
+- On iOS the localized source-copy command reaches the **main menu only** (iPad and Mac Catalyst menu bar). The iPhone selection callout is presented by `UITextInteraction`, not built from this responder's `buildMenu(with:)`. The concrete consequence: on iPhone, a UIKit host with no SwiftUI wrapper and no menu of its own has **no user-reachable way to copy source** — `canPerformAction` returns true but nothing presents it. Adding a `UIEditMenuInteraction` beside the one `UITextInteraction` manages was not attempted, because a double-presented callout cannot be verified headlessly here; it belongs in the runtime-verification list. macOS has a real context menu, which now *adds* to the host's rather than replacing it.
+- `MarkdownSelectionProxy.copyMarkdownSourceToPasteboard()` is an untested seam. Both halves are covered — the result path by the copy suite, the selector's reachability by the command test — but the pasteboard write itself is not, deliberately: `ReadOnlyCopyOriginalSourceTests` records the decision not to touch the system pasteboard in tests because it is unreliable headless. What is uncovered is the weak-view nil case and the write.
+- `MarkdownCopyCommandTitle` is a mutable `@MainActor` static: safe from data races, but process-global, so two hosts in one process cannot differ. An environment entry alongside `markdownSelectionProxy` would match the house pattern. `MarkdownCopyGranularity`/`MarkdownCopyResult` also live in `MarkdownPlatformView`, so a `MarkdownKit`-only consumer must add an import to name `.blockExpanded`.
+- Rendered copy joins blocks with the single `"\n"` the materializer inserts, so copying two paragraphs yields `"a\nb"` rather than a blank-line-separated pair. Plan Step 2 specifies only cell and row separators, so this was a judgement call, but it is reader-visible.
+- `Package.swift` gained `resources:` and `defaultLocalization`, so every consumer now gets a `MarkdownKit_MarkdownPlatformView` resource bundle. With the macOS context-menu change, that is the 0.1.x → 0.2.0 integration-surface list for this task.
+- The parity goldens strip the three copy keys before comparing (`strippingCopyMetadata`): they change no glyph but do split runs at boundaries the fixtures never had. The goldens therefore no longer pin copy-run structure.
+- `markdownSourceForRenderedSelection` is deleted. It had become a thin forwarder to `markdownSourceCopy`, so describing it as an insulated legacy path — as both its comment and this record did — was false: it carried every change made to the new algorithm. The two parity assertions call `markdownSourceCopy` directly with the fallbacks disabled. The per-view `_copiedStringForCurrentSelection*` seams are also gone, and the assertions that rested on them drive `markdownSourceSelectionResult()`.
+- The first `xcodebuild test` of the Example scheme after `Package.swift` gained `resources:` failed every UI test with `Cannot launch simulated executable: no file found at …/Example.app`; two later runs passed unchanged. **The cause is unknown, and the log rules out the stale-install explanation first recorded here**: `ExampleTests/smokeMarkdownParsesOneHeading()` — hosted *in* `Example.app` — passed on Clone 1 in that same run, so the app was present and launchable. Only Clone 2, the UI-test runner, failed, and immediately before the first failure the log shows `IDELaunchParametersSnapshot: … DebuggerLLDB.DebuggerVersionStore.StoreError error 0` and `no debugger version`, suggesting launch-parameter resolution failed first and "no file found" is the downstream symptom. Logs: `.artifacts/task-9-example.log` (failing) and `.artifacts/task-9-example-retry.log`. It recurred once more, four fix rounds later, with a *different* signature — the UI-test **runner** was refused launch (`FBSOpenApplicationServiceErrorDomain Code=1`, `RequestDenied` from `SBMainWorkspace`) rather than the app being missing — and again passed on an unchanged retry (`.artifacts/task-9-r4-example.log`, `…-retry.log`). Five different signatures now (the fourth and fifth: the runner killed during bootstrap, and `Mach error -308 … server died` while installing it), all at simulator launch, all transient on retry: the app bundle reported missing while `ExampleTests` passed in the same run, the UI runner refused launch (`RequestDenied`), and the runner killed during bootstrap (`Early unexpected exit … signal kill`). Treat the Example UI suite as needing a retry on this host rather than as a signal about the package — but **not automatically**: a fourth failure, a 285 s hang across all four `testLaunch` variants, was a real re-entrant loop in this task's own code, and would have been dismissed by that rule. The distinguishing sign is reproducibility: the transient ones pass on an unchanged retry, the real one did not.
+
+**Carried from Task 8 (checkpoint 5C), disclosed rather than fixed there:**
+
+- Task 8 closed at **REVISE with "nothing I found is merge-blocking"**, not a literal PASS, after **six** review rounds (the brief allowed five; the sixth was user-authorised). The round-6 fixes in `8f9b633` are themselves unreviewed — the user authorised proceeding to Task 9 with that outstanding. Same shape as Task 7's close.
+- The review reports for Tasks 7 and 8 are gone: `.superpowers/sdd/2026-09-07-library-hardening/` and `.artifacts/` were destroyed when a review subagent passed the worktree path as the fixture root of `prove-link-activation-gate.sh`, whose `rm -rf "$root"` was unguarded. Committed work was untouched. The script now lives in `Scripts/` with a guard refusing any root outside the scratchpad. These carried blocks are the only surviving record of both tasks' findings, which is why they are here and not there.
+
+- Deviation from this task's Step 3: the plan specifies `RenderSessionEvent.replaceLinkConfiguration(policyID:handlerID:)`. The implemented case carries no payload, because the driver is the sole owner of the live policy/handler and shipping the IDs into the session would create a second copy that can disagree with it. The session generation *is* still bumped by the mutation, as the plan requires — what deviates is the plan's "revalidate both IDs and generation immediately before activation": activation revalidates `linkConfigurationRevision` instead, a counter bumped by every link-configuration install and by nothing else. `configurationGeneration` also moves on width and style changes, so a generation-based guard rejected in-flight decisions that no replacement had invalidated.
+- `send(.replaceLinkConfiguration)` fires only when an identity differs, but when it does fire the session performs a full document reparse for state it never reads. Deliberate: the session's mutation channel has no cheaper "driver-only" lane today, identity-equal installs are already filtered out before the send, and adding a lane touches Task 4's mutation contract. If Task 12 measures reparse cost on link-configuration churn, this is the first candidate.
+- The SwiftUI representables forward the link configuration on every body evaluation, so `linkConfigurationRevision` bumps on every update and a body evaluation landing inside an in-flight decision voids that tap, with no feedback to the reader. This is the deliberate fail-closed side of the round-3 Critical (suppressing the forward on equal identities left a superseded policy deciding). The window is one executor hop: measured over 200 activations, 30 µs median, 47 µs p95, 197 µs max. Comparing that to a 120 Hz cadence of 8.3 ms would understate it, because the two events are **not** independent — a streaming chunk or a scroll updates the body precisely when the main actor is free, which is exactly the window; `MarkdownStreamingText` under active streaming is the exposed case. Reviewer-proposed alternative, deliberately not taken in Task 8: on a revision mismatch, re-decide against the *current* configuration with a bounded retry instead of returning. It drops nothing and stays fail-closed (a tightened policy simply rejects on the retry), but it changes activation semantics that this task's plan specifies and that two tests pin — `replacementDuringEvaluationPreventsTheOldDecisionFromActivating` and `anInFlightDecisionDoesNotSurviveAnEqualIdentityReplacement`, both in `Tests/MarkdownKitTests/MarkdownLinkPolicyTests.swift`, which a retry would break by opening through the current handler. Whichever task takes this must rewrite those two first. Note also that the *drop rate* is unmeasured: the 30 µs figure is decision latency, not observed dropped activations, so measure before changing semantics.
+- Clearing the environment entry now reverts a view to `.platformDefault`, on the non-nil→nil edge only. Round 5 found the third shape of the round-3 fail-open here — a host writing `trusted ? config : nil` against one stable view identity kept the permissive configuration it had installed earlier (measured: the revoked policy opened a `myapp://` link a second time). Edge-triggered rather than `?? .platformDefault`, so a view that never had a configuration does not re-install one on every body evaluation and take on the revision-bump window above. Pinned by `clearingTheConfigurationRevertsTheViewToTheWebOnlyDefault`.
+- `MarkdownLabelView.linkConfiguration` is non-optional, so a UIKit/AppKit host has no "clear" and revokes by assigning `.platformDefault`; only the SwiftUI environment entry reverts by itself. The `package convenience init(frame:driver:)` also installs a driver without seeding it from the view's configuration, so the two can disagree from birth — test-reachable only, fails closed, and it is the "second source of truth" shape the payload-free mutation case exists to avoid.
+- `MarkdownLinkRequest.configurationGeneration` is carried for a policy's own use and is **not** revalidated; the public doc previously promised the opposite. Activation gates on `linkConfigurationRevision` alone, so a host policy must not assume that a width change, a style change or a source replacement voids an in-flight tap.
+- Two protections that no test or gate names, and that a plausible refactor would silently remove. `MarkdownLabelView.canPerformAction` returns `false` for every action except `copy(_:)`, which is what keeps the iOS edit menu from offering Share / Look Up / Translate on a rendered link; widening it to `super` reopens that. And both editor highlight passes use `setAttributes` over the whole document, which *replaces* attributes and therefore erases any `.link` run a detector or a paste left behind; changing it to `addAttributes` removes a backstop nobody documented. Both now carry a one-line comment saying so.
+- `MarkdownLinkRequest.sourceRange` is always `nil`: the rendered attributed string carries no source mapping at activation time. The field is in the public shape the plan specifies, and Task 9 introduces the display/source mapping that could fill it. A policy must not treat `nil` as "no such range".
+- Links inside a horizontally-scrolling wide table cannot be activated at all: `MarkdownTableOverlay` puts a draw-only `TableContentView` inside a scroll view that intercepts the tap before the label's recognizer. Fail-closed, so not a security gap, but it is an activation gap alongside the pre-existing double-activation notes below, and it belongs to whichever task revisits table overlays.
+- `Scripts/check-link-activation.sh` is a regression tripwire, not a proof. Its material limit is **name coverage**: an opener whose name is not in the inventory is invisible, and every review round so far has found names that were missing — round 2 found four, round 3 found seven more (`NSTextField`, SwiftUI `Text` carrying a `.link` run, `Process`/`posix_spawn`, `UIDocumentInteractionController`, `UIActivityViewController`, `SFAuthenticationSession`, `NSSharingService`), all now inventoried. The `Text` family is the instructive one: SwiftUI opens a `.link` run through the environment's `OpenURLAction` with no opener identifier in the source at all, so it is reachable only by confining the *views* that can render such a run — which works here only because `Sources` uses SwiftUI `Text` nowhere outside the one inventoried file. Round 4 found seven more (`NSAppleScript`, `NSDocumentController`, `NSHelpManager`, `SKStoreProductViewController`, `MFMailComposeViewController`, `dataDetectorTypes`, and `_LSOpenURLsWithRole` — the last a *pattern* hole rather than a missing name: a leading `\b` does not match an underscore-prefixed identifier, which is house style in this package). Round 5 added four names (`popen`, `ShareLink`, `TextEditor`, `TextField`) and round 6 added the rest of the field-editor family (`NSSearchField`, `NSComboBox`, `NSTokenField`, `UISearchBar`, `UISearchTextField`), which reach a text view under other names for the same reason `NSTextField` does. `system` is deliberately left out: the word is too common to inventory without false positives. **The macOS link-detection pair is *not* in the inventory** — `isAutomaticLinkDetectionEnabled` and `toggleAutomaticLinkDetection` are pinned by `theEditorStorageNeverCarriesALinkAttribute` alone, because a lexical gate cannot tell `= true` from `= false`. Do not read the gate as covering them. The proof runs 36 probes across five rounds of families. Secondary limits: a call assembled from string interpolation, a name reached through `NSClassFromString`, and a **function-typed indirection** such as `var open: ((URL) -> Void)?` — which names nothing at all, and is the shape `MarkdownLinkHandler` itself has, so a second one is a natural thing to write. `Tests` is out of scope by design. All of these are stated in the script.
+- The gate exempts `MarkdownEditorTextView.swift` from the text-view inventory. That exemption rested on a comment claiming `isRichText = false` neutralises a `.link` run, which review measured to be false: `isRichText` governs user-applied attributes, not `setAttributedString`. The invariant that actually holds is that `MarkdownSourceHighlighter` styles links with `.foregroundColor` and never emits `.link`, and it is now pinned by `theEditorStorageNeverCarriesALinkAttribute` rather than by a comment. That test also asserts the runtime values a lexical gate cannot judge, because it cannot tell an enabling assignment from a disabling one: `dataDetectorTypes` empty and `allowsEditingTextAttributes`/`isRichText` false. Note the asymmetry this leaves: `dataDetectorTypes` *is* in the gate's inventory, so a maintainer writing the defensive `dataDetectorTypes = []` will be rejected by the gate — that rejection is the instrument working, not a bug in their change.
+- Round 5 found that the exemption's macOS half was still open, and the measurement is worth keeping: `isRichText = false` does not gate NSTextView link detection, and the standard **Edit > Substitutions > Smart Links** menu item calls `toggleAutomaticLinkDetection` on a plain-text view. After that, typing a URL puts a real `.link` run in the storage (measured: one run at `{4, 19}`), which AppKit's default click handling opens — no code change and no host cooperation required. Closed three ways on macOS: the delegate implements `textView(_:clickedOnLink:at:)` returning `true`, `applyOptions()` sets `isAutomaticLinkDetectionEnabled = false` (there rather than in `commonInit`, so the `editorOptions` `didSet` re-asserts it on every options change), and `PlatformEditorTextView` overrides `toggleAutomaticLinkDetection` to a no-op. Round 6 added the iOS counterpart the first fix lacked: `textView(_:primaryActionFor:defaultAction:)` returning `nil`. iOS needed it for a reason macOS does not — on iOS the exported class *is* the `UITextView`, so a host can set `dataDetectorTypes` on it directly, and `dataDetectorTypes` takes effect exactly when `isEditable == false`, which `MarkdownEditorOptions` makes a supported configuration. All four are pinned by `theEditorStorageNeverCarriesALinkAttribute` and each was mutation-tested individually.
+- `PlatformMarkdownLinkHandler` reports a policy/handler scheme mismatch with `assertionFailure` rather than `onMarkdownResourceError`. Considered and declined: `.shared` is a process-wide singleton with no session affinity, so it has no error sink to report to, and `MarkdownResourceFailure` categorises resource *loads* (transport, timeout, type mismatch). A policy that allows a scheme its handler refuses is a host wiring mistake with no runtime recovery, which is what a debug trap is for.
+- Pre-existing platform behaviours this task did not change, confirmed non-blocking in review: a double tap on iOS activates twice, and on macOS `mouseUp` after a drag-selection that ends inside a link activates it. Rejected links keep their link styling and stay readable, which is the specified behaviour, not a defect.
 
 **Files:**
 - Modify: remaining files under `Tests/MarkdownKitTests` and `Tests/MarkdownMathTests` containing `Task.sleep`
@@ -1667,7 +1894,7 @@ Show secure opt-in code:
 
 ```swift
 MarkdownText(markdown)
-    .markdownRemoteImages(.defaultHTTPS)
+    .markdownImages(.defaultHTTPS)
     .markdownLinkPolicy(.webOnly, handler: PlatformMarkdownLinkHandler())
 ```
 

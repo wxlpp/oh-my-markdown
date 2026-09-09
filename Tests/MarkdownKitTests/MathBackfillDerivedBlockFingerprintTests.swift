@@ -33,7 +33,7 @@ struct MathBackfillDerivedBlockFingerprintTests {
     /// 的块下标（共享前缀长度内）。
     private func firstChanged(_ prev: [ParsedBlockNode], _ next: [ParsedBlockNode]) -> Int {
         let shared = min(prev.count, next.count)
-        for i in 0 ..< shared where !blocksMatch(prev[i], next[i]) {
+        for i in 0 ..< shared where !self.blocksMatch(prev[i], next[i]) {
             return i
         }
         return shared
@@ -60,12 +60,12 @@ struct MathBackfillDerivedBlockFingerprintTests {
         #expect(next.count >= 2, "next should split into >=2 derived blocks, got \(next.count)")
 
         // 拆分派生块 fingerprint/sourceRange 必须为 nil（修复后），否则即 bug。
-        let prevNonNilFP = prev.filter { $0.fingerprint != nil }.count
+        let prevNonNilFP = prev.count(where: { $0.fingerprint != nil })
         #expect(
             prevNonNilFP == 0,
             "split-derived blocks must carry nil fingerprint; non-nil count = \(prevNonNilFP)/\(prev.count)"
         )
-        let prevNonNilSR = prev.filter { $0.sourceRange != nil }.count
+        let prevNonNilSR = prev.count(where: { $0.sourceRange != nil })
         #expect(
             prevNonNilSR == 0,
             "split-derived blocks must carry nil sourceRange; non-nil count = \(prevNonNilSR)/\(prev.count)"
@@ -80,7 +80,7 @@ struct MathBackfillDerivedBlockFingerprintTests {
         // bug（复用 stale fingerprint）下拆分兄弟块共享同一 fingerprint，
         // diff 在 BlockNode 已变处仍返回「match」→ firstChanged 越过它。
         if let firstDiff = firstBlockDiffIndex {
-            let fc = firstChanged(prev, next)
+            let fc = self.firstChanged(prev, next)
             #expect(
                 fc <= firstDiff,
                 "block diff must detect changed derived block at \(firstDiff); firstChanged=\(fc) (stale fp masked it)"
@@ -149,9 +149,9 @@ struct MathBackfillDerivedBlockFingerprintTests {
         ```
         """
         let blocks = MarkdownDocument(parsing: source).parsedBlocks
-        let nilFP = blocks.filter { $0.fingerprint == nil }.count
+        let nilFP = blocks.count(where: { $0.fingerprint == nil })
         #expect(nilFP == 0, "passthrough blocks must keep fingerprint; nil count = \(nilFP)/\(blocks.count)")
-        let nilSR = blocks.filter { $0.sourceRange == nil }.count
+        let nilSR = blocks.count(where: { $0.sourceRange == nil })
         #expect(nilSR == 0, "passthrough blocks must keep sourceRange; nil count = \(nilSR)/\(blocks.count)")
     }
 }

@@ -1,195 +1,185 @@
-@testable import MarkdownPlatformView
-import MarkdownCore
-import MarkdownRenderKit
-import Testing
 import Foundation
+import MarkdownCore
+@testable import MarkdownPlatformView
+@testable import MarkdownRenderKit
+import Synchronization
+import Testing
 
-private actor CallCounter {
-    private(set) var count = 0
-    func bump() { count += 1 }
-}
-
-// MathRendering 现已约束 AnyObject（与唯一生产实现 final class MathJaxRenderer
-// 一致），测试替身改为 final class，显式 memberwise init 保持调用点不变。
-private final class StubRenderer: MathRendering, @unchecked Sendable {
-    let outcome: @Sendable () -> MathRenderOutcome
-    let counter: CallCounter
-    init(outcome: @escaping @Sendable () -> MathRenderOutcome, counter: CallCounter) {
-        self.outcome = outcome
-        self.counter = counter
-    }
-
-    func render(latex: String, display: Bool, pointSize: CGFloat,
-                scale: CGFloat, color: PlatformColor) async -> MathRenderOutcome {
-        await self.counter.bump()
-        return self.outcome()
-    }
-}
-
+@MainActor
 @Suite("MathLoadCoordinator")
 struct MathLoadCoordinatorTests {
-    private func key(_ latex: String, gen: Int = 1) -> MathCacheKey {
-        MathCacheKey(latex: latex, display: false, pointSize: 16,
-                     colorHex: "#000", rasterScale: 2, rendererGeneration: gen)
-    }
-
-    @Test("nil renderer → 不派发")
-    func nilRendererNoDispatch() async {
-        let c = MathLoadCoordinator()
-        let dispatched = await c.loadIfNeeded(key: key("x"), latex: "x", display: false,
-                                              pointSize: 16, scale: 2, color: .black)
-        #expect(dispatched == false)
-    }
-
-    @Test(".rendered → 进正缓存，再次不重复派发")
-    func renderedCachedOnce() async {
-        let counter = CallCounter()
-        let c = MathLoadCoordinator()
-        let img = pixel()
-        await c.setRenderer(StubRenderer(outcome: { .rendered(.init(image: img, baselineOffsetEx: 0)) },
-                                         counter: counter))
-        _ = await c.loadIfNeeded(key: key("x"), latex: "x", display: false, pointSize: 16, scale: 2, color: .black)
-        await c.drain()
-        #expect(await c.glyph(for: key("x")) != nil)
-        _ = await c.loadIfNeeded(key: key("x"), latex: "x", display: false, pointSize: 16, scale: 2, color: .black)
-        await c.drain()
-        #expect(await counter.count == 1)
-    }
-
-    @Test(".failed → 负缓存，后续 pass 不再派发")
-    func failedNegativeCached() async {
-        let counter = CallCounter()
-        let c = MathLoadCoordinator()
-        await c.setRenderer(StubRenderer(outcome: { .failed }, counter: counter))
-        for _ in 0 ..< 5 {
-            _ = await c.loadIfNeeded(key: key("bad"), latex: "bad", display: false, pointSize: 16, scale: 2, color: .black)
-            await c.drain()
+    @Test(arguments: [CGFloat.nan, .infinity, -.infinity, .greatestFiniteMagnitude])
+    func nonFiniteBaselineNeverReachesCacheOrAttachments(baseline: CGFloat) async throws {
+        let producer = BaselineValidationProducer(baseline: baseline)
+        let configuration = MathRendererConfiguration(renderer: producer)
+        let cache = RenderedResourceCache()
+        let coordinator = MathLoadCoordinator(cache: cache)
+        coordinator.configure(configuration)
+        let key = resourceMathKey(configuration: configuration)
+        var publications = 0
+        await coordinator.load(key, isCurrent: { true }, completed: { publications += 1 })?.value
+        #expect(cache.publication(for: .math(key)) == nil)
+        #expect(coordinator.publication(for: key) == nil)
+        #expect(cache.isNegative(.math(key)))
+        #expect(publications == 0)
+        let style = RenderStyle.default.snapshot(generation: 0)
+        let input = RenderInput(document: MarkdownDocument(parsing: "$x$"), source: "$x$", availableWidth: 320, configuration: style, placeholderMode: .streaming)
+        let model = try RenderPreparer(configuration: style).prepare(input)
+        var values: [ResourceID: ResolvedPlatformResource] = [:]
+        let resource = try #require(model.resources.first)
+        guard case .math(let id, _, _) = resource else {
+            Issue.record("Expected the math fixture to prepare a resource")
+            return
         }
-        #expect(await counter.count == 1)
-        #expect(await c.glyph(for: key("bad")) == nil)
+        if let lease = coordinator.publication(for: key) { values[id] = .math(owner: lease) }
+        let snapshot = RenderMaterializer(configuration: style).materialize(model, resources: .init(values: values))
+        #expect(snapshot.resourceOwners.isEmpty)
+        #expect(snapshot.attributedString.attribute(.attachment, at: 0, effectiveRange: nil) == nil)
+        let height = TableMeasurement.height(of: snapshot.attributedString, naturalWidth: 320)
+        #expect(height.isFinite && height > 0)
     }
 
-    @Test(".cancelled → 不写任何缓存，可重试")
-    func cancelledRetryable() async {
-        let counter = CallCounter()
-        let c = MathLoadCoordinator()
-        await c.setRenderer(StubRenderer(outcome: { .cancelled }, counter: counter))
-        _ = await c.loadIfNeeded(key: key("c"), latex: "c", display: false, pointSize: 16, scale: 2, color: .black)
-        await c.drain()
-        _ = await c.loadIfNeeded(key: key("c"), latex: "c", display: false, pointSize: 16, scale: 2, color: .black)
-        await c.drain()
-        #expect(await counter.count == 2)
-    }
-
-    @Test("换 renderer → generation 自增且清正/负/loading 缓存")
-    func rendererSwapClears() async {
-        let counter = CallCounter()
-        let c = MathLoadCoordinator()
-        await c.setRenderer(StubRenderer(outcome: { .failed }, counter: counter))
-        let g1 = await c.generation
-        _ = await c.loadIfNeeded(key: key("z", gen: g1), latex: "z", display: false, pointSize: 16, scale: 2, color: .black)
-        await c.drain()
-        await c.setRenderer(StubRenderer(outcome: {
-            .rendered(.init(image: pixel(), baselineOffsetEx: 0)) }, counter: counter))
-        let g2 = await c.generation
-        #expect(g2 == g1 + 1)
-        #expect(await c.isNegativeCached(key("z", gen: g1)) == false)
-    }
-
-    @Test("invalidateForScaleChange 清空正/负缓存但不改 generation")
-    func invalidateForScaleChangeClears() async {
-        let counter = CallCounter()
-        let c = MathLoadCoordinator()
-        await c.setRenderer(StubRenderer(outcome: { .rendered(.init(image: pixel(), baselineOffsetEx: 0)) }, counter: counter))
-        let gen = await c.generation
-        _ = await c.loadIfNeeded(key: key("s"), latex: "s", display: false, pointSize: 16, scale: 2, color: .black)
-        await c.drain()
-        #expect(await c.glyph(for: key("s")) != nil)
-        await c.invalidateForScaleChange()
-        #expect(await c.glyph(for: key("s")) == nil)        // 正缓存清空
-        #expect(await c.generation == gen)                  // generation 不变（区别于 setRenderer）
-    }
-
-    @Test("positive 超过上限触发 LRU 逐出")
-    func positiveLRUEviction() async {
-        let counter = CallCounter()
-        let c = MathLoadCoordinator()
-        await c.setRenderer(StubRenderer(outcome: { .rendered(.init(image: pixel(), baselineOffsetEx: 0)) }, counter: counter))
-        // 填超过 cap（cap=256）个不同 key；最早的应被逐出。
-        for i in 0 ..< 300 {
-            _ = await c.loadIfNeeded(key: key("f\(i)"), latex: "f\(i)", display: false, pointSize: 16, scale: 2, color: .black)
-            await c.drain()
+    @Test(arguments: [CGFloat.nan, .infinity, -.infinity])
+    func renderedMathConstructorRejectsNonFiniteBaseline(baseline: CGFloat) {
+        #expect(throws: RenderedMath.Failure.invalidGeometry) {
+            try RenderedMath(image: resourceTestImage(), baselineOffsetEx: baseline)
         }
-        #expect(await c.glyph(for: key("f0")) == nil)        // 最早的被逐出
-        #expect(await c.glyph(for: key("f299")) != nil)      // 最近的保留
     }
 
-    @Test("setRenderer 同实例两次仍各自 bump generation（故守卫必须在 representable 层）")
-    func setRendererNotIdempotent() async {
-        let c = MathLoadCoordinator()
-        let r = StubRenderer(outcome: { .failed }, counter: CallCounter())
-        await c.setRenderer(r); let g1 = await c.generation
-        await c.setRenderer(r); let g2 = await c.generation
-        #expect(g2 == g1 + 1)
+    @Test func malformedEncodedResultIsDeterministicAndNeverAcquiresResidency() async throws {
+        let image = RenderedImage(encodedData: Data([0]), pointSize: CGSize(width: 2, height: 2))
+        let configuration = try MathRendererConfiguration(renderer: ResourceMathProducer(outcome: .rendered(RenderedMath(image: image, baselineOffsetEx: 0))))
+        let cache = RenderedResourceCache()
+        let coordinator = MathLoadCoordinator(cache: cache)
+        coordinator.configure(configuration)
+        let key = resourceMathKey(configuration: configuration)
+        var publications = 0
+        await coordinator.load(key, isCurrent: { true }, completed: { publications += 1 })?.value
+        #expect(cache.isNegative(.math(key)))
+        #expect(cache.publication(for: .math(key)) == nil)
+        #expect(publications == 0)
     }
 
-    @Test("awaitGlyph 仅等该 key 的任务即可拿到字形（无需 drain）")
-    func awaitGlyphPerKey() async {
-        let counter = CallCounter()
-        let c = MathLoadCoordinator()
-        await c.setRenderer(StubRenderer(outcome: {
-            .rendered(.init(image: pixel(), baselineOffsetEx: 0)) }, counter: counter))
-        var keys: [MathCacheKey] = []
-        for i in 0 ..< 5 {
-            let k = key("g\(i)")
-            keys.append(k)
-            _ = await c.loadIfNeeded(key: k, latex: "g\(i)", display: false, pointSize: 16, scale: 2, color: .black)
+    @Test func nilRendererNoDispatch() {
+        let configuration = MathRendererConfiguration(renderer: ResourceMathProducer())
+        #expect(MathLoadCoordinator(cache: RenderedResourceCache()).load(resourceMathKey(configuration: configuration), isCurrent: { true }, completed: {}) == nil)
+    }
+
+    @Test func renderedCachedOnce() async {
+        let producer = ResourceMathProducer()
+        let configuration = MathRendererConfiguration(renderer: producer)
+        let cache = RenderedResourceCache()
+        let coordinator = MathLoadCoordinator(cache: cache)
+        coordinator.configure(configuration)
+        let key = resourceMathKey(configuration: configuration)
+        await coordinator.load(key, isCurrent: { true }, completed: {})?.value
+        let publication = coordinator.publication(for: key)
+        #expect(publication?.image.size.width == 8)
+        #expect(publication?.record.ownerCount == 2)
+        #expect(coordinator.load(key, isCurrent: { true }, completed: {}) == nil)
+        #expect(await producer.calls == 1)
+        let hit = coordinator.publication(for: key)
+        #expect(hit?.record === publication?.record)
+        #expect(hit?.record.ownerCount == 3)
+        hit?.release()
+        publication?.release()
+        #expect(publication?.record.ownerCount == 1)
+    }
+
+    @Test func replacementCancelsProducer() async {
+        let gate = ResourceRenderGate()
+        let producer = ResourceMathProducer(gate: gate)
+        let configuration = MathRendererConfiguration(renderer: producer)
+        let cache = RenderedResourceCache()
+        let coordinator = MathLoadCoordinator(cache: cache)
+        coordinator.configure(configuration)
+        let key = resourceMathKey(configuration: configuration)
+        var publications = 0
+        let task = coordinator.load(key, isCurrent: { true }, completed: { publications += 1 })
+        await gate.waitForArrivals(1)
+        let generation = coordinator.generation
+        coordinator.configure(nil)
+        #expect(coordinator.generation == generation + 1)
+        await gate.open()
+        await task?.value
+        #expect(await gate.cancellations == 1)
+        #expect(publications == 0)
+        #expect(coordinator.publication(for: key) == nil)
+        #expect(cache.isNegative(.math(key)) == false)
+    }
+
+    @Test func staleCompletionCannotWriteCacheOrPublish() async {
+        let gate = ResourceRenderGate()
+        let configuration = MathRendererConfiguration(renderer: ResourceMathProducer(gate: gate))
+        let cache = RenderedResourceCache()
+        let coordinator = MathLoadCoordinator(cache: cache)
+        coordinator.configure(configuration)
+        let key = resourceMathKey(configuration: configuration)
+        let current = Mutex(true)
+        var publications = 0
+        let task = coordinator.load(key, isCurrent: { current.withLock { $0 } }, completed: { publications += 1 })
+        await gate.waitForArrivals(1)
+        current.withLock { $0 = false }
+        await gate.open()
+        await task?.value
+        #expect(coordinator.publication(for: key) == nil)
+        #expect(publications == 0)
+    }
+
+    @Test func cancellationAndTransientFailureRemainRetryable() async {
+        for outcome in [MathRenderOutcome.cancelled, .transientFailure] {
+            let producer = ResourceMathProducer(outcome: outcome)
+            let configuration = MathRendererConfiguration(renderer: producer)
+            let cache = RenderedResourceCache()
+            let coordinator = MathLoadCoordinator(cache: cache)
+            coordinator.configure(configuration)
+            let key = resourceMathKey(configuration: configuration)
+            await coordinator.load(key, isCurrent: { true }, completed: {})?.value
+            await coordinator.load(key, isCurrent: { true }, completed: {})?.value
+            #expect(await producer.calls == 2)
+            #expect(cache.isNegative(.math(key)) == false)
         }
-        for k in keys {
-            #expect(await c.awaitGlyph(for: k) != nil)   // 不调用 drain，按 key 等待即得字形
+    }
+
+    @Test func negativeCacheIsBoundedLRUAndExpiresAtSixtySeconds() async {
+        let clock = ManualRenderClock()
+        let cache = RenderedResourceCache(clock: clock)
+        let producer = ResourceMathProducer(outcome: .failed)
+        let configuration = MathRendererConfiguration(renderer: producer)
+        let coordinator = MathLoadCoordinator(cache: cache)
+        coordinator.configure(configuration)
+        for index in 0 ..< 128 {
+            await coordinator.load(resourceMathKey("bad\(index)", configuration: configuration), isCurrent: { true }, completed: {})?.value
         }
-        #expect(await counter.count == 5)
+        let oldest = resourceMathKey("bad0", configuration: configuration)
+        #expect(cache.isNegative(.math(oldest)))
+        await coordinator.load(resourceMathKey("bad128", configuration: configuration), isCurrent: { true }, completed: {})?.value
+        #expect(cache.isNegative(.math(resourceMathKey("bad1", configuration: configuration))) == false)
+        #expect(cache.isNegative(.math(oldest)))
+        clock.advance(by: .seconds(59))
+        #expect(cache.isNegative(.math(oldest)))
+        clock.advance(by: .seconds(1))
+        #expect(cache.isNegative(.math(oldest)) == false)
+        await coordinator.load(oldest, isCurrent: { true }, completed: {})?.value
+        #expect(await producer.calls == 130)
+    }
+
+    @Test func evictionDoesNotReleasePublication() async throws {
+        let configuration = MathRendererConfiguration(renderer: ResourceMathProducer())
+        let coordinator = MathLoadCoordinator(cache: RenderedResourceCache())
+        coordinator.configure(configuration)
+        let first = resourceMathKey("0", configuration: configuration)
+        await coordinator.load(first, isCurrent: { true }, completed: {})?.value
+        let publication = try #require(coordinator.publication(for: first))
+        for index in 1 ... 256 {
+            let key = resourceMathKey("\(index)", configuration: configuration)
+            await coordinator.load(key, isCurrent: { true }, completed: {})?.value
+            coordinator.publication(for: key)?.release()
+        }
+        #expect(coordinator.publication(for: first) == nil)
+        #expect(publication.record.ownerCount == 1)
+        #expect(publication.image.size.width == 8)
+        publication.release()
+        #expect(publication.record.ownerCount == 0)
     }
 }
-
-@Suite("Math view wiring")
-struct MathViewWiringTests {
-    @Test("占位属性可被枚举并驱动 coordinator，回写后渲染出附件")
-    func placeholderDrivesCoordinator() async {
-        var renderer = AttributedStringRenderer(style: .default)
-        let attr = renderer.render([.paragraph([.math(latex: "x")])])
-        var payloads: [String] = []
-        attr.enumerateAttribute(.markdownMathSource, in: NSRange(location: 0, length: attr.length)) { v, _, _ in
-            if let p = v as? String { payloads.append(p) }
-        }
-        #expect(payloads == ["0\u{1F}x"])
-
-        let c = MathLoadCoordinator()
-        await c.setRenderer(StubRenderer(outcome: {
-            .rendered(.init(image: pixel(), baselineOffsetEx: 0)) }, counter: CallCounter()))
-        let gen = await c.generation
-        let key = MathCacheKey(latex: "x", display: false,
-                               pointSize: RenderStyle.default.bodyFont.pointSize,
-                               colorHex: MathMetrics.colorHex(RenderStyle.default.textColor),
-                               rasterScale: 1, rendererGeneration: gen)
-        _ = await c.loadIfNeeded(key: key, latex: "x", display: false,
-                                 pointSize: key.pointSize, scale: 1, color: RenderStyle.default.textColor)
-        await c.drain()
-        renderer.mathRendererGeneration = gen
-        renderer.mathCache[key] = await c.glyph(for: key)
-        let attr2 = renderer.render([.paragraph([.math(latex: "x")])])
-        var hasAttachment = false
-        attr2.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attr2.length)) { v, _, _ in
-            if v is NSTextAttachment { hasAttachment = true }
-        }
-        #expect(hasAttachment)
-    }
-}
-
-#if canImport(UIKit)
-import UIKit
-private func pixel() -> PlatformImage { UIGraphicsImageRenderer(size: .init(width: 2, height: 2)).image { _ in } }
-#elseif canImport(AppKit)
-import AppKit
-private func pixel() -> PlatformImage { let i = NSImage(size: .init(width: 2, height: 2)); i.lockFocus(); i.unlockFocus(); return i }
-#endif

@@ -9,6 +9,64 @@ MarkdownKit adheres to [Semantic Versioning](http://semver.org/).
 
 ### Removed
 
+## [0.2.0](https://github.com/wxlpp/MarkdownKit)
+破坏性发布。迁移指南见 [`docs/release/0.2.0-migration.md`](docs/release/0.2.0-migration.md)。
+
+### Added
+- **随 app 打包的图片**：`markdownImages(.bundle())` 由内置的
+  `MarkdownBundleImageLoader` 按资源名解析，不联网、无需开关。带 scheme、绝对
+  路径、`~` 或 `..` 的引用在查 bundle 之前就被拒绝。资源目录（`Assets.xcassets`）
+  中的图片不支持——它们只能以已解码的 `UIImage` 形式取出，而本管线接收字节。
+- **远程图片按需开启**：`markdownImages(_:)`。`.defaultHTTPS` 走独立
+  `URLSession`（不共享 cookie / 凭据 / 缓存），仅 HTTPS，仅
+  PNG/JPEG/GIF/WebP/HEIC/HEIF，编码体 20 MiB、单边 8192 像素、32 帧、累计
+  4000 万像素上限，超时钳在 1…120 秒。
+- **链接策略与打开者分离**：`markdownLinkPolicy(_:handler:)`。`MarkdownLinkPolicy`
+  是纯 `Sendable` 判定，`MarkdownLinkHandler` 是 `@MainActor` 打开动作；非 web
+  scheme 需要两者同时放行。
+- **资源失败诊断**：`onMarkdownResourceError(_:)` 交出 `MarkdownResourceFailure`
+  ——类别 + `SanitizedMarkdownOrigin`（scheme/host/port，永不含 path 与 query）。
+- **两个复制命令**：`renderedSelectionResult()` 给屏幕上的内容，
+  `markdownSourceSelectionResult()` 给选区覆盖的源码，后者带
+  `MarkdownCopyGranularity` 说明保真度。
+- **语义无障碍树**：`AccessibilityTree` / `AccessibilityNode`，以及平台视图上按
+  文档顺序、各有真实布局框的元素。
+- **Dynamic Type**：`MarkdownContentSizeCategory`、`MarkdownScaledFont`、
+  `RenderStyle.pinFont(for:)` / `setFont(_:for:)`；`RenderStyle.default` 现在跟随
+  读者字号，标题至少保留其声明比例的平方根。
+- **不可变渲染边界**：`RenderConfigurationSnapshot`、`MarkdownConfigurationID`、
+  按 session 拥有的资源租约。
+
+### Changed
+- 平台下限从 iOS 26 / macOS 26 **下调**到 iOS 18 / macOS 15。
+- **无障碍：整篇文档不再作为一个元素朗读。** 视图 conforms `UITextInput`，UIKit
+  会对这类视图强制把 `isAccessibilityElement` 答成 `true`，无论存储属性被设成
+  什么——已建好的元素因此从不被索取。改为 override 后，Example 在 iOS 18 上的
+  可访问元素数由 1 变为 134，按阅读顺序逐元素朗读与移动焦点。
+- `markdownRemoteImages(_:)` / `MarkdownRemoteImageConfiguration` 更名为
+  `markdownImages(_:)` / `MarkdownImageConfiguration`：配置现在也涵盖本地图片，
+  旧名字与之矛盾。两者都是 0.2.0 新增，未在任何发布中出现过。
+- **⌘C 的结果变了**：过去给 Markdown 源码，现在给屏幕上的内容；旧行为改由
+  「Copy Markdown Source」提供。
+- `mathRenderer(_:)` / `svgRenderer(_:)` 改收
+  `MathRendererConfiguration` / `SVGRendererConfiguration`。
+- `MathJaxRenderer` / `SwiftDrawSVGBlockRenderer` 由 `@unchecked Sendable` class
+  改为 actor。
+- `RenderStyle` 不再是 `@unchecked Sendable`；跨 actor 传递改用快照。
+- `MarkdownRenderConfiguration.default` 的语义 ID 字符串变了（新增字号档位与
+  spacing 字段），以它为键持久化的内容在升级后失效。
+
+### Removed
+- `AttributedStringRenderer` 及其可变缓存（`imageCache` / `mathCache` /
+  `svgBlockCache` / `mathRasterScale` / `svgRasterScale` / `*RendererGeneration`）。
+  没有公开替代品直接交出 `NSAttributedString`——渲染需要主 actor、已解析资源集
+  与其租约，旧 API 允许在资源释放后继续持有字符串。
+- `MathLoadCoordinator.shared` / `SVGBlockLoadCoordinator.shared` 及其全部公开
+  方法：进程级可变缓存不再对宿主开放。
+- `MathRenderedGlyph` / `SVGBlockGlyph`（裸 `PlatformImage`）、
+  `MarkdownSourceHighlighter`、`SyntaxHighlighter.highlight(…)`、
+  `DocumentParser.parsedBlocks` 的公开可见性。
+
 ## [0.1.2](https://github.com/wxlpp/MarkdownKit/releases/tag/v0.1.2)
 ### Changed
 - `swift-markdown` 依赖从 `from: "0.8.0"` 收紧为 `.upToNextMinor(from: "0.8.0")`。

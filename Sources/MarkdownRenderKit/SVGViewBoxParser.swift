@@ -1,60 +1,108 @@
+import CoreGraphics
 import Foundation
-#if canImport(UIKit)
-import UIKit
-#elseif canImport(AppKit)
-import AppKit
-#endif
+import MarkdownCore
 
-/// 在 SVG 字符串首 4KB 内提取 `<svg ... viewBox="x y w h" ...>` 的原生尺寸 / 高宽比。
-/// 调用方在 AttributedStringRenderer 的 static-miss 分支用 `parseSize` 给透明占位
-/// attachment 算尺寸（与 SwiftDraw fit-without-upscale 公式对齐避免 layout shift），
-/// `parseAspect` 为兼容 / aspect-only 场景保留。失败一律返回 nil。
-///
-/// Parses the outermost `<svg ... viewBox="x y w h" ...>` tag found within the first
-/// 4 KB of `svg`. `parseSize` returns the native viewBox dimensions; `parseAspect`
-/// returns `h / w` derived from the same parse. Both return nil on missing/malformed
-/// input or when width or height is non-positive. Typical execution < 100µs.
+/// Extracts the first double-quoted viewBox from the outermost SVG tag found
+/// within 4096 UTF-8 bytes. The byte limit deliberately replaces the historical
+/// 4096-Character limit, which was unbounded for combining graphemes.
 public enum SVGViewBoxParser {
-    /// 上限：超过此字节数后还没遇到 `<svg ` 起始即放弃，避免 pathological 长字符串扫描成本。
-    private static let scanWindowBytes = 4096
-
-    /// 解析 viewBox 的 `(width, height)` 原生尺寸（point 单位语义）。
-    /// 调用方需自己决定 fit/scale 策略——常用模式是 fit-without-upscale：
-    /// `target = (min(native.width, availableWidth), 按 native aspect 派生 height)`。
-    /// w 或 h ≤ 0 返回 nil（无法绘制 + 防 division by zero）。
     public static func parseSize(from svg: String) -> CGSize? {
-        let scan = svg.prefix(self.scanWindowBytes)
-        // 找 "<svg " 或 "<svg>" 起始
-        guard let svgRange = scan.range(of: #"<svg(\s|>)"#, options: .regularExpression) else {
-            return nil
-        }
-        // 找该 svg tag 内的 viewBox="..." attribute，限定到 svgRange 之后到 tag 结束符 ">"
-        let afterSVG = scan[svgRange.upperBound...]
-        guard let tagEnd = afterSVG.firstIndex(of: ">") else { return nil }
-        let tagBody = afterSVG[..<tagEnd]
-        guard let vbRange = tagBody.range(of: #"viewBox\s*=\s*"([^"]+)""#, options: .regularExpression) else {
-            return nil
-        }
-        // 抽出引号内 4 个数
-        let vbAttr = tagBody[vbRange]
-        guard let quoteStart = vbAttr.firstIndex(of: "\""),
-              let quoteEnd = vbAttr.lastIndex(of: "\""),
-              quoteStart < quoteEnd else {
-            return nil
-        }
-        let inner = vbAttr[vbAttr.index(after: quoteStart)..<quoteEnd]
-        let tokens = inner.split(whereSeparator: { $0 == " " || $0 == "," || $0 == "\t" || $0 == "\n" })
-        guard tokens.count == 4 else { return nil }
-        let nums = tokens.compactMap { Double($0) }
-        guard nums.count == 4 else { return nil }
-        let w = nums[2], h = nums[3]
-        guard w > 0, h > 0 else { return nil }   // 防 division by zero + 不可绘制
-        return CGSize(width: w, height: h)
+        var metrics = ParseWorkMetrics()
+        return try! self.parseSize(from: svg, metrics: &metrics, cancellable: false)
     }
 
-    /// 解析 viewBox 的高宽比 `h / w`。等价于 `parseSize(from:).map { $0.height / $0.width }`。
-    /// 仅对历史调用者保留——新代码应优先用 `parseSize` 拿完整尺寸做精确 fit。
+    package static func parseSize(from svg: String, metrics: inout ParseWorkMetrics) throws -> CGSize? {
+        try self.parseSize(from: svg, metrics: &metrics, cancellable: true)
+    }
+
+    private static func parseSize(from svg: String, metrics: inout ParseWorkMetrics, cancellable: Bool) throws -> CGSize? {
+        var work = 0
+        defer { metrics.renderPreparationBytes = ParseWorkMetrics.saturatingAdd(metrics.renderPreparationBytes, work) }
+        func check() throws {
+            if cancellable { try Task.checkCancellation() }
+        }
+        try check()
+        let svgName: [UInt32] = [60, 115, 118, 103]
+        let attribute: [UInt32] = [118, 105, 101, 119, 66, 111, 120]
+        var svgMatch = 0
+        var inTag = false
+        var attributeMatch = 0
+        var phase = 0 // search, equals, opening quote, value, found
+        var value: [UInt8] = []
+        var dimension: CGSize?
+        var scalar: UInt32 = 0
+        var continuation = 0
+        var scanned = 0
+        for byte in svg.utf8.prefix(4096) {
+            work += 1
+            scanned += 1
+            if scanned & 1023 == 0 { try check() }
+            if continuation > 0 {
+                scalar = (scalar << 6) | UInt32(byte & 0x3F)
+                continuation -= 1
+                if continuation > 0 { continue }
+            } else if byte >= 0xC0 {
+                continuation = byte < 0xE0 ? 1 : byte < 0xF0 ? 2 : 3
+                scalar = UInt32(byte & (continuation == 1 ? 0x1F : continuation == 2 ? 0x0F : 0x07))
+                continue
+            } else { scalar = UInt32(byte) }
+            let whitespace = Unicode.Scalar(scalar)?.properties.isWhitespace == true
+            if !inTag {
+                if svgMatch == svgName.count {
+                    if whitespace || scalar == 62 { inTag = true; continue }
+                    svgMatch = 0
+                }
+                svgMatch = scalar == svgName[svgMatch] ? svgMatch + 1 : scalar == 60 ? 1 : 0
+                continue
+            }
+            if scalar == 62 { return phase == 4 ? dimension : nil }
+            if phase == 4 { continue }
+            if phase == 3 {
+                if scalar == 34 {
+                    if value.isEmpty { phase = 0; continue }
+                    work += value.count // decode ASCII numeric attribute
+                    let text = String(decoding: value, as: UTF8.self)
+                    work += value.count // split separators
+                    let tokens = text.split(whereSeparator: { $0 == " " || $0 == "," || $0 == "\t" || $0 == "\n" })
+                    metrics.recordPreparationMetadata(tokens.count * MemoryLayout<Substring>.stride)
+                    if tokens.count == 4 {
+                        var numbers: [Double] = []
+                        for token in tokens {
+                            try check()
+                            work += token.utf8.count // bounded numeric conversion input
+                            if let number = Double(token) { numbers.append(number) }
+                        }
+                        metrics.recordPreparationMetadata(numbers.count * MemoryLayout<Double>.stride)
+                        if numbers.count == 4, numbers[2] > 0, numbers[3] > 0 {
+                            dimension = CGSize(width: numbers[2], height: numbers[3])
+                        }
+                    }
+                    phase = 4
+                } else {
+                    // Non-ASCII numeric content cannot be parsed by Double.
+                    guard scalar < 128 else { return nil }
+                    if value.count == value.capacity { work += value.count } // relocated byte payload
+                    value.append(UInt8(scalar))
+                    work += 1 // copied numeric payload
+                }
+                continue
+            }
+            if phase == 1 {
+                if whitespace { continue }
+                if scalar == 61 { phase = 2; continue }
+                phase = 0
+            } else if phase == 2 {
+                if whitespace { continue }
+                if scalar == 34 { phase = 3; value = []; continue }
+                phase = 0
+            }
+            attributeMatch = scalar == attribute[attributeMatch] ? attributeMatch + 1 : scalar == 118 ? 1 : 0
+            if attributeMatch == attribute.count { phase = 1; attributeMatch = 0 }
+        }
+        return nil
+    }
+
     public static func parseAspect(from svg: String) -> CGFloat? {
-        self.parseSize(from: svg).map { CGFloat($0.height / $0.width) }
+        self.parseSize(from: svg).map { $0.height / $0.width }
     }
 }

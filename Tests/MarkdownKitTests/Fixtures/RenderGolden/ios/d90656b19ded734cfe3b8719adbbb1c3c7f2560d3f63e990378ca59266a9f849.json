@@ -1,0 +1,87 @@
+{
+  "attributes" : [
+    {
+      "MarkdownKit.tableColumns" : "2",
+      "MarkdownKit.tableColumnWidths" : "72.000000,72.000000",
+      "MarkdownKit.tableSection" : "0",
+      "NSColor" : "0.000000,0.000000,0.000000,1.000000",
+      "NSFont" : ".SFUI-Semibold|16.000000",
+      "NSParagraphStyle" : "2.000000,8.000000,8.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000|4|0:26.000000,0:98.000000",
+      "range" : "0:11"
+    },
+    {
+      "NSColor" : "0.000000,0.000000,0.000000,1.000000",
+      "NSFont" : ".SFUI-Regular|16.000000",
+      "NSParagraphStyle" : "4.000000,12.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000|4|0:28.000000,0:56.000000,0:84.000000,0:112.000000,0:140.000000,0:168.000000,0:196.000000,0:224.000000,0:252.000000,0:280.000000,0:308.000000,0:336.000000",
+      "range" : "11:1"
+    },
+    {
+      "MarkdownKit.tableColumns" : "2",
+      "MarkdownKit.tableColumnWidths" : "72.000000,72.000000",
+      "MarkdownKit.tableSection" : "1",
+      "NSColor" : "0.000000,0.000000,0.000000,1.000000",
+      "NSFont" : ".SFUI-Regular|16.000000",
+      "NSParagraphStyle" : "2.000000,6.000000,6.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000|4|0:26.000000,0:98.000000",
+      "range" : "12:1"
+    },
+    {
+      "MarkdownKit.tableColumns" : "2",
+      "MarkdownKit.tableColumnWidths" : "72.000000,72.000000",
+      "MarkdownKit.tableSection" : "1",
+      "NSAttachment" : "0.000000,-4.000000,40.000000,20.000000,40.000000,20.000000",
+      "range" : "13:1"
+    },
+    {
+      "MarkdownKit.tableColumns" : "2",
+      "MarkdownKit.tableColumnWidths" : "72.000000,72.000000",
+      "MarkdownKit.tableSection" : "1",
+      "NSColor" : "0.000000,0.000000,0.000000,1.000000",
+      "NSFont" : ".SFUI-Regular|16.000000",
+      "NSParagraphStyle" : "2.000000,6.000000,6.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000|4|0:26.000000,0:98.000000",
+      "range" : "14:1"
+    },
+    {
+      "MarkdownKit.tableColumns" : "2",
+      "MarkdownKit.tableColumnWidths" : "72.000000,72.000000",
+      "MarkdownKit.tableSection" : "1",
+      "NSAttachment" : "0.000000,-3.000000,40.000000,20.000000,40.000000,20.000000",
+      "range" : "15:1"
+    }
+  ],
+  "base" : "96c6bad422bb38f989f7595c4e2e3574ac50761d",
+  "frames" : [
+    [
+      0,
+      0,
+      138,
+      56.09375
+    ],
+    [
+      0,
+      0,
+      136.44405555725098,
+      27.09375
+    ],
+    [
+      0,
+      0,
+      136.44405555725098,
+      19.09375
+    ],
+    [
+      0,
+      27.09375,
+      138,
+      29
+    ],
+    [
+      0,
+      8,
+      138,
+      21
+    ]
+  ],
+  "identity" : "| Photo | Math |\n|---|---|\n| ![alt](image.png) | $x$ ||172.0|static",
+  "schema" : 1,
+  "string" : "\tPhoto\tMath\n\t￼\t￼"
+}

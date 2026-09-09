@@ -32,7 +32,7 @@ struct MathScannerCodeRegionHardStopTests {
     /// （`"let x = 1\nprint(x)\n"`），这是解析器固有归一化、与本守卫
     /// 「代码块未被伪 span 移除」无关。
     private func codeBlockSurvives(_ source: String) -> Bool {
-        codeBlockBodies(source).contains { $0.contains(Self.codeBody) }
+        self.codeBlockBodies(source).contains { $0.contains(Self.codeBody) }
     }
 
     /// 任何 span 覆盖到 fenced 代码块字节区间 → span 跨越了代码区（违例）。
@@ -52,38 +52,54 @@ struct MathScannerCodeRegionHardStopTests {
     @Test("$$ … $$ 不跨 fenced 代码块（开界为字面，代码块保留）")
     func dollarDollarDoesNotSpanCodeFence() {
         let source = "$$ a\n```\n\(Self.codeBody)\n```\nb $$\n"
-        #expect(!anySpanCoversCodeFence(source),
-                "$$ delimiter pair must not span the fenced code block")
-        #expect(codeBlockSurvives(source),
-                "fenced code block must survive in IR (not removed by MathSentinel)")
+        #expect(
+            !self.anySpanCoversCodeFence(source),
+            "$$ delimiter pair must not span the fenced code block"
+        )
+        #expect(
+            self.codeBlockSurvives(source),
+            "fenced code block must survive in IR (not removed by MathSentinel)"
+        )
     }
 
     @Test("\\[ … \\] 不跨 fenced 代码块（开界为字面，代码块保留）")
     func backslashBracketDoesNotSpanCodeFence() {
         let source = "\\[ a\n```\n\(Self.codeBody)\n```\nb \\]\n"
-        #expect(!anySpanCoversCodeFence(source),
-                "\\[ \\] delimiter pair must not span the fenced code block")
-        #expect(codeBlockSurvives(source),
-                "fenced code block must survive in IR (not removed by MathSentinel)")
+        #expect(
+            !self.anySpanCoversCodeFence(source),
+            "\\[ \\] delimiter pair must not span the fenced code block"
+        )
+        #expect(
+            self.codeBlockSurvives(source),
+            "fenced code block must survive in IR (not removed by MathSentinel)"
+        )
     }
 
     @Test("\\( … \\) 不跨 fenced 代码块（开界为字面，代码块保留）")
     func backslashParenDoesNotSpanCodeFence() {
         let source = "\\( a\n```\n\(Self.codeBody)\n```\nb \\)\n"
-        #expect(!anySpanCoversCodeFence(source),
-                "\\( \\) delimiter pair must not span the fenced code block")
-        #expect(codeBlockSurvives(source),
-                "fenced code block must survive in IR (not removed by MathSentinel)")
+        #expect(
+            !self.anySpanCoversCodeFence(source),
+            "\\( \\) delimiter pair must not span the fenced code block"
+        )
+        #expect(
+            self.codeBlockSurvives(source),
+            "fenced code block must survive in IR (not removed by MathSentinel)"
+        )
     }
 
     @Test("行内 $ … $ 不跨 fenced 代码块（开界为字面，代码块保留）")
     func inlineDollarDoesNotSpanCodeFence() {
         // 无段落空行：唯一阻断「吞代码块」的就是 codeMask 硬停。
         let source = "x $a\n```\n\(Self.codeBody)\n```\nb$ y\n"
-        #expect(!anySpanCoversCodeFence(source),
-                "inline $ delimiter pair must not span the fenced code block")
-        #expect(codeBlockSurvives(source),
-                "fenced code block must survive in IR (not removed by MathSentinel)")
+        #expect(
+            !self.anySpanCoversCodeFence(source),
+            "inline $ delimiter pair must not span the fenced code block"
+        )
+        #expect(
+            self.codeBlockSurvives(source),
+            "fenced code block must survive in IR (not removed by MathSentinel)"
+        )
     }
 
     /// 合法 math：open 与 close 同在代码区外、未跨代码区 → 硬停不得误伤。
@@ -95,7 +111,9 @@ struct MathScannerCodeRegionHardStopTests {
         #expect(spans.count == 1, "exactly one block-math span expected, got \(spans.count)")
         #expect(spans.first?.latex == "x^2")
         #expect(spans.first?.display == true)
-        #expect(codeBlockSurvives(source),
-                "code block after a closed math span must still survive")
+        #expect(
+            self.codeBlockSurvives(source),
+            "code block after a closed math span must still survive"
+        )
     }
 }

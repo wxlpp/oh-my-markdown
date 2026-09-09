@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		D99B7A212CA4E49A0010B87C /* MarkdownKit in Frameworks */ = {isa = PBXBuildFile; productRef = D99B7A202CA4E49A0010B87C /* MarkdownKit */; };
 		D99B7A232CA4E49A0010B87C /* MarkdownMath in Frameworks */ = {isa = PBXBuildFile; productRef = D99B7A222CA4E49A0010B87C /* MarkdownMath */; };
+		D99B7A252CA4E49A0010B87C /* MarkdownCore in Frameworks */ = {isa = PBXBuildFile; productRef = D99B7A242CA4E49A0010B87C /* MarkdownCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -66,6 +67,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D99B7A252CA4E49A0010B87C /* MarkdownCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -144,6 +146,7 @@
 			);
 			name = ExampleTests;
 			packageProductDependencies = (
+				D99B7A242CA4E49A0010B87C /* MarkdownCore */,
 			);
 			productName = ExampleTests;
 			productReference = D99B79F32CA4E2B50010B87C /* ExampleTests.xctest */;
@@ -205,7 +208,7 @@
 			mainGroup = D99B79DA2CA4E2B30010B87C;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				D99B7A1F2CA4E49A0010B87C /* XCLocalSwiftPackageReference "../../MarkdownKit" */,
+				D99B7A1F2CA4E49A0010B87C /* XCLocalSwiftPackageReference ".." */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D99B79E42CA4E2B30010B87C /* Products */;
@@ -334,6 +337,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -392,6 +396,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -421,12 +426,12 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.evan.Example;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -459,12 +464,12 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.evan.Example;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -486,6 +491,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.evan.ExampleTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -504,6 +510,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.evan.ExampleTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -520,6 +527,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.evan.ExampleUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -536,6 +545,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.evan.ExampleUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -588,9 +599,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		D99B7A1F2CA4E49A0010B87C /* XCLocalSwiftPackageReference "../../MarkdownKit" */ = {
+		D99B7A1F2CA4E49A0010B87C /* XCLocalSwiftPackageReference ".." */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../MarkdownKit;
+			relativePath = ..;
 		};
 /* End XCLocalSwiftPackageReference section */
 
@@ -602,6 +613,10 @@
 		D99B7A222CA4E49A0010B87C /* MarkdownMath */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = MarkdownMath;
+		};
+		D99B7A242CA4E49A0010B87C /* MarkdownCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MarkdownCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

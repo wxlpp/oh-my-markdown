@@ -45,6 +45,7 @@ Packages/
 Package.resolved
 .swiftpm
 .worktrees/
+.artifacts/
 
 # CocoaPods
 Pods/

@@ -1,285 +1,431 @@
 import Foundation
-
+import MarkdownCore
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
 import AppKit
 #endif
 
-// MARK: - SyntaxHighlighter
+/// Semantic token categories independent of platform fonts and colors.
+public enum SyntaxHighlightKind: UInt8, Sendable {
+    case keyword = 1, string, comment, number, type
+}
 
-/// Lightweight regex-based syntax highlighter.
-///
-/// Processes tokens in priority order (strings > comments > numbers > keywords > types)
-/// so higher-priority tokens always win. All colours are adaptive UIColor/NSColor
-/// dynamic providers that resolve at draw time for light/dark mode.
-public enum SyntaxHighlighter {
-    // MARK: - Token kinds
+/// Immutable UTF-16 range and token category for one exact source string.
+public struct SyntaxHighlightSpan: Sendable, Equatable {
+    public let range: NSRange
+    public let kind: SyntaxHighlightKind
+    public init(range: NSRange, kind: SyntaxHighlightKind) {
+        self.range = range
+        self.kind = kind
+    }
+}
 
-    private enum Kind: UInt8 { case keyword = 1, string = 2, comment = 3, number = 4, type = 5 }
+/// Exact code and case-normalized language used to look up immutable spans.
+public struct SyntaxHighlightKey: Sendable, Hashable {
+    public let code: String
+    public let language: String?
+    public init(code: String, language: String?) {
+        self.code = code
+        self.language = language?.lowercased()
+    }
+}
 
-    // MARK: - Token-span cache
-
-    /// Stores pre-computed token spans so the regex pass runs at most once per unique
-    /// (language, code) pair. Evicted automatically on memory pressure.
-    private final class CachedSpans: @unchecked Sendable {
-        init(_ s: ContiguousArray<(range: NSRange, kind: Kind)>) {
-            self.spans = s
-        }
-
-        let spans: ContiguousArray<(range: NSRange, kind: Kind)>
+/// Regex compilation, segmentation and bounded dictionaries never leave this actor.
+public actor SyntaxHighlightCache {
+    public static let shared = SyntaxHighlightCache()
+    private typealias Kind = SyntaxHighlightKind
+    private struct Entry {
+        let id: UInt64
+        let code: String
+        let language: String
+        let spans: [SyntaxHighlightSpan]
     }
 
-    private final class KeywordRegexCache: @unchecked Sendable {
-        func regex(for language: String, build: () -> NSRegularExpression?) -> NSRegularExpression? {
-            self.lock.lock()
-            if let cached = storage[language] {
-                self.lock.unlock()
-                return cached
-            }
-            self.lock.unlock()
+    // Hash source bytes exactly once; dictionary/LRU keys are fixed-size values.
+    // Collision comparisons are explicit and included in the work counter.
+    private var cache: [UInt64: [Entry]] = [:]
+    private var order: [(hash: UInt64, id: UInt64)] = []
+    private var nextID: UInt64 = 0
+    private var keywordCache: [String: KeywordTrie] = [:]
+    private let noTypeNameLangs: Set<String> = ["json", "bash", "sh", "shell", "css", "toml", "yaml", "yml", "mermaid"]
+    public init() {}
 
-            guard let created = build() else {
+    public func spans(for code: String, language: String?) -> [SyntaxHighlightSpan] {
+        // The source-compatible nonthrowing API shares the exact algorithm.
+        try! self.prepare(code, language: language, cancellable: false).spans
+    }
+
+    package struct MeasuredSpans {
+        package let spans: [SyntaxHighlightSpan]
+        package let workBytes: Int
+        package let metadataBytes: Int
+        package let cacheHit: Bool
+    }
+
+    package func measuredSpans(for code: String, language: String?, recorder: ParseAttemptRecorder? = nil, checkCancellation: @escaping ParseCancellationCheck = { try Task.checkCancellation() }) throws -> MeasuredSpans {
+        try self.prepare(code, language: language, cancellable: true, recorder: recorder, checkCancellation: checkCancellation)
+    }
+
+    private func prepare(_ code: String, language: String?, cancellable: Bool, recorder: ParseAttemptRecorder? = nil, checkCancellation: @escaping ParseCancellationCheck = { try Task.checkCancellation() }) throws -> MeasuredSpans {
+        let work = SyntaxWork(cancellable: cancellable, recorder: recorder, checkCancellation: checkCancellation)
+        try work.check()
+        try work.add(language?.utf8.count ?? 0) // lowercasing input
+        let lang = language?.lowercased() ?? ""
+        try work.add(lang.utf8.count) // lowercasing output
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for bytes in [code.utf8, lang.utf8] {
+            for byte in bytes {
+                try work.add(1); hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211
+            }
+            hash = (hash ^ 255) &* 1_099_511_628_211
+        }
+        if let bucket = self.cache[hash] {
+            for entry in bucket {
+                try work.add(code.utf8.count + lang.utf8.count) // exact collision equality inputs
+                if entry.code == code, entry.language == lang {
+                    try work.metadata(self.order.count * MemoryLayout<(UInt64, UInt64)>.stride)
+                    try work.check()
+                    self.order.removeAll { $0.id == entry.id }
+                    self.order.append((hash, entry.id))
+                    return MeasuredSpans(spans: entry.spans, workBytes: work.bytes, metadataBytes: work.metadataBytes, cacheHit: true)
+                }
+            }
+        }
+        let spans = try self.lex(code, language: lang, work: work)
+
+        let bucketSize = self.cache[hash]?.count ?? 0
+        try work.metadata((bucketSize + 1) * MemoryLayout<Entry>.stride)
+        try work.metadata(MemoryLayout<(UInt64, UInt64)>.stride)
+        if self.order.count == 300 {
+            try work.metadata(self.order.count * MemoryLayout<(UInt64, UInt64)>.stride)
+        }
+        try work.check() // cancellation never commits a partial cache result
+        let id = self.nextID
+        self.nextID &+= 1
+        self.cache[hash, default: []].append(Entry(id: id, code: code, language: lang, spans: spans))
+        self.order.append((hash, id))
+        if self.order.count > 300 {
+            let oldest = self.order.removeFirst()
+            self.cache[oldest.hash]?.removeAll { $0.id == oldest.id }
+            if self.cache[oldest.hash]?.isEmpty == true { self.cache[oldest.hash] = nil }
+        }
+        return MeasuredSpans(spans: spans, workBytes: work.bytes, metadataBytes: work.metadataBytes, cacheHit: false)
+    }
+
+    private final class SyntaxWork {
+        var bytes = 0
+        var metadataBytes = 0
+        var sinceCheck = 0
+        let cancellable: Bool
+        let recorder: ParseAttemptRecorder?
+        let checkCancellation: ParseCancellationCheck
+        init(cancellable: Bool, recorder: ParseAttemptRecorder?, checkCancellation: @escaping ParseCancellationCheck) {
+            self.cancellable = cancellable
+            self.recorder = recorder
+            self.checkCancellation = checkCancellation
+        }
+
+        func check() throws {
+            if self.cancellable { try self.checkCancellation() }
+        }
+
+        func add(_ count: Int) throws {
+            self.bytes = ParseWorkMetrics.saturatingAdd(self.bytes, count)
+            self.recorder?.record(.preparation, bytes: count)
+            try self.checkpoint(count)
+        }
+
+        func metadata(_ count: Int) throws {
+            self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, count)
+            self.recorder?.record(.metadata, bytes: count)
+            try self.checkpoint(count)
+        }
+
+        private func checkpoint(_ count: Int) throws {
+            if count >= 1024 || self.sinceCheck >= 1024 - count {
+                self.sinceCheck = 0
+                try self.check()
+            } else { self.sinceCheck += count }
+        }
+    }
+
+    private struct KeywordTrie {
+        struct Node { var edges: [UInt32: Int] = [:]; var terminal = false }
+        let nodes: [Node]
+        init(_ words: [String]) {
+            var nodes = [Node()]
+            for word in words {
+                var index = 0
+                for scalar in word.unicodeScalars {
+                    if let next = nodes[index].edges[scalar.value] { index = next }
+                    else {
+                        let next = nodes.count
+                        nodes[index].edges[scalar.value] = next
+                        nodes.append(Node())
+                        index = next
+                    }
+                }
+                nodes[index].terminal = true
+            }
+            self.nodes = nodes
+        }
+    }
+
+    private struct QuotedState {
+        let quote: UInt32
+        let multiline: Bool
+        var start: Int?
+        var escaped = false
+        mutating func feed(_ scalar: UInt32, at offset: Int, end: Int) -> Range<Int>? {
+            guard let start else {
+                if scalar == self.quote { self.start = offset; self.escaped = false }
                 return nil
             }
-
-            self.lock.lock()
-            defer { lock.unlock() }
-            if let cached = storage[language] {
-                return cached
+            if !self.multiline, scalar == 10 || scalar == 13 {
+                self.start = nil; self.escaped = false; return nil
             }
-            self.storage[language] = created
-            return created
+            if self.escaped {
+                if !self.multiline, scalar == 0x85 || scalar == 0x2028 || scalar == 0x2029 {
+                    self.start = nil
+                }
+                self.escaped = false; return nil
+            }
+            if scalar == 92 { self.escaped = true; return nil }
+            if scalar == self.quote { self.start = nil; return start ..< end }
+            return nil
         }
-
-        private let lock = NSLock()
-        private var storage: [String: NSRegularExpression] = [:]
     }
 
-    // MARK: - Public API
-
-    /// Apply syntax colouring to `code` for the given `language`.
-    ///
-    /// - Parameters:
-    ///   - code:         Source code string (trailing newline already stripped).
-    ///   - language:     Fenced code block language identifier, e.g. `"swift"`.
-    ///   - font:         Monospaced font to use for all tokens.
-    ///   - defaultColor: Base foreground colour (adapts to light/dark automatically).
-    /// - Returns: An `NSAttributedString` with per-token `.foregroundColor` set.
-    public static func highlight(
-        _ code: String,
-        language: String?,
-        font: PlatformFont,
-        defaultColor: PlatformColor
-    )
-        -> NSAttributedString {
-        let lang = language?.lowercased() ?? ""
-        let nsCode = code as NSString
-        let nsLen = nsCode.length
-        let fullRange = NSRange(location: 0, length: nsLen)
-
-        // ── Fast path: reuse previously computed token spans ────────────────
-        let cacheKey = "\(lang)\0\(code)" as NSString
-        if let cached = tokenCache.object(forKey: cacheKey) {
-            let result = NSMutableAttributedString(
-                string: code, attributes: [.font: font, .foregroundColor: defaultColor]
-            )
-            for (range, kind) in cached.spans {
-                result.addAttribute(.foregroundColor, value: self.color(for: kind), range: range)
+    private struct NumberState {
+        enum Phase { case zero, integer, hexLead, hex, binaryLead, binary, fractionLead, fraction, exponentLead, exponentSign, exponent }
+        var start: Int?
+        var phase = Phase.integer
+        var acceptedEnd = 0
+        var boundaryEnd: Int?
+        mutating func feed(_ value: UInt32, digit: Bool, word: Bool, previousWord: Bool, at offset: Int, end: Int) -> Range<Int>? {
+            var result: Range<Int>?
+            if let start {
+                if self.acceptedEnd == offset, !word { self.boundaryEnd = offset }
+                var consumed = false
+                var accepted = false
+                switch self.phase {
+                case .zero:
+                    if value == 120 { self.phase = .hexLead; consumed = true }
+                    else if value == 98 { self.phase = .binaryLead; consumed = true }
+                    else { (consumed, accepted) = self.decimal(value, digit: digit, fractionAllowed: true) }
+                case .integer: (consumed, accepted) = self.decimal(value, digit: digit, fractionAllowed: true)
+                case .fraction: (consumed, accepted) = self.decimal(value, digit: digit, fractionAllowed: false)
+                case .hexLead, .hex:
+                    if digit || (65 ... 70).contains(value) || (97 ... 102).contains(value) {
+                        self.phase = .hex; consumed = true; accepted = true
+                    }
+                case .binaryLead, .binary:
+                    if value == 48 || value == 49 { self.phase = .binary; consumed = true; accepted = true }
+                case .fractionLead:
+                    if digit { self.phase = .fraction; consumed = true; accepted = true }
+                case .exponentLead:
+                    if value == 43 || value == 45 { self.phase = .exponentSign; consumed = true }
+                    else if digit { self.phase = .exponent; consumed = true; accepted = true }
+                case .exponentSign, .exponent:
+                    if digit { self.phase = .exponent; consumed = true; accepted = true }
+                }
+                if consumed {
+                    if accepted { self.acceptedEnd = end }
+                    return nil
+                }
+                if let boundaryEnd = self.boundaryEnd { result = start ..< boundaryEnd }
+                self.start = nil
+            }
+            if digit, !previousWord {
+                self.start = offset; self.phase = value == 48 ? .zero : .integer
+                self.acceptedEnd = end; self.boundaryEnd = nil
             }
             return result
         }
 
-        // ── Slow path: run regexes, collect spans, cache ────────────────────
-        let result = NSMutableAttributedString(
-            string: code,
-            attributes: [.font: font, .foregroundColor: defaultColor]
-        )
+        private mutating func decimal(_ value: UInt32, digit: Bool, fractionAllowed: Bool) -> (Bool, Bool) {
+            if digit { if self.phase == .zero { self.phase = .integer }; return (true, true) }
+            if fractionAllowed, value == 46 { self.phase = .fractionLead; return (true, false) }
+            if value == 101 || value == 69 { self.phase = .exponentLead; return (true, false) }
+            return (false, false)
+        }
+    }
 
-        // Flat bitmap — O(1) read/write, no heap allocation per mark.
-        // Value = Kind.rawValue of the winning token (0 = unpainted).
-        var painted = [UInt8](repeating: 0, count: nsLen)
-        var spans = ContiguousArray<(range: NSRange, kind: Kind)>()
-
-        /// Mark a range with a token colour, painting only positions not yet claimed by a
-        /// higher-priority token. Partially-overlapping matches (e.g. a comment that
-        /// contains a string literal) are split into contiguous unpainted sub-ranges so
-        /// both tokens contribute their colour where they are the first claimant.
-        @inline(__always)
-        func paint(_ range: NSRange, _ kind: Kind) {
-            guard range.length > 0 else {
-                return
+    /// Independent lexical recognizers consume each scalar once. Keeping the
+    /// recognizers independent preserves the legacy global token precedence,
+    /// including strings nested inside comment matches. Range-only merging then
+    /// resolves precedence without rereading the source or allocating a bitmap.
+    private func lex(_ code: String, language: String, work: SyntaxWork) throws -> [SyntaxHighlightSpan] {
+        try work.add(language.utf8.count) // keyword-language dictionary hash
+        let normalized = self.keywords[language] == nil ? "_default" : language
+        let trie: KeywordTrie
+        try work.add(normalized.utf8.count) // trie-cache dictionary hash
+        if let cached = self.keywordCache[normalized] { trie = cached }
+        else {
+            try work.add(2 * normalized.utf8.count) // keyword lookup and cache insertion hashes
+            trie = KeywordTrie(self.keywords[normalized]!)
+            self.keywordCache[normalized] = trie
+            try work.metadata(trie.nodes.count * MemoryLayout<KeywordTrie.Node>.stride)
+        }
+        func matches(_ candidates: [String]) throws -> Bool {
+            for candidate in candidates where candidate.utf8.count == language.utf8.count {
+                try work.add(language.utf8.count)
+                if candidate == language { return true }
             }
-            let lo = range.location
-            let hi = min(lo + range.length, nsLen)
-            guard lo < hi else {
-                return
+            return false
+        }
+        let templates = try matches(["javascript", "js", "typescript", "ts", "jsx", "tsx"])
+        let hashComments = try matches(["bash", "perl", "python", "r", "ruby", "sh", "shell", "toml", "yaml", "yml"])
+        try work.add(language.utf8.count) // excluded-type language set hash
+        let types = !self.noTypeNameLangs.contains(language)
+        var matches = Array(repeating: [Range<Int>](), count: 9)
+        func append(_ range: Range<Int>?, rank: Int) throws {
+            guard let range, !range.isEmpty else { return }
+            if matches[rank].count == matches[rank].capacity {
+                try work.metadata(matches[rank].count * MemoryLayout<Range<Int>>.stride)
             }
-            var subStart: Int?
-            for i in lo ... hi {
-                if i < hi, painted[i] == 0 {
-                    if subStart == nil {
-                        subStart = i
-                    }
-                } else if let s = subStart {
-                    let sub = NSRange(location: s, length: i - s)
-                    for j in s ..< i {
-                        painted[j] = kind.rawValue
-                    }
-                    spans.append((sub, kind))
-                    result.addAttribute(.foregroundColor, value: self.color(for: kind), range: sub)
-                    subStart = nil
+            matches[rank].append(range)
+            try work.metadata(MemoryLayout<Range<Int>>.stride)
+        }
+        var double = QuotedState(quote: 34, multiline: false)
+        var single = QuotedState(quote: 39, multiline: false)
+        var template = QuotedState(quote: 96, multiline: true)
+        var tripleStart: Int?
+        var quoteRun = 0
+        var blockStart: Int?
+        var blockConsumedEnd = 0
+        var lineStart: Int?
+        var previous: UInt32 = 0
+        var previousOffset = 0
+        var previousWord = false
+        var wordStart: Int?
+        var wordTrie: Int? = 0
+        var typeCandidate = false
+        // Regex backtracking can restart after a decimal point or exponent sign.
+        // Keep those bounded alternative starts until the earlier candidate wins.
+        var numbers: [NumberState] = []
+        var numberConsumedEnd = 0
+        func feedNumbers(_ value: UInt32, digit: Bool, word: Bool, previousWord: Bool, at offset: Int, end: Int) throws {
+            var retained: [NumberState] = []
+            for var number in numbers {
+                guard (number.start ?? 0) >= numberConsumedEnd else { continue }
+                if let range = number.feed(value, digit: digit, word: word, previousWord: true, at: offset, end: end) {
+                    try append(range, rank: 6)
+                    numberConsumedEnd = range.upperBound
                 }
+                if number.start != nil { retained.append(number) }
+                try work.metadata(MemoryLayout<NumberState>.stride)
             }
+            if digit, !previousWord, offset >= numberConsumedEnd {
+                var number = NumberState()
+                _ = number.feed(value, digit: true, word: word, previousWord: false, at: offset, end: end)
+                retained.append(number)
+                try work.metadata(MemoryLayout<NumberState>.stride)
+            }
+            numbers = retained
         }
-
-        @inline(__always)
-        func apply(_ rx: NSRegularExpression, _ kind: Kind) {
-            rx.enumerateMatches(in: code, range: fullRange) { m, _, _ in
-                guard let m else {
-                    return
+        var offset = 0
+        func finishWord(at end: Int) throws {
+            guard let start = wordStart else { return }
+            if let index = wordTrie, trie.nodes[index].terminal { try append(start ..< end, rank: 7) }
+            if typeCandidate, types { try append(start ..< end, rank: 8) }
+            wordStart = nil
+        }
+        for scalar in code.unicodeScalars {
+            let value = scalar.value
+            let byteCount = value < 0x80 ? 1 : value < 0x800 ? 2 : value < 0x10000 ? 3 : 4
+            try work.add(byteCount)
+            let end = offset + (value > 0xFFFF ? 2 : 1)
+            let digit = scalar.properties.generalCategory == .decimalNumber
+            let word: Bool = switch scalar.properties.generalCategory {
+            case .nonspacingMark, .spacingMark, .enclosingMark, .decimalNumber, .connectorPunctuation: true
+            default: scalar.properties.isAlphabetic || value == 0x200C || value == 0x200D
+            }
+            if value == 34 {
+                quoteRun += 1
+                if quoteRun == 3 {
+                    if let start = tripleStart { try append(start ..< end, rank: 0); tripleStart = nil }
+                    else { tripleStart = offset - 2 }
+                    quoteRun = 0
                 }
-                paint(m.range, kind)
+            } else { quoteRun = 0 }
+            try append(double.feed(value, at: offset, end: end), rank: 1)
+            try append(single.feed(value, at: offset, end: end), rank: 2)
+            if templates { try append(template.feed(value, at: offset, end: end), rank: 3) }
+            if let start = blockStart {
+                if previous == 42, value == 47, offset >= start + 3 {
+                    try append(start ..< end, rank: 4); blockStart = nil; blockConsumedEnd = end
+                }
+            } else if previous == 47, value == 42, previousOffset >= blockConsumedEnd { blockStart = previousOffset }
+            if let start = lineStart {
+                if value == 10 || value == 13 { try append(start ..< offset, rank: 5); lineStart = nil }
+            } else if hashComments ? value == 35 : previous == 47 && value == 47 {
+                lineStart = hashComments ? offset : previousOffset
             }
+            try feedNumbers(value, digit: digit, word: word, previousWord: previousWord, at: offset, end: end)
+            if word {
+                if wordStart == nil {
+                    wordStart = offset; wordTrie = 0; typeCandidate = (65 ... 90).contains(value)
+                }
+                if let index = wordTrie { wordTrie = trie.nodes[index].edges[value]; try work.metadata(MemoryLayout<Int>.stride) }
+                typeCandidate = typeCandidate && ((65 ... 90).contains(value) || (97 ... 122).contains(value) || (48 ... 57).contains(value) || value == 95)
+            } else { try finishWord(at: offset) }
+            previous = value; previousOffset = offset; previousWord = word; offset = end
         }
-
-        // ── Priority order ──────────────────────────────────────────────────
-        // Strings come before comments so that comment delimiters *inside* a
-        // string literal (e.g. "http://…", "/* not a comment */") do not win.
-        // 1. Swift / Python triple-quoted strings
-        apply(self.tripleDoubleStringRx, .string)
-
-        // 2. Ordinary string literals
-        apply(self.doubleStringRx, .string)
-        apply(self.singleStringRx, .string)
-        if
-            lang == "javascript" || lang == "js" ||
-            lang == "typescript" || lang == "ts" || lang == "jsx" || lang == "tsx" {
-            apply(self.templateStringRx, .string)
+        try finishWord(at: offset)
+        try feedNumbers(0, digit: false, word: false, previousWord: previousWord, at: offset, end: offset)
+        if let start = lineStart { try append(start ..< offset, rank: 5) }
+        let kinds: [Kind] = [.string, .string, .string, .string, .comment, .comment, .number, .keyword, .type]
+        var covered: [Range<Int>] = []
+        var spans: [SyntaxHighlightSpan] = []
+        for rank in matches.indices {
+            let ranges = matches[rank]
+            guard !ranges.isEmpty else { continue }
+            var maskIndex = 0
+            func emit(_ lower: Int, _ upper: Int) throws {
+                guard lower < upper else { return }
+                if spans.count == spans.capacity { try work.metadata(spans.count * MemoryLayout<SyntaxHighlightSpan>.stride) }
+                spans.append(SyntaxHighlightSpan(range: NSRange(location: lower, length: upper - lower), kind: kinds[rank]))
+                try work.metadata(MemoryLayout<SyntaxHighlightSpan>.stride)
+            }
+            for range in ranges {
+                var cursor = range.lowerBound
+                while maskIndex < covered.count, covered[maskIndex].upperBound <= cursor {
+                    try work.metadata(MemoryLayout<Range<Int>>.stride); maskIndex += 1
+                }
+                var index = maskIndex
+                while index < covered.count, covered[index].lowerBound < range.upperBound {
+                    try work.metadata(MemoryLayout<Range<Int>>.stride)
+                    let mask = covered[index]
+                    try emit(cursor, min(mask.lowerBound, range.upperBound))
+                    cursor = max(cursor, mask.upperBound)
+                    if cursor >= range.upperBound { break }
+                    index += 1
+                }
+                try emit(cursor, range.upperBound)
+            }
+            var merged: [Range<Int>] = []
+            merged.reserveCapacity(covered.count + ranges.count)
+            var left = 0, right = 0
+            while left < covered.count || right < ranges.count {
+                let next: Range<Int>
+                if right == ranges.count || (left < covered.count && covered[left].lowerBound <= ranges[right].lowerBound) {
+                    next = covered[left]; left += 1
+                } else { next = ranges[right]; right += 1 }
+                if let last = merged.last, last.upperBound >= next.lowerBound { merged[merged.count - 1] = last.lowerBound ..< max(last.upperBound, next.upperBound) }
+                else { merged.append(next) }
+                try work.metadata(MemoryLayout<Range<Int>>.stride)
+            }
+            covered = merged
         }
-
-        // 3. Block comments  /* ... */
-        apply(self.blockCommentRx, .comment)
-
-        // 4. Single-line comments  // ... or # ...
-        apply(self.lineCommentRxFor(lang), .comment)
-
-        // 5. Numeric literals
-        apply(self.numberRx, .number)
-
-        // 6. Language keywords
-        if let kwRx = keywordRx(for: lang) {
-            apply(kwRx, .keyword)
-        }
-
-        // 7. PascalCase type names — skip for languages that don't have OOP types
-        if !self.noTypeNameLangs.contains(lang) {
-            apply(self.typeNameRx, .type)
-        }
-        // ────────────────────────────────────────────────────────────────────
-
-        self.tokenCache.setObject(CachedSpans(spans), forKey: cacheKey)
-        return result
+        return spans
     }
-
-    private nonisolated(unsafe) static let tokenCache: NSCache<NSString, CachedSpans> = {
-        let c = NSCache<NSString, CachedSpans>()
-        c.countLimit = 300 // ≈ 300 distinct code blocks cached in memory
-        return c
-    }()
-
-    /// Languages where PascalCase type-name highlighting is irrelevant / noisy.
-    private static let noTypeNameLangs: Set = [
-        "json", "bash", "sh", "shell", "css", "toml", "yaml", "yml", "mermaid",
-    ]
-
-    #if canImport(UIKit)
-    /// Xcode-inspired palette
-    private static let colorKeyword = UIColor { t in
-        t.userInterfaceStyle == .dark
-            ? UIColor(red: 0.81, green: 0.56, blue: 0.96, alpha: 1) // #CF8EF4
-            : UIColor(red: 0.61, green: 0.14, blue: 0.58, alpha: 1) // #9B2393
-    }
-
-    private static let colorString = UIColor { t in
-        t.userInterfaceStyle == .dark
-            ? UIColor(red: 0.99, green: 0.42, blue: 0.36, alpha: 1) // #FC6A5D
-            : UIColor(red: 0.77, green: 0.10, blue: 0.09, alpha: 1) // #C41A16
-    }
-
-    private static let colorComment = UIColor { t in
-        t.userInterfaceStyle == .dark
-            ? UIColor(red: 0.42, green: 0.54, blue: 0.38, alpha: 1)
-            : UIColor(red: 0.25, green: 0.43, blue: 0.20, alpha: 1)
-    }
-
-    private static let colorNumber = UIColor { t in
-        t.userInterfaceStyle == .dark
-            ? UIColor(red: 0.82, green: 0.75, blue: 0.41, alpha: 1) // #D0BF69
-            : UIColor(red: 0.11, green: 0.11, blue: 0.73, alpha: 1)
-    }
-
-    private static let colorType = UIColor { t in
-        t.userInterfaceStyle == .dark
-            ? UIColor(red: 0.36, green: 0.85, blue: 1.00, alpha: 1) // #5DD8FF
-            : UIColor(red: 0.22, green: 0.00, blue: 0.63, alpha: 1)
-    }
-
-    #elseif canImport(AppKit)
-    private static let colorKeyword = NSColor(name: nil) { a in
-        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(calibratedRed: 0.81, green: 0.56, blue: 0.96, alpha: 1)
-            : NSColor(calibratedRed: 0.61, green: 0.14, blue: 0.58, alpha: 1)
-    }
-
-    private static let colorString = NSColor(name: nil) { a in
-        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(calibratedRed: 0.99, green: 0.42, blue: 0.36, alpha: 1)
-            : NSColor(calibratedRed: 0.77, green: 0.10, blue: 0.09, alpha: 1)
-    }
-
-    private static let colorComment = NSColor(name: nil) { a in
-        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(calibratedRed: 0.42, green: 0.54, blue: 0.38, alpha: 1)
-            : NSColor(calibratedRed: 0.25, green: 0.43, blue: 0.20, alpha: 1)
-    }
-
-    private static let colorNumber = NSColor(name: nil) { a in
-        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(calibratedRed: 0.82, green: 0.75, blue: 0.41, alpha: 1)
-            : NSColor(calibratedRed: 0.11, green: 0.11, blue: 0.73, alpha: 1)
-    }
-
-    private static let colorType = NSColor(name: nil) { a in
-        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(calibratedRed: 0.36, green: 0.85, blue: 1.00, alpha: 1)
-            : NSColor(calibratedRed: 0.22, green: 0.00, blue: 0.63, alpha: 1)
-    }
-    #endif
-
-    // MARK: - Precompiled regexes
-
-    private static let blockCommentRx = rx(#"/\*[\s\S]*?\*/"#, [.dotMatchesLineSeparators])
-    private static let slashCommentRx = rx(#"//[^\r\n]*"#)
-    private static let hashCommentRx = rx(#"#[^\r\n]*"#)
-    private static let tripleDoubleStringRx = rx(#""""[\s\S]*?""""#, [.dotMatchesLineSeparators])
-    // Single-line strings: don't allow unescaped newlines so an unclosed quote
-    // doesn't eat the rest of the file.
-    private static let doubleStringRx = rx(#""(?:[^"\\\r\n]|\\.)*""#)
-    private static let singleStringRx = rx(#"'(?:[^'\\\r\n]|\\.)*'"#)
-    // Template literals can span lines.
-    private static let templateStringRx = rx(#"`(?:[^`\\]|\\.)*`"#, [.dotMatchesLineSeparators])
-    private static let numberRx = rx(#"\b(0x[\dA-Fa-f]+|0b[01]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b"#)
-    private static let typeNameRx = rx(#"\b[A-Z][A-Za-z0-9_]*\b"#)
-
-    // MARK: - Keyword regexes (built once per language, then cached)
-
-    private static let keywordCache = KeywordRegexCache()
 
     // MARK: - Keyword tables
 
     // swiftlint:disable line_length
-    private static let keywords: [String: [String]] = [
+    private let keywords: [String: [String]] = [
         "swift": [
             "actor", "any", "as", "associatedtype", "async", "await",
             "break", "case", "catch", "class", "continue", "convenience",
@@ -385,44 +531,90 @@ public enum SyntaxHighlighter {
     ]
 
     // swiftlint:enable line_length
+}
 
-    // MARK: - Adaptive colours
+/// Applies already prepared spans. Platform fonts and adaptive colors stay on MainActor.
+@MainActor
+public enum SyntaxHighlighter {
+    public static func highlight(_ code: String, spans: [SyntaxHighlightSpan], font: PlatformFont, defaultColor: PlatformColor) -> NSAttributedString {
+        let result = NSMutableAttributedString(string: code, attributes: [.font: font, .foregroundColor: defaultColor])
+        for span in spans where span.range.location >= 0 && NSMaxRange(span.range) <= result.length {
+            result.addAttribute(.foregroundColor, value: self.color(for: span.kind), range: span.range)
+        }
+        return result
+    }
 
-    private static func color(for kind: Kind) -> PlatformColor {
+    #if canImport(UIKit)
+    /// Xcode-inspired palette
+    private static let colorKeyword = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.81, green: 0.56, blue: 0.96, alpha: 1) // #CF8EF4
+            : UIColor(red: 0.61, green: 0.14, blue: 0.58, alpha: 1) // #9B2393
+    }
+
+    private static let colorString = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.99, green: 0.42, blue: 0.36, alpha: 1) // #FC6A5D
+            : UIColor(red: 0.77, green: 0.10, blue: 0.09, alpha: 1) // #C41A16
+    }
+
+    private static let colorComment = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.42, green: 0.54, blue: 0.38, alpha: 1)
+            : UIColor(red: 0.25, green: 0.43, blue: 0.20, alpha: 1)
+    }
+
+    private static let colorNumber = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.82, green: 0.75, blue: 0.41, alpha: 1) // #D0BF69
+            : UIColor(red: 0.11, green: 0.11, blue: 0.73, alpha: 1)
+    }
+
+    private static let colorType = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.36, green: 0.85, blue: 1.00, alpha: 1) // #5DD8FF
+            : UIColor(red: 0.22, green: 0.00, blue: 0.63, alpha: 1)
+    }
+
+    #elseif canImport(AppKit)
+    private static let colorKeyword = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.81, green: 0.56, blue: 0.96, alpha: 1)
+            : NSColor(calibratedRed: 0.61, green: 0.14, blue: 0.58, alpha: 1)
+    }
+
+    private static let colorString = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.99, green: 0.42, blue: 0.36, alpha: 1)
+            : NSColor(calibratedRed: 0.77, green: 0.10, blue: 0.09, alpha: 1)
+    }
+
+    private static let colorComment = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.42, green: 0.54, blue: 0.38, alpha: 1)
+            : NSColor(calibratedRed: 0.25, green: 0.43, blue: 0.20, alpha: 1)
+    }
+
+    private static let colorNumber = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.82, green: 0.75, blue: 0.41, alpha: 1)
+            : NSColor(calibratedRed: 0.11, green: 0.11, blue: 0.73, alpha: 1)
+    }
+
+    private static let colorType = NSColor(name: nil) { a in
+        a.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.36, green: 0.85, blue: 1.00, alpha: 1)
+            : NSColor(calibratedRed: 0.22, green: 0.00, blue: 0.63, alpha: 1)
+    }
+    #endif
+
+    private static func color(for kind: SyntaxHighlightKind) -> PlatformColor {
         switch kind {
         case .keyword: self.colorKeyword
         case .string: self.colorString
         case .comment: self.colorComment
         case .number: self.colorNumber
         case .type: self.colorType
-        }
-    }
-
-    private static func rx(
-        _ pattern: String,
-        _ opts: NSRegularExpression.Options = []
-    )
-        -> NSRegularExpression {
-        // swiftlint:disable:next force_try
-        try! NSRegularExpression(pattern: pattern, options: opts)
-    }
-
-    private static func lineCommentRxFor(_ lang: String) -> NSRegularExpression {
-        switch lang {
-        case "bash", "perl", "python", "r", "ruby",
-             "sh", "shell", "toml", "yaml", "yml":
-            self.hashCommentRx
-        default:
-            self.slashCommentRx
-        }
-    }
-
-    private static func keywordRx(for lang: String) -> NSRegularExpression? {
-        self.keywordCache.regex(for: lang) {
-            let words = self.keywords[lang] ?? self.keywords["_default"]!
-            return try? NSRegularExpression(
-                pattern: #"\b("# + words.joined(separator: "|") + #")\b"#
-            )
         }
     }
 }

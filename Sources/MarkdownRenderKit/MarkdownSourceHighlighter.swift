@@ -14,7 +14,11 @@ import AppKit
 /// This highlighter intentionally styles the source string itself instead of reusing the
 /// rich read-only renderer. It keeps the editor model plain-text-first while still sharing
 /// fonts, colors, and fenced code block syntax coloring with the rest of the package.
-public struct MarkdownSourceHighlighter: Sendable {
+@MainActor
+public struct MarkdownSourceHighlighter {
+    private let configuration: RenderConfigurationSnapshot
+    private var syntaxSpans: [SyntaxHighlightKey: [SyntaxHighlightSpan]] = [:]
+    private let style: RenderStyle
     private struct CodeBlockMatch {
         let fullRange: NSRange
         let openingFenceRange: NSRange
@@ -32,11 +36,29 @@ public struct MarkdownSourceHighlighter: Sendable {
     }
 
     public init(style: RenderStyle = .default) {
-        self.style = style
+        self.init(configuration: MarkdownRenderConfiguration(style: style).snapshot(generation: 0))
     }
 
-    public var style: RenderStyle
+    public init(configuration: RenderConfigurationSnapshot) {
+        self.configuration = configuration
+        self.style = RenderMaterializer(configuration: configuration).resolvedStyle()
+    }
 
+    /// Identifies fenced code to prefetch with SyntaxHighlightCache outside MainActor.
+    public func syntaxRequests(for source: String) -> [SyntaxHighlightKey] {
+        self.codeBlockMatches(in: source).map {
+            SyntaxHighlightKey(code: (source as NSString).substring(with: $0.bodyRange), language: $0.language)
+        }
+    }
+
+    /// Applies prefetched spans to this exact source while preserving synchronous editor attributes.
+    public func highlight(_ source: String, syntaxSpans: [SyntaxHighlightKey: [SyntaxHighlightSpan]]) -> NSAttributedString {
+        var prepared = self
+        prepared.syntaxSpans = syntaxSpans
+        return prepared.highlight(source)
+    }
+
+    /// Applies base Markdown attributes; fenced token colors require prefetched spans.
     public func highlight(_ source: String) -> NSAttributedString {
         let text = source as NSString
         let fullRange = NSRange(location: 0, length: text.length)
@@ -195,7 +217,7 @@ public struct MarkdownSourceHighlighter: Sendable {
         let body = (source as NSString).substring(with: bodyRange)
         let highlighted = SyntaxHighlighter.highlight(
             body,
-            language: match.language,
+            spans: self.syntaxSpans[SyntaxHighlightKey(code: body, language: match.language)] ?? [],
             font: self.style.codeFont,
             defaultColor: self.style.codeTextColor
         )
@@ -314,23 +336,25 @@ public struct MarkdownSourceHighlighter: Sendable {
             // LaTeX content — matches the mathTokenColor doc/README contract.
             let openByte = span.range.lowerBound
             guard openByte >= 0, openByte < bytes.count else { continue }
-            let delimLen: Int
-            if bytes[openByte] == 0x24 { // `$`
+            let delimLen: Int = if bytes[openByte] == 0x24 { // `$`
                 // `$$`(块级) vs `$`(行内)：看开界第二字节是否仍为 `$`。
-                delimLen = (openByte + 1 < bytes.count && bytes[openByte + 1] == 0x24) ? 2 : 1
+                (openByte + 1 < bytes.count && bytes[openByte + 1] == 0x24) ? 2 : 1
             } else { // `\(` / `\[`（开界 `\` + `(`/`[`），闭界 `\)` / `\]`，均 2 字节
-                delimLen = 2
+                2
             }
             let openEnd = openByte + delimLen
             let closeStart = span.range.upperBound - delimLen
             // 防御：公式过短致开闭定界符在字节空间相接/重叠时退化为整段
             // 着色（不漏色定界符；MathScanner 保证 latex 非空，正常不触发）。
             guard closeStart >= openEnd else {
-                let lo = utf16Index(source, utf8Offset: span.range.lowerBound)
-                let hi = utf16Index(source, utf8Offset: span.range.upperBound)
+                let lo = self.utf16Index(source, utf8Offset: span.range.lowerBound)
+                let hi = self.utf16Index(source, utf8Offset: span.range.upperBound)
                 if lo >= 0, hi > lo, hi <= ns.length {
-                    result.addAttribute(.foregroundColor, value: self.style.mathTokenColor,
-                                        range: NSRange(location: lo, length: hi - lo))
+                    result.addAttribute(
+                        .foregroundColor,
+                        value: self.style.mathTokenColor,
+                        range: NSRange(location: lo, length: hi - lo)
+                    )
                 }
                 continue
             }
@@ -352,11 +376,14 @@ public struct MarkdownSourceHighlighter: Sendable {
         utf8Lower: Int,
         utf8Upper: Int
     ) {
-        let lower = utf16Index(source, utf8Offset: utf8Lower)
-        let upper = utf16Index(source, utf8Offset: utf8Upper)
+        let lower = self.utf16Index(source, utf8Offset: utf8Lower)
+        let upper = self.utf16Index(source, utf8Offset: utf8Upper)
         guard lower >= 0, upper > lower, upper <= ns.length else { return }
-        result.addAttribute(.foregroundColor, value: self.style.mathTokenColor,
-                            range: NSRange(location: lower, length: upper - lower))
+        result.addAttribute(
+            .foregroundColor,
+            value: self.style.mathTokenColor,
+            range: NSRange(location: lower, length: upper - lower)
+        )
     }
 
     /// 把 source 的 UTF-8 字节偏移换成 NSString(UTF-16) 索引（字符边界对齐）。

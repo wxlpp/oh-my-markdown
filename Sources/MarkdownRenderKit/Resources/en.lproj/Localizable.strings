@@ -1,0 +1,7 @@
+"markdown.accessibility.image" = "Image";
+"markdown.accessibility.math" = "Formula";
+"markdown.accessibility.cellPosition" = "row %1$d, column %2$d";
+"markdown.accessibility.listPosition" = "%1$d of %2$d";
+"markdown.accessibility.checked" = "checked";
+"markdown.accessibility.unchecked" = "unchecked";
+"markdown.accessibility.code" = "Empty code block";

@@ -1,6 +1,6 @@
+import Foundation
 @testable import MarkdownPlatformView
 @testable import MarkdownRenderKit
-import Foundation
 import Testing
 
 @Suite("MarkdownLabelView renderMode tracking")

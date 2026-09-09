@@ -8,19 +8,21 @@ import Markdown
 /// is converted to MarkdownCore's own IR so that higher-level targets never
 /// need to depend on swift-markdown directly.
 public struct MarkdownDocument: Sendable, Equatable {
-    /// Parse a Markdown source string into a document.
+    /// Parse a Markdown source string into a document synchronously.
+    /// cmark-gfm has no cancellation hook: cancelling its calling task does not
+    /// stop an entered parse. UI consumers admit this work through ParseExecutor.
     public init(parsing source: String) {
-        self.parsedBlocks = Self.parsePipeline(source)
-        self.blocks = self.parsedBlocks.map(\.block)
+        self.blockStorage = PersistentValues(Self.parsePipeline(source))
+        self.workRecorder = nil
     }
 
     /// 数学感知解析管线：扫描 → 哨兵替换 → swift-markdown 解析 → 数学回填。
     /// `init(parsing:)` 与增量尾窗重解析共用此管线，保证两路语义完全一致。
-    private static func parsePipeline(_ source: String) -> [ParsedBlockNode] {
+    package static func parsePipeline(_ source: String) -> [ParsedBlockNode] {
         let mathSpans = MathScanner.scan(source)
         let sub = MathSentinel.substitute(source: source, spans: mathSpans)
         let swiftMarkdownDoc = Markdown.Document(parsing: sub.transformed)
-        let raw = DocumentParser().parse(source: sub.transformed, document: swiftMarkdownDoc)
+        let raw = try! DocumentParser().parse(source: sub.transformed, document: swiftMarkdownDoc)
         // swift-markdown 在「变换串」上解析，sourceRange/fingerprint 都是变换串字节空间。
         // 但 init(parsing:) 与 parsingAppend 都按「原始源码」消费这些区间
         // （reparseStart / utf8Index / offset(byUTF8:) / hasPrefix / 尾窗切片）。
@@ -31,6 +33,107 @@ public struct MarkdownDocument: Sendable, Equatable {
         return MathBackfill.resolve(mapped, table: sub.table)
     }
 
+    package static func parsePlainTail(_ source: String, metrics: inout ParseWorkMetrics, afterCmark: () -> Void = {}) throws -> [ParsedBlockNode] {
+        try Task.checkCancellation()
+        metrics.cmarkInputBytes = ParseWorkMetrics.saturatingAdd(metrics.cmarkInputBytes, source.utf8.count)
+        let tree = Markdown.Document(parsing: source)
+        afterCmark()
+        try Task.checkCancellation()
+        let parser = DocumentParser(checkCancellation: { try Task.checkCancellation() })
+        defer {
+            metrics.mappingBytes = ParseWorkMetrics.saturatingAdd(metrics.mappingBytes, parser.mappingBytes)
+            metrics.materializationBytes = ParseWorkMetrics.saturatingAdd(metrics.materializationBytes, parser.materializationBytes)
+            metrics.recordMetadata(parser.metadataBytes)
+        }
+        return try parser.parse(source: source, document: tree)
+    }
+
+    package static func parseMathTail(
+        _ source: String,
+        codeRegionsNeeded: Bool,
+        hasReserved: Bool,
+        metrics: inout ParseWorkMetrics,
+        afterCmark: () -> Void = {}
+    ) throws -> ([ParsedBlockNode], MathScanner.ScanResult) {
+        if let result = try source.utf8.withContiguousStorageIfAvailable({ bytes in
+            try self.parseMathTail(
+                source,
+                bytes: bytes,
+                codeRegionsNeeded: codeRegionsNeeded,
+                hasReserved: hasReserved,
+                metrics: &metrics,
+                afterCmark: afterCmark
+            )
+        }) { return result }
+        let bytes = Array(source.utf8)
+        metrics.materializationBytes = ParseWorkMetrics.saturatingAdd(metrics.materializationBytes, bytes.count)
+        return try bytes.withUnsafeBufferPointer {
+            try self.parseMathTail(
+                source,
+                bytes: $0,
+                codeRegionsNeeded: codeRegionsNeeded,
+                hasReserved: hasReserved,
+                metrics: &metrics,
+                afterCmark: afterCmark
+            )
+        }
+    }
+
+    private static func parseMathTail(
+        _ source: String,
+        bytes: UnsafeBufferPointer<UInt8>,
+        codeRegionsNeeded: Bool,
+        hasReserved: Bool,
+        metrics: inout ParseWorkMetrics,
+        afterCmark: () -> Void
+    ) throws -> ([ParsedBlockNode], MathScanner.ScanResult) {
+        let scan = try MathScanner.analyze(bytes: bytes, metrics: &metrics, codeRegionsNeeded: codeRegionsNeeded)
+        let sub = try MathSentinel.substitute(source: source, bytes: bytes, spans: scan.spans, hasReserved: hasReserved, metrics: &metrics)
+        try Task.checkCancellation()
+        metrics.cmarkInputBytes = ParseWorkMetrics.saturatingAdd(metrics.cmarkInputBytes, sub.transformed.utf8.count)
+        let tree = Markdown.Document(parsing: sub.transformed)
+        afterCmark()
+        try Task.checkCancellation()
+        let parser = DocumentParser(checkCancellation: { try Task.checkCancellation() })
+        let raw: [ParsedBlockNode]
+        do {
+            defer {
+                metrics.mappingBytes = ParseWorkMetrics.saturatingAdd(metrics.mappingBytes, parser.mappingBytes)
+                metrics.materializationBytes = ParseWorkMetrics.saturatingAdd(metrics.materializationBytes, parser.materializationBytes)
+                metrics.recordMetadata(parser.metadataBytes)
+            }
+            raw = try parser.parse(source: sub.transformed, document: tree, fingerprints: false)
+        }
+        let mapped = try raw.map { node -> ParsedBlockNode in
+            try Task.checkCancellation()
+            guard let range = node.sourceRange else { return node }
+            let lower = sub.originalByteOffset(forTransformed: range.lowerBound, atUpperBound: false)
+            let upper = sub.originalByteOffset(forTransformed: range.upperBound, atUpperBound: true)
+            // Same refusal as `mapToOriginalSpace`: an inverted mapping means the
+            // sentinel round-trip failed, and no range is safer than a wrong one.
+            guard lower <= upper else {
+                return ParsedBlockNode(block: node.block, sourceRange: nil, fingerprint: nil)
+            }
+            return ParsedBlockNode(
+                block: node.block,
+                sourceRange: MarkdownSourceRange(lowerBound: lower, upperBound: upper)
+            )
+        }
+        metrics.recordMetadata(mapped.count * MemoryLayout<ParsedBlockNode>.stride)
+        let work = ParseWorkAccumulator(metrics, cancellable: true)
+        let resolved = sub.table.isEmpty && !hasReserved ? mapped : try MathBackfill.resolve(mapped, table: sub.table, work: work)
+        metrics = work.metrics
+        let mapper = SourceRangeMapper(source: source, checkCancellation: {}, buildLineStarts: false)
+        let blocks = try resolved.map { node in
+            try Task.checkCancellation()
+            guard let range = node.sourceRange else { return node }
+            let fingerprint = try mapper.fingerprint(in: range, checkCancellation: { try Task.checkCancellation() }, onProgress: { metrics.mappingBytes = ParseWorkMetrics.saturatingAdd(metrics.mappingBytes, $0) })
+            return ParsedBlockNode(block: node.block, sourceRange: range, fingerprint: fingerprint)
+        }
+        metrics.recordMetadata(blocks.count * MemoryLayout<ParsedBlockNode>.stride)
+        return (blocks, scan)
+    }
+
     /// 把 raw 解析块的 `sourceRange`（变换串字节空间）映回原始源码字节空间，
     /// 并用原始源码切片重算 `fingerprint`（原始空间区间 ↔ 原始源码，自洽）。
     private static func mapToOriginalSpace(
@@ -38,7 +141,7 @@ public struct MarkdownDocument: Sendable, Equatable {
         sub: MathSentinel.SubstituteResult,
         originalSource: String
     ) -> [ParsedBlockNode] {
-        let originalMapper = SourceRangeMapper(source: originalSource)
+        let originalMapper = SourceRangeMapper(source: originalSource, checkCancellation: {})
         return raw.map { node in
             guard let xfRange = node.sourceRange else { return node }
             let lower = sub.originalByteOffset(forTransformed: xfRange.lowerBound, atUpperBound: false)
@@ -50,69 +153,64 @@ public struct MarkdownDocument: Sendable, Equatable {
             return ParsedBlockNode(
                 block: node.block,
                 sourceRange: origRange,
-                fingerprint: originalMapper.fingerprint(in: origRange)
+                fingerprint: originalMapper.fingerprint(in: origRange, checkCancellation: {})
             )
         }
     }
 
     public init(parsedBlocks: [ParsedBlockNode]) {
-        self.parsedBlocks = parsedBlocks
-        self.blocks = parsedBlocks.map(\.block)
+        // Programmatic top-level nodes have no source anchor. Their ordinal is
+        // local to this document, deterministic across equivalent reconstruction,
+        // and in a separate identity domain from parser/backfill source anchors.
+        self.blockStorage = PersistentValues(parsedBlocks.enumerated().map { ordinal, node in
+            guard node.documentOrdinal != nil else { return node }
+            return ParsedBlockNode(block: node.block, sourceRange: node.sourceRange, fingerprint: node.fingerprint, sourceAnchor: 0, documentOrdinal: ordinal)
+        })
+        self.workRecorder = nil
+    }
+
+    package init(blockStorage: PersistentValues<ParsedBlockNode>, recorder: ParseWorkRecorder? = nil) {
+        self.blockStorage = blockStorage; self.workRecorder = recorder
+    }
+
+    package let blockStorage: PersistentValues<ParsedBlockNode>
+    package let workRecorder: ParseWorkRecorder?
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.blockStorage == rhs.blockStorage
     }
 
     /// Top-level block nodes in document order.
-    public let blocks: [BlockNode]
-    /// Top-level block nodes paired with their UTF-8 source ranges when available.
-    public let parsedBlocks: [ParsedBlockNode]
-
-    /// Parse an appended version of this document by preserving stable prefix blocks
-    /// and reparsing the previous tail block plus the appended source.
-    public func parsingAppend(to newSource: String, previousSource: String) -> MarkdownDocument {
-        // 先用既有边界逻辑安全求出 reparse 起点（控制流由「先查 open-delimiter
-        // 再算 reparseStart」安全重排为「先算 reparseStart 边界，再仅对 previousSource
-        // 的 [reparseStart, end) 尾窗做 open-delimiter 检测」）。重排保留现有
-        // 所有 guard：任一不满足仍全量兜底，与现状语义完全一致。
-        guard
-            newSource.hasPrefix(previousSource),
-            let tail = parsedBlocks.last,
-            let tailRange = tail.sourceRange else {
-            return MarkdownDocument(parsing: newSource)
-        }
-
-        let reparseIndex = self.tailReparseStartIndex()
-        let reparseBlock = self.parsedBlocks[reparseIndex]
-        let reparseStart = reparseBlock.sourceRange?.lowerBound ?? tailRange.lowerBound
-        guard
-            reparseStart <= previousSource.utf8.count,
-            let suffixStart = newSource.utf8Index(at: reparseStart) else {
-            return MarkdownDocument(parsing: newSource)
-        }
-
-        // 数学感知：边界**之前**的稳定前缀块数学态已定型，且 pandoc 行内
-        // `$…$` 不跨块/段落空行，append 无法回头重开它们；仅当 reparse
-        // 尾窗 [reparseStart, end) 内有会被追加文本闭合的未闭合数学开界符时，
-        // suffix-only 扫描看不到它 → 必须全量解析以与全量一致（spec §4.3）。
-        if Self.previousSourceHasOpenMathDelimiter(previousSource, fromReparseBoundary: reparseStart) {
-            return MarkdownDocument(parsing: newSource)
-        }
-
-        let suffix = String(newSource[suffixStart...])
-        // 与 init(parsing:) 同一管线：扫描 → 哨兵替换 → 解析 → 回填，使重解析的尾窗
-        // 也能识别数学（前缀已确认无未闭合开界符，故按块边界切出的尾窗对数学自洽）。
-        let reparsedTail = Self.parsePipeline(suffix)
-            .map { parsed in
-                ParsedBlockNode(
-                    block: parsed.block,
-                    sourceRange: parsed.sourceRange?.offset(byUTF8: reparseStart),
-                    fingerprint: parsed.fingerprint
-                )
-            }
-
-        return MarkdownDocument(parsedBlocks: Array(self.parsedBlocks.prefix(reparseIndex)) + reparsedTail)
+    /// Explicitly materializes a flat array in O(number of blocks).
+    public var blocks: [BlockNode] {
+        var metrics = ParseWorkMetrics()
+        let result = self.blockStorage.materializedMap(\.block, metrics: &metrics)
+        self.workRecorder?.recordFacade(metrics)
+        return result
     }
 
-    // internal（非 private）：测试守卫复用同一套 reparse 边界计算，
-    // 与 `parsingAppend` 内部口径完全一致，避免守卫自算边界产生口径漂移。
+    /// Top-level block nodes paired with their UTF-8 source ranges when available.
+    /// Explicitly materializes a flat array in O(number of blocks).
+    public var parsedBlocks: [ParsedBlockNode] {
+        var metrics = ParseWorkMetrics()
+        let result = self.blockStorage.materializedMap({ $0 }, metrics: &metrics)
+        self.workRecorder?.recordFacade(metrics)
+        return result
+    }
+
+    /// Parse the complete appended source with full Markdown semantics.
+    /// This compatibility entry point is O(newSource.utf8.count): it carries no
+    /// scanner provenance, so appended definitions may invalidate earlier blocks.
+    /// The streaming view pipeline uses the stateful, admitted tail parser.
+    public func parsingAppend(to newSource: String, previousSource: String) -> MarkdownDocument {
+        // This compatibility API carries no scanner provenance or reference table.
+        // A source prefix alone cannot establish that earlier blocks are immutable:
+        // appended definitions and cross-block math can change them retroactively.
+        // Stateful streaming uses IncrementalSourceBuffer instead.
+        MarkdownDocument(parsing: newSource)
+    }
+
+    /// internal（非 private）：测试守卫复用同一套 reparse 边界计算，
+    /// 与 `parsingAppend` 内部口径完全一致，避免守卫自算边界产生口径漂移。
     func tailReparseStartIndex() -> Int {
         guard self.parsedBlocks.count >= 2 else {
             return max(self.parsedBlocks.count - 1, 0)
@@ -216,101 +314,161 @@ public struct ParsedBlockNode: Sendable, Equatable {
         self.block = block
         self.sourceRange = sourceRange
         self.fingerprint = fingerprint
+        self.sourceAnchor = sourceRange?.lowerBound ?? 0
+        self.sourceAnchorEnd = sourceRange?.upperBound
+        self.splitOrdinal = 0
+        self.documentOrdinal = sourceRange == nil ? 0 : nil
+    }
+
+    package init(block: BlockNode, sourceRange: MarkdownSourceRange?, fingerprint: UInt64?, sourceAnchor: Int, sourceAnchorEnd: Int? = nil, splitOrdinal: Int = 0, documentOrdinal: Int? = nil) {
+        self.block = block; self.sourceRange = sourceRange; self.fingerprint = fingerprint
+        self.sourceAnchor = sourceAnchor; self.sourceAnchorEnd = sourceAnchorEnd
+        self.splitOrdinal = splitOrdinal
+        self.documentOrdinal = documentOrdinal
     }
 
     public let block: BlockNode
     public let sourceRange: MarkdownSourceRange?
     public let fingerprint: UInt64?
+    /// Immutable original-source start survives math backfill's nil range policy.
+    package let sourceAnchor: Int
+    /// End of the original block a rebuilt block came from, carried for the same
+    /// reason and with the same lifetime as `sourceAnchor`. Every piece of one
+    /// split shares it, so it bounds the *run*, not an individual piece — without
+    /// it a copy has no provable end and has to guess at the document's.
+    package let sourceAnchorEnd: Int?
+    package let splitOrdinal: Int
+    /// Non-nil when `sourceAnchor` is a placeholder rather than a real offset:
+    /// programmatically constructed nodes, and the parser's own inverted-range
+    /// fallback, which routes through the public init. Source copy reads it as
+    /// "this anchor cannot be used as a boundary", so every constructor that
+    /// rebuilds a node has to carry it — there are three:
+    /// `MathBackfill.resolve`, `IncrementalParseState`'s window shift, and
+    /// `MarkdownDocument.init(parsedBlocks:)` below.
+    package let documentOrdinal: Int?
+    package var lineage: UInt64 {
+        let role: UInt64 = switch self.block {
+        case .paragraph: 1
+        // Public blocks accept any Int; match the renderer's heading role clamp
+        // before unsigned conversion or arithmetic, including Int.min/Int.max.
+        case .heading(let level, _): 2 + UInt64(min(max(level, 1), 6))
+        case .codeBlock: 10
+        case .blockquote: 11
+        case .bulletList: 12
+        case .orderedList: 13
+        case .table: 14
+        case .thematicBreak: 15
+        case .htmlBlock: 16
+        case .mathBlock: 17
+        }
+        // Fixed-size identity fields only; no content/end/fingerprint is hashed.
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        // Public source ranges are signed values. Preserve all anchor bits rather
+        // than narrowing to an unsigned value (which traps for negative ranges).
+        let identity = self.documentOrdinal.map(UInt64.init) ?? UInt64(bitPattern: Int64(self.sourceAnchor))
+        let discriminator = self.documentOrdinal == nil ? UInt64(self.splitOrdinal) : UInt64.max
+        for value in [identity, role, discriminator] {
+            var bits = value
+            for _ in 0 ..< 8 {
+                hash = (hash ^ (bits & 255)) &* 1_099_511_628_211; bits >>= 8
+            }
+        }
+        return hash
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.block == rhs.block && lhs.sourceRange == rhs.sourceRange && lhs.fingerprint == rhs.fingerprint
+    }
 }
 
 // MARK: - DocumentParser
 
-private struct DocumentParser {
-    func parse(source: String, document: Markdown.Document) -> [ParsedBlockNode] {
-        let mapper = SourceRangeMapper(source: source)
-        return document.children.compactMap { markup in
-            guard let block = parseBlock(markup) else {
-                return nil
-            }
-            let sourceRange = mapper.range(from: markup.range)
-            return ParsedBlockNode(
-                block: block,
-                sourceRange: sourceRange,
-                fingerprint: sourceRange.flatMap { mapper.fingerprint(in: $0) }
-            )
-        }
+private final class DocumentParser {
+    private let checkCancellation: () throws -> Void
+    private(set) var mappingBytes = 0
+    private(set) var materializationBytes = 0
+    private(set) var metadataBytes = 0
+    init(checkCancellation: @escaping () throws -> Void = {}) {
+        self.checkCancellation = checkCancellation
     }
 
-    // MARK: Block nodes
+    func parse(source: String, document: Markdown.Document, fingerprints: Bool = true) throws -> [ParsedBlockNode] {
+        let mapper = try SourceRangeMapper(source: source, checkCancellation: self.checkCancellation, onProgress: { bytes, metadata in
+            self.mappingBytes = ParseWorkMetrics.saturatingAdd(self.mappingBytes, bytes)
+            self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, metadata)
+        })
+        var result: [ParsedBlockNode] = []
+        result.reserveCapacity(document.childCount)
+        for markup in document.children {
+            try self.checkCancellation()
+            guard let block = try self.parseBlock(markup) else { continue }
+            let range = mapper.range(from: markup.range)
+            let fingerprint = fingerprints ? try range.flatMap { try mapper.fingerprint(in: $0, checkCancellation: self.checkCancellation, onProgress: { self.mappingBytes = ParseWorkMetrics.saturatingAdd(self.mappingBytes, $0) }) } : nil
+            self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, MemoryLayout<ParsedBlockNode>.stride)
+            result.append(ParsedBlockNode(block: block, sourceRange: range, fingerprint: fingerprint))
+        }
+        return result
+    }
 
-    private func parseBlock(_ markup: any Markup) -> BlockNode? {
+    private func parseBlock(_ markup: any Markup) throws -> BlockNode? {
+        try self.checkCancellation()
+        self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, MemoryLayout<BlockNode>.stride)
         switch markup {
         case let node as Paragraph:
-            return .paragraph(self.parseInlines(node.children))
-
+            return try .paragraph(self.parseInlines(node.children))
         case let node as Heading:
-            return .heading(level: node.level, content: self.parseInlines(node.children))
-
+            return try .heading(level: node.level, content: self.parseInlines(node.children))
         case let node as CodeBlock:
-            let lang = node.language.flatMap { $0.isEmpty ? nil : $0 }
-            return .codeBlock(language: lang, body: node.code)
-
+            return .codeBlock(language: node.language.flatMap { $0.isEmpty ? nil : $0 }, body: node.code)
         case let node as BlockQuote:
-            return .blockquote(node.children.compactMap { self.parseBlock($0) })
-
+            return try .blockquote(node.children.compactMap { try self.parseBlock($0) })
         case let node as UnorderedList:
-            let items = node.children
-                .compactMap { $0 as? Markdown.ListItem }
-                .map { self.parseListItem($0) }
-            return .bulletList(items: items)
-
+            return try .bulletList(items: node.children.compactMap { node in
+                guard let item = node as? Markdown.ListItem else { return nil }
+                return try self.parseListItem(item)
+            })
         case let node as OrderedList:
-            let items = node.children
-                .compactMap { $0 as? Markdown.ListItem }
-                .map { self.parseListItem($0) }
-            return .orderedList(start: Int(node.startIndex), items: items)
-
-        case is ThematicBreak:
-            return .thematicBreak
-
-        case let node as HTMLBlock:
-            return .htmlBlock(text: node.rawHTML)
-
-        case let node as Table:
-            return self.parseTable(node)
-
-        default:
-            return nil
+            return try .orderedList(start: Int(node.startIndex), items: node.children.compactMap { node in
+                guard let item = node as? Markdown.ListItem else { return nil }
+                return try self.parseListItem(item)
+            })
+        case is ThematicBreak: return .thematicBreak
+        case let node as HTMLBlock: return .htmlBlock(text: node.rawHTML)
+        case let node as Table: return try self.parseTable(node)
+        default: return nil
         }
     }
 
-    private func parseTable(_ node: Table) -> BlockNode {
-        let alignments: [ColumnAlignment] = node.columnAlignments.map { col in
-            switch col {
-            case .left: .left
-            case .right: .right
-            case .center: .center
-            case nil: .none
+    private func parseTable(_ node: Table) throws -> BlockNode {
+        let columns: [ColumnAlignment] = try node.columnAlignments.map { column in
+            try self.checkCancellation()
+            switch column {
+            case .left: return .left
+            case .right: return .right
+            case .center: return .center
+            case nil: return .none
             }
         }
-        // Head: Table.Head directly contains Table.Cell (not Table.Row)
-        let headCells: [TableCell] = node.head.children
-            .compactMap { $0 as? Table.Cell }
-            .map { TableCell(content: self.parseInlines($0.children)) }
-        // Body: Table.Body contains multiple Table.Row
-        let bodyRows: [[TableCell]] = node.body.children
-            .compactMap { $0 as? Table.Row }
-            .map { row in
-                row.children
-                    .compactMap { $0 as? Table.Cell }
-                    .map { TableCell(content: self.parseInlines($0.children)) }
+        let head = try node.head.children.compactMap { cell -> TableCell? in
+            try self.checkCancellation()
+            guard let cell = cell as? Table.Cell else { return nil }
+            return try TableCell(content: self.parseInlines(cell.children))
+        }
+        let rows = try node.body.children.compactMap { row -> [TableCell]? in
+            try self.checkCancellation()
+            guard let row = row as? Table.Row else { return nil }
+            return try row.children.compactMap { cell in
+                try self.checkCancellation()
+                guard let cell = cell as? Table.Cell else { return nil }
+                return try TableCell(content: self.parseInlines(cell.children))
             }
-        return .table(columns: alignments, head: headCells, rows: bodyRows)
+        }
+        return .table(columns: columns, head: head, rows: rows)
     }
 
-    private func parseListItem(_ item: Markdown.ListItem) -> MarkdownCore.ListItem {
-        let blocks = item.children.compactMap { self.parseBlock($0) }
-        // Markdown.Checkbox is a top-level enum (not nested in ListItem)
+    private func parseListItem(_ item: Markdown.ListItem) throws -> MarkdownCore.ListItem {
+        try self.checkCancellation()
+        let blocks = try item.children.compactMap { try self.parseBlock($0) }
         let checkbox: MarkdownCore.ListItem.Checkbox? = switch item.checkbox {
         case .checked: .checked
         case .unchecked: .unchecked
@@ -319,73 +477,106 @@ private struct DocumentParser {
         return MarkdownCore.ListItem(blocks: blocks, checkbox: checkbox)
     }
 
-    // MARK: Inline nodes
-
-    private func parseInlines(_ children: MarkupChildren) -> [InlineNode] {
-        children.compactMap { self.parseInline($0) }
+    private func parseInlines(_ children: MarkupChildren) throws -> [InlineNode] {
+        try children.compactMap { try self.parseInline($0) }
     }
 
-    private func parseInline(_ markup: any Markup) -> InlineNode? {
+    private func parseInline(_ markup: any Markup) throws -> InlineNode? {
+        try self.checkCancellation()
+        self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, MemoryLayout<InlineNode>.stride)
         switch markup {
-        case let node as Markdown.Text:
-            return .text(node.string)
-
-        case is SoftBreak:
-            return .softBreak
-
-        case is LineBreak:
-            return .lineBreak
-
-        case let node as InlineCode:
-            return .inlineCode(node.code)
-
-        case let node as Emphasis:
-            return .emphasis(self.parseInlines(node.children))
-
-        case let node as Strong:
-            return .strong(self.parseInlines(node.children))
-
-        case let node as Strikethrough:
-            return .strikethrough(self.parseInlines(node.children))
-
+        case let node as Markdown.Text: return .text(node.string)
+        case is SoftBreak: return .softBreak
+        case is LineBreak: return .lineBreak
+        case let node as InlineCode: return .inlineCode(node.code)
+        case let node as Emphasis: return try .emphasis(self.parseInlines(node.children))
+        case let node as Strong: return try .strong(self.parseInlines(node.children))
+        case let node as Strikethrough: return try .strikethrough(self.parseInlines(node.children))
         case let node as Link:
-            return .link(
-                destination: node.destination ?? "",
-                title: node.title,
-                children: self.parseInlines(node.children)
-            )
-
-        case let node as Image:
-            let alt = node.plainText
-            return .image(source: node.source ?? "", alt: alt)
-
-        case let node as InlineHTML:
-            return .html(node.rawHTML)
-
-        case let node as SymbolLink:
-            // Render DocC symbol links as plain text.
-            return .text(node.destination ?? "")
-
-        default:
-            return nil
+            return try .link(destination: node.destination ?? "", title: node.title, children: self.parseInlines(node.children))
+        case let node as Image: return try .image(source: node.source ?? "", alt: self.imagePlainText(node))
+        case let node as InlineHTML: return .html(node.rawHTML)
+        case let node as SymbolLink: return .text(node.destination ?? "")
+        default: return nil
         }
+    }
+
+    /// Upstream plainText spelling, but collect leaves first so deeply nested
+    /// alt markup never joins/copies the same source prefix at every container.
+    private func imagePlainText(_ image: Image) throws -> String {
+        var fragments: [String] = []
+        var count = 0
+        func append(_ text: String) {
+            count = ParseWorkMetrics.saturatingAdd(count, text.utf8.count)
+            if fragments.count == fragments.capacity {
+                self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, fragments.count * MemoryLayout<String>.stride)
+            }
+            fragments.append(text)
+            self.metadataBytes = ParseWorkMetrics.saturatingAdd(self.metadataBytes, MemoryLayout<String>.stride)
+        }
+        func visit(_ node: any Markup) throws {
+            try self.checkCancellation()
+            switch node {
+            case let text as Markdown.Text: append(text.string)
+            case let code as InlineCode: append("`"); append(code.code); append("`")
+            case let html as InlineHTML: append(html.rawHTML)
+            case let symbol as SymbolLink: append("``"); append(symbol.destination ?? ""); append("``")
+            case is SoftBreak: append(" ")
+            case is LineBreak: append("\n")
+            case is Strikethrough:
+                append("~")
+                for child in node.children {
+                    try visit(child)
+                }
+                append("~")
+            default:
+                for child in node.children {
+                    try visit(child)
+                }
+            }
+        }
+        try visit(image)
+        var result = ""
+        result.reserveCapacity(count)
+        for fragment in fragments {
+            try self.checkCancellation()
+            result.append(fragment)
+            self.materializationBytes = ParseWorkMetrics.saturatingAdd(self.materializationBytes, fragment.utf8.count)
+        }
+        return result
     }
 }
 
 // MARK: - SourceRangeMapper
 
 private struct SourceRangeMapper {
-    init(source: String) {
+    init(source: String, checkCancellation: () throws -> Void = {}, buildLineStarts: Bool = true, onProgress: (Int, Int) -> Void = { _, _ in }) rethrows {
         self.source = source
+        guard buildLineStarts else { self.lineStarts = []; self.metadataBytes = 0; return }
         var starts = [0]
+        var metadata = MemoryLayout<Int>.stride
         var offset = 0
+        defer { onProgress(offset, metadata) }
+        var previousWasCR = false
         for byte in source.utf8 {
+            if offset & 1023 == 0 { try checkCancellation() }
             offset += 1
-            if byte == 10 {
+            if byte == 13 {
+                if starts.count == starts.capacity { metadata = ParseWorkMetrics.saturatingAdd(metadata, starts.count * MemoryLayout<Int>.stride) }
                 starts.append(offset)
+                metadata = ParseWorkMetrics.saturatingAdd(metadata, MemoryLayout<Int>.stride)
+            } else if byte == 10 {
+                if previousWasCR { starts[starts.count - 1] = offset }
+                else {
+                    if starts.count == starts.capacity { metadata = ParseWorkMetrics.saturatingAdd(metadata, starts.count * MemoryLayout<Int>.stride) }
+                    starts.append(offset)
+                }
+                metadata = ParseWorkMetrics.saturatingAdd(metadata, MemoryLayout<Int>.stride)
             }
+            previousWasCR = byte == 13
         }
         self.lineStarts = starts
+        self.metadataBytes = metadata
     }
 
     func range(from sourceRange: SourceRange?) -> MarkdownSourceRange? {
@@ -399,17 +590,21 @@ private struct SourceRangeMapper {
         return MarkdownSourceRange(lowerBound: lower, upperBound: upper)
     }
 
-    func fingerprint(in range: MarkdownSourceRange) -> UInt64? {
+    func fingerprint(in range: MarkdownSourceRange, checkCancellation: () throws -> Void = {}, onProgress: (Int) -> Void = { _ in }) rethrows -> UInt64? {
         guard
             range.lowerBound >= 0,
             range.lowerBound <= range.upperBound,
-            range.upperBound <= self.source.utf8.count,
-            let lower = source.utf8Index(at: range.lowerBound),
-            let upper = source.utf8Index(at: range.upperBound) else {
+            range.upperBound <= self.source.utf8.count else {
             return nil
         }
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
-        for byte in self.source[lower ..< upper].utf8 {
+        let lower = self.source.utf8.index(self.source.utf8.startIndex, offsetBy: range.lowerBound)
+        let upper = self.source.utf8.index(lower, offsetBy: range.upperBound - range.lowerBound)
+        var count = 0
+        defer { onProgress(count) }
+        for byte in self.source.utf8[lower ..< upper] {
+            if count & 1023 == 0 { try checkCancellation() }
+            count += 1
             hash ^= UInt64(byte)
             hash &*= 0x100_0000_01B3
         }
@@ -418,6 +613,7 @@ private struct SourceRangeMapper {
 
     private let source: String
     private let lineStarts: [Int]
+    let metadataBytes: Int
 
     private func offset(for location: SourceLocation) -> Int? {
         guard location.line > 0, location.line <= self.lineStarts.count else {
@@ -428,7 +624,7 @@ private struct SourceRangeMapper {
 }
 
 extension String {
-    fileprivate func utf8Index(at offset: Int) -> String.Index? {
+    private func utf8Index(at offset: Int) -> String.Index? {
         guard offset >= 0, offset <= utf8.count else {
             return nil
         }
@@ -443,8 +639,14 @@ extension String {
 /// 不产生块级占位符，以保证不残留哨兵到公开 IR（与 §4.2 表格单元格降级规则一致）。
 enum MathBackfill {
     static func resolve(_ blocks: [ParsedBlockNode], table: [MathSentinel.Entry]) -> [ParsedBlockNode] {
-        blocks.flatMap { node -> [ParsedBlockNode] in
-            let resolved = self.resolveBlock(node.block, table: table)
+        try! self.resolve(blocks, table: table, work: ParseWorkAccumulator(cancellable: false))
+    }
+
+    static func resolve(_ blocks: [ParsedBlockNode], table: [MathSentinel.Entry], work: ParseWorkAccumulator) throws -> [ParsedBlockNode] {
+        try blocks.flatMap { node -> [ParsedBlockNode] in
+            try work.check()
+            let before = work.decodedEventCount
+            let resolved = try self.resolveBlock(node.block, table: table, work: work)
             // pre-backfill 的 `fingerprint` / `sourceRange` 是对**原始**
             // `node.block` 在原始源码字节空间算出的；仅当 backfill 对该位置
             // 「原样透传、未拆未改 block」时它们才与 emitted 块 1:1 自洽。
@@ -468,35 +670,45 @@ enum MathBackfill {
             // passthrough; clear them whenever backfill split or rewrote
             // this position so the block diff falls back to BlockNode
             // equality (semantically correct, just no fast-path).
-            let isPassthrough = resolved.count == 1 && resolved[0] == node.block
+            let isPassthrough = resolved.count == 1 && work.decodedEventCount == before
+            try work.metadata(resolved.count * MemoryLayout<ParsedBlockNode>.stride)
             if isPassthrough {
-                return [ParsedBlockNode(
-                    block: resolved[0], sourceRange: node.sourceRange, fingerprint: node.fingerprint
-                )]
+                return [node]
             }
-            return resolved.map {
-                ParsedBlockNode(block: $0, sourceRange: nil, fingerprint: nil)
+            return resolved.enumerated().map {
+                ParsedBlockNode(
+                    block: $0.element,
+                    sourceRange: nil,
+                    fingerprint: nil,
+                    sourceAnchor: node.sourceAnchor,
+                    sourceAnchorEnd: node.sourceRange?.upperBound ?? node.sourceAnchorEnd,
+                    splitOrdinal: $0.offset,
+                    // Carried, or the pieces of a node whose anchor is a
+                    // placeholder would claim it as a real source offset.
+                    documentOrdinal: node.documentOrdinal
+                )
             }
         }
     }
 
-    private static func resolveBlock(_ block: BlockNode, table: [MathSentinel.Entry]) -> [BlockNode] {
-        switch block {
+    private static func resolveBlock(_ block: BlockNode, table: [MathSentinel.Entry], work: ParseWorkAccumulator) throws -> [BlockNode] {
+        try work.metadata(MemoryLayout<BlockNode>.stride)
+        return switch block {
         case .paragraph(let inlines):
-            self.splitParagraph(inlines, table: table)
+            try self.splitParagraph(inlines, table: table, work: work)
         case .heading(let level, let content):
-            [.heading(level: level, content: self.resolveInlines(content, table: table, allowBlock: false))]
+            try [.heading(level: level, content: self.resolveInlines(content, table: table, allowBlock: false, work: work))]
         case .blockquote(let inner):
-            [.blockquote(inner.flatMap { self.resolveBlock($0, table: table) })]
+            try [.blockquote(inner.flatMap { try self.resolveBlock($0, table: table, work: work) })]
         case .bulletList(let items):
-            [.bulletList(items: items.map { self.resolveListItem($0, table: table) })]
+            try [.bulletList(items: items.map { try self.resolveListItem($0, table: table, work: work) })]
         case .orderedList(let start, let items):
-            [.orderedList(start: start, items: items.map { self.resolveListItem($0, table: table) })]
+            try [.orderedList(start: start, items: items.map { try self.resolveListItem($0, table: table, work: work) })]
         case .table(let cols, let head, let rows):
-            [.table(
+            try [.table(
                 columns: cols,
-                head: head.map { TableCell(content: self.resolveInlines($0.content, table: table, allowBlock: false)) },
-                rows: rows.map { $0.map { TableCell(content: self.resolveInlines($0.content, table: table, allowBlock: false)) } }
+                head: head.map { try TableCell(content: self.resolveInlines($0.content, table: table, allowBlock: false, work: work)) },
+                rows: rows.map { try $0.map { try TableCell(content: self.resolveInlines($0.content, table: table, allowBlock: false, work: work)) } }
             )]
         case .codeBlock, .thematicBreak, .htmlBlock:
             [block]
@@ -505,23 +717,27 @@ enum MathBackfill {
         }
     }
 
-    private static func resolveListItem(_ item: ListItem, table: [MathSentinel.Entry]) -> ListItem {
-        ListItem(blocks: item.blocks.flatMap { self.resolveBlock($0, table: table) }, checkbox: item.checkbox)
+    private static func resolveListItem(_ item: ListItem, table: [MathSentinel.Entry], work: ParseWorkAccumulator) throws -> ListItem {
+        try work.metadata(MemoryLayout<ListItem>.stride)
+        return try ListItem(blocks: item.blocks.flatMap { try self.resolveBlock($0, table: table, work: work) }, checkbox: item.checkbox)
     }
 
     private static func splitParagraph(
-        _ inlines: [InlineNode], table: [MathSentinel.Entry]
-    ) -> [BlockNode] {
-        let expanded = self.resolveInlines(inlines, table: table, allowBlock: true)
+        _ inlines: [InlineNode], table: [MathSentinel.Entry], work: ParseWorkAccumulator
+    ) throws -> [BlockNode] {
+        let expanded = try self.resolveInlines(inlines, table: table, allowBlock: true, work: work)
         var result: [BlockNode] = []
         var buffer: [InlineNode] = []
         func flush() {
             if !buffer.isEmpty { result.append(.paragraph(buffer)); buffer = [] }
         }
         for node in expanded {
+            try work.metadata(MemoryLayout<InlineNode>.stride)
             if node.isBlockMathPlaceholder, case .html(let s) = node {
+                work.decodedEventCount = ParseWorkMetrics.saturatingAdd(work.decodedEventCount, 1)
                 flush()
                 let latex = String(s.dropFirst().dropLast()) // 去掉首尾 U+10FE02
+                try work.copy(latex.utf8.count)
                 result.append(.mathBlock(latex: latex))
             } else {
                 buffer.append(node)
@@ -533,17 +749,18 @@ enum MathBackfill {
     }
 
     private static func resolveInlines(
-        _ inlines: [InlineNode], table: [MathSentinel.Entry], allowBlock: Bool
-    ) -> [InlineNode] {
-        inlines.flatMap { node -> [InlineNode] in
+        _ inlines: [InlineNode], table: [MathSentinel.Entry], allowBlock: Bool, work: ParseWorkAccumulator
+    ) throws -> [InlineNode] {
+        try inlines.flatMap { node -> [InlineNode] in
+            try work.metadata(MemoryLayout<InlineNode>.stride)
             switch node {
             case .text(let raw):
-                return self.splitText(raw, table: table, allowBlock: allowBlock)
-            case .emphasis(let c): return [.emphasis(self.resolveInlines(c, table: table, allowBlock: false))]
-            case .strong(let c): return [.strong(self.resolveInlines(c, table: table, allowBlock: false))]
-            case .strikethrough(let c): return [.strikethrough(self.resolveInlines(c, table: table, allowBlock: false))]
+                return try self.splitText(raw, table: table, allowBlock: allowBlock, work: work)
+            case .emphasis(let c): return try [.emphasis(self.resolveInlines(c, table: table, allowBlock: false, work: work))]
+            case .strong(let c): return try [.strong(self.resolveInlines(c, table: table, allowBlock: false, work: work))]
+            case .strikethrough(let c): return try [.strikethrough(self.resolveInlines(c, table: table, allowBlock: false, work: work))]
             case .link(let d, let t, let c):
-                return [.link(destination: d, title: t, children: self.resolveInlines(c, table: table, allowBlock: false))]
+                return try [.link(destination: d, title: t, children: self.resolveInlines(c, table: table, allowBlock: false, work: work))]
             default:
                 return [node]
             }
@@ -551,30 +768,21 @@ enum MathBackfill {
     }
 
     private static func splitText(
-        _ raw: String, table: [MathSentinel.Entry], allowBlock: Bool
-    ) -> [InlineNode] {
-        let anchors = MathSentinel.anchorRanges(in: raw).filter { table.indices.contains($0.index) }
-        guard !anchors.isEmpty else {
-            return [.text(MathSentinel.unescapeReservedScalar(raw))]
-        }
-        var out: [InlineNode] = []
-        var cursor = raw.startIndex
-        for anchor in anchors {
-            if cursor < anchor.range.lowerBound {
-                out.append(.text(MathSentinel.unescapeReservedScalar(String(raw[cursor ..< anchor.range.lowerBound]))))
+        _ raw: String, table: [MathSentinel.Entry], allowBlock: Bool, work: ParseWorkAccumulator
+    ) throws -> [InlineNode] {
+        try MathSentinel.decodeText(raw, tableCount: table.count, work: work).map { piece in
+            try work.metadata(MemoryLayout<InlineNode>.stride)
+            switch piece {
+            case .literal(let text): return .text(text)
+            case .entry(let index):
+                let entry = table[index]
+                if entry.display, allowBlock {
+                    try work.copy(entry.latex.utf8.count + 8)
+                    return .blockMathPlaceholder(latex: entry.latex)
+                }
+                return .math(latex: entry.latex)
             }
-            let entry = table[anchor.index]
-            if entry.display, allowBlock {
-                out.append(.blockMathPlaceholder(latex: entry.latex))
-            } else {
-                out.append(.math(latex: entry.latex))
-            }
-            cursor = anchor.range.upperBound
         }
-        if cursor < raw.endIndex {
-            out.append(.text(MathSentinel.unescapeReservedScalar(String(raw[cursor ..< raw.endIndex]))))
-        }
-        return out
     }
 }
 

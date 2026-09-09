@@ -1,0 +1,57 @@
+{
+  "ios18": {
+    "requiredTargets": [
+      "MarkdownKitTests",
+      "MarkdownMathTests",
+      "ExampleTests",
+      "ExampleUITests"
+    ],
+    "requiredTests": [
+      "Parsed blocks include stable source fingerprints",
+      "合法公式 → .rendered，尺寸为正",
+      "Smoke markdown parses one heading",
+      "testRootDemoIsAccessible()",
+      "testRenderedMarkdownIsTraversedElementByElement()",
+      "testTheRenderedDocumentGrowsWithTheTextSize()"
+    ]
+  },
+  "macos15": {
+    "requiredTargets": [
+      "MarkdownKitTests",
+      "MarkdownMathTests"
+    ],
+    "requiredTests": [
+      "Parsed blocks include stable source fingerprints",
+      "合法公式 → .rendered，尺寸为正"
+    ]
+  },
+  "ios18-dynamic-type": {
+    "requiredTargets": [
+      "MarkdownKitTests"
+    ],
+    "requiredTests": [
+      "defaultMetricsGrowMonotonicallyWithTheCategory(role:)",
+      "headingsNeverFallBelowTheirDampedDeclaredRatio(category:)",
+      "aCategoryChangeReplacesTheConfigurationExactlyOnce()",
+      "theCategoryParticipatesInConfigurationIdentity()",
+      "aFixedCustomFontDoesNotScale()",
+      "aScaledCustomFontFollowsTheCategory()",
+      "theSystemTraitDrivesTheCategory()",
+      "everyLineHasPositiveHeightAndNoneOverlap(category:)",
+      "anOrderedItemKeepsItsTextAtEveryCategory(category:)",
+      "wideTablesKeepTheirHorizontalOverflow(category:)"
+    ]
+  },
+  "ios18-accessibility": {
+    "requiredTargets": [
+      "MarkdownKitTests"
+    ],
+    "requiredTests": [
+      "theExposedLeafSequenceIsTheDocumentReadInOrder()",
+      "theLabelIsNeverALeafEvenWhenToldToBeOne()",
+      "everyElementHasItsOwnRealLayoutFrame()",
+      "aLinkElementActivatesThroughThePolicy()",
+      "appendingReusesThePlatformObjectsOfSurvivingLeaves()"
+    ]
+  }
+}

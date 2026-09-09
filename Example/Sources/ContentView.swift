@@ -13,17 +13,20 @@ struct ContentView: View {
                 .tabItem { Label("编辑", systemImage: "square.and.pencil") }
             StreamTab()
                 .tabItem { Label("流式", systemImage: "dot.radiowaves.right") }
+            CapabilitiesTab()
+                .tabItem { Label("能力", systemImage: "lock.shield") }
         }
+        .accessibilityIdentifier("markdownkit.example.root")
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder
-    func inlineNavigationTitleDisplayMode() -> some View {
+    fileprivate func inlineNavigationTitleDisplayMode() -> some View {
         #if os(iOS)
-            navigationBarTitleDisplayMode(.inline)
+        navigationBarTitleDisplayMode(.inline)
         #else
-            self
+        self
         #endif
     }
 }
@@ -51,11 +54,11 @@ private enum StylePreset: String, CaseIterable, Identifiable {
         case .large:
             var s = RenderStyle.default
             #if canImport(UIKit)
-                s.bodyFont = .preferredFont(forTextStyle: .title3)
-                s.codeFont = .monospacedSystemFont(ofSize: 17, weight: .regular)
+            s.bodyFont = .preferredFont(forTextStyle: .title3)
+            s.codeFont = .monospacedSystemFont(ofSize: 17, weight: .regular)
             #elseif canImport(AppKit)
-                s.bodyFont = .systemFont(ofSize: 17)
-                s.codeFont = .monospacedSystemFont(ofSize: 16, weight: .regular)
+            s.bodyFont = .systemFont(ofSize: 17)
+            s.codeFont = .monospacedSystemFont(ofSize: 16, weight: .regular)
             #endif
             s.paragraphSpacing = 12
             return s
@@ -71,6 +74,9 @@ private struct RenderTab: View {
             ScrollView {
                 MarkdownText(sampleMarkdown)
                     .markdownStyle(self.preset.renderStyle)
+                    // Bundle images, not remote ones: these ship inside the app,
+                    // so there is no network egress to opt into.
+                    .markdownImages(.bundle())
                     .mathRenderer(self.mathRenderer)
                     .svgRenderer(self.svgBlockRenderer)
                     .padding(.horizontal, 16)
@@ -99,8 +105,8 @@ private struct RenderTab: View {
     // @State 把实例托管给 SwiftUI 的状态机，跨 struct 重建保持身份稳定，
     // 让 isSameMathRenderer / isSameSVGBlockRenderer 守卫真正生效。
     // Copilot PR #5 R4 #2 & suppressed #3.
-    @State private var mathRenderer = MathJaxRenderer()
-    @State private var svgBlockRenderer = SwiftDrawSVGBlockRenderer()
+    @State private var mathRenderer = MathRendererConfiguration(renderer: MathJaxRenderer())
+    @State private var svgBlockRenderer = SVGRendererConfiguration(renderer: SwiftDrawSVGBlockRenderer())
 }
 
 // MARK: - EditorTab
@@ -204,6 +210,10 @@ private struct StreamTab: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(self.isRunning || !self.hasOutput)
+
+                    Toggle("压力", isOn: self.$stress)
+                        .toggleStyle(.button)
+                        .disabled(self.isRunning)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -218,9 +228,13 @@ private struct StreamTab: View {
     @State private var streamSource = MarkdownStreamingSource()
     // @State 跨 View 重建保持 renderer 身份稳定，避免反复 setRenderer 翻转
     // coordinator generation；与 RenderTab 同款（Copilot PR #5 R4 #2 & suppressed #3）。
-    @State private var mathRenderer = MathJaxRenderer()
-    @State private var svgBlockRenderer = SwiftDrawSVGBlockRenderer()
+    @State private var mathRenderer = MathRendererConfiguration(renderer: MathJaxRenderer())
+    @State private var svgBlockRenderer = SVGRendererConfiguration(renderer: SwiftDrawSVGBlockRenderer())
     @State private var isRunning = false
+    /// Appends every token with no pacing at all, so the incremental path is
+    /// driven as fast as the main actor will accept work. The point is to make a
+    /// dropped or reordered chunk visible, which the human-paced default hides.
+    @State private var stress = false
     @State private var hasOutput = false
     @State private var taskHandle: Task<Void, Never>?
     @State private var streamRunID = 0
@@ -245,6 +259,7 @@ private struct StreamTab: View {
         self.streamSource.clear()
         self.hasOutput = false
         self.isRunning = true
+        let stress = self.stress
         self.taskHandle = Task {
             let tokens = streamTokens
             var didMarkOutput = false
@@ -253,8 +268,16 @@ private struct StreamTab: View {
                     break
                 }
                 do {
-                    // Use try (not try?) so CancellationError propagates and stops the loop
-                    try await Task.sleep(for: .milliseconds(Int.random(in: 18...55)))
+                    // The one deliberate sleep in the repository: it paces a
+                    // simulated token stream for a person to watch, which is a
+                    // real delay rather than a guess about one. Tests may not
+                    // wait on a timer — see `RepositoryHygieneTests`.
+                    // `try`, not `try?`, so cancellation propagates and stops the loop.
+                    if stress {
+                        try await Task.sleep(for: .nanoseconds(1))
+                    } else {
+                        try await Task.sleep(for: .milliseconds(Int.random(in: 18 ... 55)))
+                    }
                 } catch {
                     break
                 }
@@ -279,6 +302,152 @@ private struct StreamTab: View {
         }
     }
 }
+
+// MARK: - CapabilitiesTab
+
+/// The opt-ins, each with the evidence that it is off until it is asked for.
+///
+/// Everything here is a public API a host would use: nothing reaches past the
+/// library's own surface to make the demo work.
+private struct CapabilitiesTab: View {
+    var body: some View {
+        NavigationStack {
+            MarkdownSelectionReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        self.controls
+                        Divider()
+                        self.document
+                        Divider()
+                        self.evidence(proxy)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                }
+            }
+            .navigationTitle("能力开关")
+            .inlineNavigationTitleDisplayMode()
+        }
+    }
+
+    @ViewBuilder private var controls: some View {
+        Toggle("远程图片（.defaultHTTPS）", isOn: self.$remoteImages)
+        Toggle("放行 markdownkit: scheme", isOn: self.$allowCustomScheme)
+        LabeledContent("字号") {
+            Picker("字号", selection: self.$size) {
+                Text("默认").tag(DynamicTypeSize.large)
+                Text("XXL").tag(DynamicTypeSize.xxLarge)
+                Text("AX5").tag(DynamicTypeSize.accessibility5)
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    private var document: some View {
+        MarkdownText(capabilitiesMarkdown)
+            .markdownImages(self.remoteImages ? .defaultHTTPS : .disabled)
+            .markdownLinkPolicy(
+                self.allowCustomScheme ? AnySchemePolicy() : .webOnly,
+                handler: self.linkHandler
+            )
+            .onMarkdownResourceError { self.failures.append($0) }
+            .dynamicTypeSize(self.size)
+            .accessibilityIdentifier("markdownkit.example.capabilities.document")
+    }
+
+    private func evidence(_ proxy: MarkdownSelectionProxy) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("证据").font(.headline)
+            // Category and a sanitized scheme://host only — a failure carries no
+            // path or query, so there is nothing here that could leak one.
+            Text(
+                self.failures.isEmpty
+                    ? "资源失败：无"
+                    : self.failures.map { "\($0.category) ← \($0.origin?.description ?? "未知来源")" }
+                    .joined(separator: "\n")
+            )
+            .font(.caption.monospaced())
+            .foregroundStyle(self.failures.isEmpty ? .secondary : .primary)
+            Text(
+                self.linkHandler.opened.isEmpty
+                    ? "已打开链接：无（被策略拒绝的链接不会到达这里）"
+                    : "已打开链接：\n" + self.linkHandler.opened.joined(separator: "\n")
+            )
+            .font(.caption.monospaced())
+            .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Button("复制所见") {
+                    self.copied = proxy.renderedSelection
+                }
+                .buttonStyle(.bordered)
+                Button("复制源码") {
+                    self.copied = proxy.markdownSourceSelection
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            Text(self.copied.map { "\($0.granularity)：\($0.text)" } ?? "先选中一段文字，再按上面的按钮")
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @State private var remoteImages = false
+    @State private var allowCustomScheme = false
+    @State private var size: DynamicTypeSize = .large
+    @State private var failures: [MarkdownResourceFailure] = []
+    @State private var copied: MarkdownCopyResult?
+    /// `@State` so the handler keeps one identity across body evaluations: a new
+    /// one each time reads as a configuration replacement.
+    @State private var linkHandler = RecordingLinkHandler()
+}
+
+/// Permits anything, so the demo can show that a scheme needs *both* a policy
+/// that allows it and a handler that knows how to open it.
+private struct AnySchemePolicy: MarkdownLinkPolicy {
+    func disposition(for request: MarkdownLinkRequest) -> MarkdownLinkDisposition {
+        .allow(request.url)
+    }
+}
+
+/// Records instead of opening, so the demo can show what the policy let through
+/// without leaving the app.
+///
+/// `@Observable`, not a plain class: the view holds it in `@State` and reads
+/// `opened` from its body, and a plain class mutation posts no update — the list
+/// filled up while the label above it kept saying it was empty.
+@MainActor @Observable private final class RecordingLinkHandler: MarkdownLinkHandler {
+    private(set) var opened: [String] = []
+    func open(_ url: URL) {
+        self.opened.append(url.absoluteString)
+    }
+}
+
+private let capabilitiesMarkdown = """
+## 远程图片
+
+关闭时下面是占位符，**没有任何请求离开进程**；打开后走 `.defaultHTTPS`。
+
+![一张远程图片](https://example.invalid/markdownkit-demo.png)
+
+## 链接
+
+- [https 链接](https://swift.org) —— 默认策略即放行
+- [markdownkit: 自定义 scheme](markdownkit://demo/open) —— 需要策略与 handler 同时放行
+
+## 大字号
+
+上面的字号选择器驱动 `dynamicTypeSize`，正文、标题、列表缩进与表格都会跟随。
+
+1. 第一项，长到需要折行才能看出序号与正文是否对齐
+2. 第二项
+3. 第三项
+
+| 组件 | 状态 |
+|------|:----:|
+| 图片 | 按需 |
+| 链接 | 按策略 |
+"""
 
 // MARK: - Sample content
 
@@ -330,7 +499,7 @@ MarkdownText(source)
 ## 有序列表
 
 1. 解析：`swift-markdown` → `BlockNode` / `InlineNode`
-2. 渲染：`AttributedStringRenderer` → `NSAttributedString`
+2. 准备：`RenderPreparer` → `RenderDisplayModel`
 3. 排版：`NSTextLayoutManager` 排版并绘制
 4. 展示：`MarkdownText` SwiftUI 视图
 
@@ -343,6 +512,13 @@ MarkdownText(source)
 - [x] Markdown 源文本编辑器
 - [ ] 表格支持
 - [x] 代码语法高亮
+
+## 图片（随 app 打包）
+
+`markdownkit-banner.png` 是 app 自己的资源，由内置的 bundle loader 提供——不联网，
+也不需要开任何开关。远程图片才需要 `.markdownImages(.defaultHTTPS)`。
+
+![MarkdownKit bundle banner](markdownkit-banner.png)
 
 ## 表格（窄表）
 
@@ -360,7 +536,7 @@ MarkdownText(source)
 | MarkdownText | iOS | 26.0 | TextKit 2 | MainActor | ⭐⭐⭐⭐⭐ | ✅ | ✅ | SwiftUI 原生视图 |
 | MarkdownLabelView | iOS | 26.0 | TextKit 2 | MainActor | ⭐⭐⭐⭐⭐ | ✅ | ✅ | UIView 封装 |
 | MarkdownLabelView | macOS | 26.0 | TextKit 2 | MainActor | ⭐⭐⭐⭐⭐ | ✅ | ✅ | NSView 封装 |
-| AttributedStringRenderer | 全平台 | 26.0 | — | 任意 | ⭐⭐⭐⭐ | N/A | ✅ | 纯值类型渲染器 |
+| RenderPreparer | 全平台 | 26.0 | — | 任意 | ⭐⭐⭐⭐ | N/A | ✅ | 显示模型准备 |
 | MarkdownParser | 全平台 | 26.0 | swift-markdown | 任意 | ⭐⭐⭐⭐ | N/A | ✅ | 基于 cmark |
 
 ## 表格（数据对比）
@@ -560,9 +736,10 @@ private let streamTokens: [String] = {
       - `BlockNode` — 统一的中间表示，与平台无关
         - `.paragraph`, `.heading`, `.codeBlock`, `.table`…
     - **渲染层**
-      - `AttributedStringRenderer` — 值类型，线程安全
-        - 接收 `availableWidth`，内联计算 tab stops
-        - 溢出表格：文字置透明，写入 `.markdownTableNaturalWidth`
+      - `RenderPreparer` → `RenderDisplayModel` — 不可变、Sendable
+        - off-main 准备渲染 recipes、源码范围、资源与表格意图
+      - `RenderMaterializer`（内部）— MainActor
+        - 按可用宽度完成 TextKit 测量、tab stops 与 attachments
     - **显示层**
       - `MarkdownLabelView` — 平台视图（UIView / NSView）
         - TextKit 2 直接驱动，无中间层
@@ -589,7 +766,7 @@ private let streamTokens: [String] = {
     var idx = text.startIndex
     while idx < text.endIndex {
         let next = text.index(idx, offsetBy: 2, limitedBy: text.endIndex) ?? text.endIndex
-        tokens.append(String(text[idx..<next]))
+        tokens.append(String(text[idx ..< next]))
         idx = next
     }
     return tokens
