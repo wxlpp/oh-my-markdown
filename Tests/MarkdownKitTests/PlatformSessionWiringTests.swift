@@ -85,7 +85,7 @@ struct PlatformSessionWiringTests {
     func currentTokenCanLoadSameImageWhileOldTokenIsPending(oldOutcome: String) async throws {
         let loader = PausedImageLoader()
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader)
         view.setMarkdown("A ![alt](https://example.com/image.png)")
         await loader.events.settled { await loader.sources.count == 1 }
         let oldToken = try #require(view.currentCommitToken)
@@ -122,7 +122,7 @@ struct PlatformSessionWiringTests {
     func teardownClearsImageBookkeepingAndLateCompletionCannotMutate(oldOutcome: String) async throws {
         let loader = PausedImageLoader()
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader)
         view.setMarkdown("![alt](https://example.com/image.png)")
         await loader.events.settled { await loader.sources.count == 1 }
         #expect(view.imageRequests.count == 1)
@@ -167,7 +167,7 @@ struct PlatformSessionWiringTests {
     @Test func overflowImageResolutionPublishesOwnedCellAttachment() async throws {
         let loader = PausedImageLoader()
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader)
         view.setMarkdown("| Photo | Text |\n|---|---|\n| ![alt](https://example.com/image.png) | value |")
         await loader.events.settled { await loader.sources.count == 1 }
         #expect(view.currentSnapshot?.attributedString.string == "\u{00A0}")
@@ -185,7 +185,7 @@ struct PlatformSessionWiringTests {
     @Test func currentImageFailureIsRecordedWithoutPublishingOrRetryLoop() async throws {
         let loader = PausedImageLoader()
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 120, height: 400))
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader)
         view.setMarkdown("![alt](https://example.com/image.png)")
         await loader.events.settled { await loader.sources.count == 1 }
         let token = try #require(view.currentCommitToken)

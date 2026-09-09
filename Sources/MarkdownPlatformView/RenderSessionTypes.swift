@@ -194,7 +194,7 @@ package enum RenderSessionMutation {
     case setDocument(MarkdownDocument, RenderConfigurationSnapshot)
     case append(String)
     case replaceConfiguration(RenderConfigurationSnapshot)
-    case replaceImageConfiguration(MarkdownRemoteImageConfiguration)
+    case replaceImageConfiguration(MarkdownImageConfiguration)
     /// Carries nothing: the policy, the handler and their identities all live on
     /// the main-actor driver, which is also what activation revalidates against.
     /// Shipping copies into the session would be a second source of truth.

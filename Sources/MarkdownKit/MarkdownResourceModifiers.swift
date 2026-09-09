@@ -2,7 +2,7 @@ import MarkdownPlatformView
 import SwiftUI
 
 extension EnvironmentValues {
-    @Entry public var markdownRemoteImageConfiguration: MarkdownRemoteImageConfiguration = .disabled
+    @Entry public var markdownImageConfiguration: MarkdownImageConfiguration = .disabled
     @Entry public var markdownResourceErrorHandler: MarkdownResourceErrorHandler? = nil
     /// The type is `@MainActor`, so it cannot carry a main-actor default into this
     /// context; `nil` therefore means "unset", and a view that has had a
@@ -11,9 +11,13 @@ extension EnvironmentValues {
 }
 
 extension View {
-    /// Opts this subtree into remote image loading. Disabled by default.
-    public func markdownRemoteImages(_ configuration: MarkdownRemoteImageConfiguration) -> some View {
-        environment(\.markdownRemoteImageConfiguration, configuration)
+    /// Chooses where images come from. Disabled by default, so a document that
+    /// arrived over the network cannot make the library fetch anything.
+    ///
+    /// `.bundle()` serves resources that ship inside the app and reaches no
+    /// network at all; `.defaultHTTPS` opts into remote loading.
+    public func markdownImages(_ configuration: MarkdownImageConfiguration) -> some View {
+        environment(\.markdownImageConfiguration, configuration)
     }
 
     /// Receives typed failures containing only a sanitized URL origin.

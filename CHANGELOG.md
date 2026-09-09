@@ -13,7 +13,11 @@ MarkdownKit adheres to [Semantic Versioning](http://semver.org/).
 破坏性发布。迁移指南见 [`docs/release/0.2.0-migration.md`](docs/release/0.2.0-migration.md)。
 
 ### Added
-- **远程图片按需开启**：`markdownRemoteImages(_:)`。`.defaultHTTPS` 走独立
+- **随 app 打包的图片**：`markdownImages(.bundle())` 由内置的
+  `MarkdownBundleImageLoader` 按资源名解析，不联网、无需开关。带 scheme、绝对
+  路径、`~` 或 `..` 的引用在查 bundle 之前就被拒绝。资源目录（`Assets.xcassets`）
+  中的图片不支持——它们只能以已解码的 `UIImage` 形式取出，而本管线接收字节。
+- **远程图片按需开启**：`markdownImages(_:)`。`.defaultHTTPS` 走独立
   `URLSession`（不共享 cookie / 凭据 / 缓存），仅 HTTPS，仅
   PNG/JPEG/GIF/WebP/HEIC/HEIF，编码体 20 MiB、单边 8192 像素、32 帧、累计
   4000 万像素上限，超时钳在 1…120 秒。
@@ -35,6 +39,13 @@ MarkdownKit adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 - 平台下限从 iOS 26 / macOS 26 **下调**到 iOS 18 / macOS 15。
+- **无障碍：整篇文档不再作为一个元素朗读。** 视图 conforms `UITextInput`，UIKit
+  会对这类视图强制把 `isAccessibilityElement` 答成 `true`，无论存储属性被设成
+  什么——已建好的元素因此从不被索取。改为 override 后，Example 在 iOS 18 上的
+  可访问元素数由 1 变为 134，按阅读顺序逐元素朗读与移动焦点。
+- `markdownRemoteImages(_:)` / `MarkdownRemoteImageConfiguration` 更名为
+  `markdownImages(_:)` / `MarkdownImageConfiguration`：配置现在也涵盖本地图片，
+  旧名字与之矛盾。两者都是 0.2.0 新增，未在任何发布中出现过。
 - **⌘C 的结果变了**：过去给 Markdown 源码，现在给屏幕上的内容；旧行为改由
   「Copy Markdown Source」提供。
 - `mathRenderer(_:)` / `svgRenderer(_:)` 改收

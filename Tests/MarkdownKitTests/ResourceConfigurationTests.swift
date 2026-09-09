@@ -36,12 +36,12 @@ struct ResourceConfigurationTests {
 
     @Test func cacheNamespacesAreOwnedByWrappersAndNormalizeBuiltInSettings() {
         let loader = PausedLoader()
-        #expect(MarkdownRemoteImageConfiguration(loader: loader).configurationID != MarkdownRemoteImageConfiguration(loader: loader).configurationID)
+        #expect(MarkdownImageConfiguration(loader: loader).configurationID != MarkdownImageConfiguration(loader: loader).configurationID)
         let shared = MarkdownConfigurationID.semantic(namespace: "host-image-loader", version: 2)
-        #expect(MarkdownRemoteImageConfiguration(loader: loader, configurationID: shared).configurationID == MarkdownRemoteImageConfiguration(loader: loader, configurationID: shared).configurationID)
-        #expect(MarkdownRemoteImageConfiguration.defaultHTTPS.configurationID == MarkdownRemoteImageConfiguration.https().configurationID)
-        #expect(MarkdownRemoteImageConfiguration.https(requestTimeout: .zero, resourceTimeout: .seconds(999)).configurationID == MarkdownRemoteImageConfiguration.https(requestTimeout: .seconds(1), resourceTimeout: .seconds(120)).configurationID)
-        #expect(MarkdownRemoteImageConfiguration.https(requestTimeout: .seconds(16)).configurationID != MarkdownRemoteImageConfiguration.defaultHTTPS.configurationID)
+        #expect(MarkdownImageConfiguration(loader: loader, configurationID: shared).configurationID == MarkdownImageConfiguration(loader: loader, configurationID: shared).configurationID)
+        #expect(MarkdownImageConfiguration.defaultHTTPS.configurationID == MarkdownImageConfiguration.https().configurationID)
+        #expect(MarkdownImageConfiguration.https(requestTimeout: .zero, resourceTimeout: .seconds(999)).configurationID == MarkdownImageConfiguration.https(requestTimeout: .seconds(1), resourceTimeout: .seconds(120)).configurationID)
+        #expect(MarkdownImageConfiguration.https(requestTimeout: .seconds(16)).configurationID != MarkdownImageConfiguration.defaultHTTPS.configurationID)
     }
 
     @Test func optInStartsCustomLoaderAndSameIDReplacementRejectsLateFailure() async throws {
@@ -51,13 +51,13 @@ struct ResourceConfigurationTests {
         defer { view.dismantleRenderSession() }
         var failures: [MarkdownResourceFailure] = []
         view.onResourceError = { failures.append($0) }
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader, configurationID: shared)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader, configurationID: shared)
         view.blocks = MarkdownDocument(parsing: "![private alt](https://example.test/private.png?secret=hidden)").blocks
         // Opting in has to invoke the configured loader; if it never does, this
         // waits for an event that never comes and the suite's time limit fails it.
         await loader.events.settled { await loader.calls == 1 }
         let old = try #require(view.currentCommitToken)
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader, configurationID: shared)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader, configurationID: shared)
         await loader.events.settled { await loader.calls == 2 }
         let current = try #require(view.currentCommitToken)
         #expect(current.configurationGeneration == old.configurationGeneration + 1)
@@ -159,13 +159,13 @@ struct ResourceConfigurationTests {
     @Test(arguments: [false, true])
     func SwiftUIModifiersConfigureTheActualStaticAndStreamingView(streaming: Bool) async {
         let loader = PausedLoader()
-        let configuration = MarkdownRemoteImageConfiguration(loader: loader)
+        let configuration = MarkdownImageConfiguration(loader: loader)
         let source = "![alt](https://example.test/private)"
         let streamingSource = MarkdownStreamingSource(source)
         let content = Group {
             if streaming { MarkdownStreamingText(streamingSource) }
             else { MarkdownText(source) }
-        }.markdownRemoteImages(configuration).onMarkdownResourceError { _ in }
+        }.markdownImages(configuration).onMarkdownResourceError { _ in }
         #if canImport(UIKit)
         let host = UIHostingController(rootView: content)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
@@ -228,8 +228,8 @@ struct RemoteImageReinstallTests {
             VStack {
                 Text("failures: \(self.failures)")
                 MarkdownText("![alt](https://example.invalid/x.png)")
-                    .markdownRemoteImages(
-                        MarkdownRemoteImageConfiguration(loader: self.loader, configurationID: self.configurationID)
+                    .markdownImages(
+                        MarkdownImageConfiguration(loader: self.loader, configurationID: self.configurationID)
                     )
                     .onMarkdownResourceError { _ in self.failures += 1 }
             }
@@ -267,5 +267,52 @@ struct RemoteImageReinstallTests {
         }
         #expect(await loader.calls == 1, "a recorded failure restarted the load")
         withExtendedLifetime((host, label)) {}
+    }
+}
+
+@Suite(.timeLimit(.minutes(1)))
+struct BundleImageLoaderTests {
+    /// The rejection rules are the security boundary: a document that arrived
+    /// over the network must not be able to name anything outside the bundle.
+    @Test(arguments: [
+        "file:///etc/passwd",
+        "https://example.test/a.png",
+        "/etc/passwd",
+        "~/secret.png",
+        "../../../etc/passwd",
+        "a/../../b.png",
+        "./a.png",
+        "",
+    ])
+    func aReferenceOutsideTheBundleIsRefused(reference: String) throws {
+        let loader = MarkdownBundleImageLoader(bundle: .module)
+        let url = try #require(URL(string: reference, relativeTo: nil) ?? URL(string: "x"))
+        if reference.isEmpty {
+            #expect(try loader.resolve(#require(URL(string: "."))) == nil)
+        } else {
+            #expect(loader.resolve(url) == nil, "accepted \(reference)")
+        }
+    }
+
+    /// …and a plain resource name resolves, so the refusals above are not simply
+    /// "it refuses everything".
+    @Test func aResourceNameInTheBundleResolves() throws {
+        let loader = MarkdownBundleImageLoader(bundle: .module, subdirectory: "RenderGolden")
+        let resolved = try loader.resolve(#require(URL(string: "README.md")))
+        #expect(resolved != nil)
+        #expect(resolved?.lastPathComponent == "README.md")
+    }
+
+    /// Two views serving the same bundle share resolved images; a different
+    /// bundle or subdirectory is a different namespace.
+    @Test func theIdentityFollowsTheBundleAndSubdirectory() {
+        #expect(
+            MarkdownImageConfiguration.bundle(.module).configurationID
+                == MarkdownImageConfiguration.bundle(.module).configurationID
+        )
+        #expect(
+            MarkdownImageConfiguration.bundle(.module).configurationID
+                != MarkdownImageConfiguration.bundle(.module, subdirectory: "RenderGolden").configurationID
+        )
     }
 }

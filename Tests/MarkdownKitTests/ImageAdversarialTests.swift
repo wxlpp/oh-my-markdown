@@ -87,7 +87,7 @@ struct ImageAdversarialTests {
     private func views(
         _ residency: ImageResidencyConfiguration, clock: ManualRenderClock, executor: ParseExecutor,
         sessions: Int = 5, perSession: Int = 20,
-        configuration: (Int) -> MarkdownRemoteImageConfiguration
+        configuration: (Int) -> MarkdownImageConfiguration
     ) -> [MarkdownLabelView] {
         (0 ..< sessions).map { session in
             let view = imageTestView(
@@ -107,7 +107,7 @@ struct ImageAdversarialTests {
         let executor = ParseExecutor()
         let loader = HeldImageLoader()
         let residency = isolatedImageResidency()
-        let views = self.views(residency, clock: clock, executor: executor) { _ in MarkdownRemoteImageConfiguration(loader: loader) }
+        let views = self.views(residency, clock: clock, executor: executor) { _ in MarkdownImageConfiguration(loader: loader) }
         #expect(await settle(clock) { views.allSatisfy { $0.currentSnapshot != nil } })
         // Quiescence is the exact admitted/queued split, not a wall-clock or
         // yield-count guess: four of the hundred requests hold transfer slots and
@@ -145,7 +145,7 @@ struct ImageAdversarialTests {
         // 24 KiB ledger can hold at most six of the hundred requests at once.
         let residency = isolatedImageResidency(hardLimit: 24 << 10, cacheLimit: 8 << 10, maxPixelSize: 32)
         let before = residentBytes()
-        let views = self.views(residency, clock: clock, executor: executor) { _ in MarkdownRemoteImageConfiguration(loader: loader) }
+        let views = self.views(residency, clock: clock, executor: executor) { _ in MarkdownImageConfiguration(loader: loader) }
         #expect(await settle(clock) { views.allSatisfy { $0.currentSnapshot != nil } })
         // Let all hundred resolutions settle with the coalescing debounce still
         // closed, then flush once: one re-materialization per view instead of one
@@ -193,11 +193,11 @@ struct ImageAdversarialTests {
         let second = FixtureImageLoader(data: png)
 
         let isolatedA = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
-        isolatedA.remoteImages = MarkdownRemoteImageConfiguration(loader: first)
+        isolatedA.remoteImages = MarkdownImageConfiguration(loader: first)
         isolatedA.blocks = MarkdownDocument(parsing: source).blocks
         #expect(await settle(clock) { isolatedA.currentSnapshot?.resourceOwners.count == 1 })
         let isolatedB = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
-        isolatedB.remoteImages = MarkdownRemoteImageConfiguration(loader: second)
+        isolatedB.remoteImages = MarkdownImageConfiguration(loader: second)
         isolatedB.blocks = MarkdownDocument(parsing: source).blocks
         #expect(await settle(clock) { isolatedB.currentSnapshot?.resourceOwners.count == 1 })
         #expect(await first.calls == 1)
@@ -207,11 +207,11 @@ struct ImageAdversarialTests {
         let third = FixtureImageLoader(data: png)
         let fourth = FixtureImageLoader(data: png)
         let sharedA = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
-        sharedA.remoteImages = MarkdownRemoteImageConfiguration(loader: third, configurationID: identity)
+        sharedA.remoteImages = MarkdownImageConfiguration(loader: third, configurationID: identity)
         sharedA.blocks = MarkdownDocument(parsing: source).blocks
         #expect(await settle(clock) { sharedA.currentSnapshot?.resourceOwners.count == 1 })
         let sharedB = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
-        sharedB.remoteImages = MarkdownRemoteImageConfiguration(loader: fourth, configurationID: identity)
+        sharedB.remoteImages = MarkdownImageConfiguration(loader: fourth, configurationID: identity)
         sharedB.blocks = MarkdownDocument(parsing: source).blocks
         #expect(await settle(clock) { sharedB.currentSnapshot?.resourceOwners.count == 1 })
         #expect(await third.calls == 1)
@@ -239,12 +239,12 @@ struct ImageAdversarialTests {
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         var failures: [MarkdownResourceFailure] = []
         view.onResourceError = { failures.append($0) }
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader, configurationID: identity)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader, configurationID: identity)
         view.blocks = MarkdownDocument(parsing: "![alt](https://images.test/generation.png)").blocks
         #expect(await settle(clock) { await loader.calls == 1 })
         let stale = try #require(view.currentCommitToken)
 
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader, configurationID: identity)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader, configurationID: identity)
         #expect(await settle(clock) { view.currentCommitToken?.configurationGeneration == stale.configurationGeneration + 1 })
         #expect(await settle(clock) { await loader.calls == 2 })
 
@@ -281,7 +281,7 @@ struct ImageAdversarialTests {
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         var failures: [MarkdownResourceFailure] = []
         view.onResourceError = { failures.append($0) }
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: deterministic, configurationID: identity)
+        view.remoteImages = MarkdownImageConfiguration(loader: deterministic, configurationID: identity)
         view.blocks = MarkdownDocument(parsing: source).blocks
         #expect(await settle(clock) { await deterministic.calls == 1 })
         try await deterministic.finish(.success(MarkdownImagePayload(data: encodedPNG(width: 8, height: 8), declaredMIMEType: "image/jpeg")))
@@ -358,7 +358,7 @@ struct ImageAdversarialTests {
         let residency = isolatedImageResidency(maxPixelSize: 32)
         let loader = FixtureImageLoader(data: png)
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader)
         view.blocks = MarkdownDocument(parsing: "![alt](https://images.test/throwing.png)").blocks
         #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
         var published = view.currentSnapshot
@@ -405,7 +405,7 @@ struct ImageAdversarialTests {
         let residency = isolatedImageResidency(maxPixelSize: 32)
         let loader = FixtureImageLoader(data: png)
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader)
         view.blocks = MarkdownDocument(parsing: "![alt](https://images.test/retained.png)").blocks
         #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
         var retained: RenderSnapshot? = view.currentSnapshot
@@ -436,7 +436,7 @@ struct ImageAdversarialTests {
         let residency = isolatedImageResidency(maxPixelSize: 32)
         let loader = FixtureImageLoader(data: png)
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader)
         view.blocks = MarkdownDocument(parsing: "![alt](https://images.test/gate.png)").blocks
         #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
         var old = view.currentSnapshot
@@ -492,7 +492,7 @@ struct ImageAdversarialTests {
         let view = imageTestView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency, clock: clock, executor: executor)
         var failures: [MarkdownResourceFailure] = []
         view.onResourceError = { failures.append($0) }
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader)
         view.blocks = MarkdownDocument(parsing: """
         ![a](https://images.test/defer/a.png)
 
@@ -542,7 +542,7 @@ struct ImageAdversarialTests {
             frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency,
             clock: clock, executor: executor
         )
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader)
         view.blocks = MarkdownDocument(parsing: (0 ..< 4).map {
             "![alt \($0)](https://images.test/batch/\($0).png)"
         }.joined(separator: "\n\n")).blocks
@@ -575,7 +575,7 @@ struct ImageAdversarialTests {
             frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency,
             clock: clock, executor: executor
         )
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader)
         view.blocks = MarkdownDocument(parsing: "![alt](https://images.test/dropped.png)").blocks
         #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
         #expect(view.imageCoordinator?.resolvedCount == 1)
@@ -614,7 +614,7 @@ struct ImageAdversarialTests {
             frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency,
             clock: clock, executor: executor
         )
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: first, configurationID: identity)
+        view.remoteImages = MarkdownImageConfiguration(loader: first, configurationID: identity)
         view.blocks = MarkdownDocument(parsing: source).blocks
         #expect(await settle(clock) { view.currentSnapshot?.resourceOwners.count == 1 })
         #expect(await first.calls == 1)
@@ -630,7 +630,7 @@ struct ImageAdversarialTests {
             frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency,
             clock: clock, executor: executor
         )
-        other.remoteImages = MarkdownRemoteImageConfiguration(loader: second, configurationID: identity)
+        other.remoteImages = MarkdownImageConfiguration(loader: second, configurationID: identity)
         other.blocks = MarkdownDocument(parsing: source).blocks
         #expect(await settle(clock) { (other.imageCoordinator?.settledResolutionCount ?? 0) == 1 })
         #expect(await second.calls == 1)
@@ -655,7 +655,7 @@ struct ImageAdversarialTests {
             frame: CGRect(x: 0, y: 0, width: 320, height: 200), residency: residency,
             clock: clock, executor: executor
         )
-        view.remoteImages = MarkdownRemoteImageConfiguration(loader: loader)
+        view.remoteImages = MarkdownImageConfiguration(loader: loader)
         view.blocks = MarkdownDocument(parsing: """
         ![shown](https://images.test/quoted/shown.png)
 

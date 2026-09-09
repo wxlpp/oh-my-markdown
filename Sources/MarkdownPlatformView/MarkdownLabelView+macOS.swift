@@ -601,7 +601,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     package nonisolated let observation = RenderObservationPoint()
 
     /// Remote images remain placeholders until the host explicitly opts in.
-    public var remoteImages: MarkdownRemoteImageConfiguration = .disabled {
+    public var remoteImages: MarkdownImageConfiguration = .disabled {
         didSet {
             guard !self.isDismantled else { return }
             self.imageRequests.removeAll()

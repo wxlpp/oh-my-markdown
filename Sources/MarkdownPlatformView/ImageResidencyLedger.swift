@@ -515,7 +515,7 @@ package struct ImageSourceKey: Hashable {
     private var tasks: [ImageSourceKey: Task<Void, Never>] = [:]
     private var resolved: [ImageSourceKey: ImageOwnerLease] = [:]
     private var epoch: UInt64 = 0
-    package private(set) var configuration: MarkdownRemoteImageConfiguration = .disabled
+    package private(set) var configuration: MarkdownImageConfiguration = .disabled
     /// Counts every finished resolution, whatever its outcome — published,
     /// deferred, failed, cancelled, or discarded by a replaced generation. Tests
     /// wait on this instead of counting actor turns; it cannot say which happened.
@@ -537,7 +537,7 @@ package struct ImageSourceKey: Hashable {
         self.maxPixelSize = min(max(1, residency.maxPixelSize), ImageDecoder.maxOutputSide)
     }
 
-    package func configure(_ configuration: MarkdownRemoteImageConfiguration) {
+    package func configure(_ configuration: MarkdownImageConfiguration) {
         self.cancelAll()
         self.configuration = configuration
     }

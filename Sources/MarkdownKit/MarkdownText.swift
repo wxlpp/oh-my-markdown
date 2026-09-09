@@ -46,7 +46,7 @@ public struct MarkdownText: View {
     @Environment(\.markdownStyle) private var style
     @Environment(\.markdownMathRenderer) private var mathRenderer
     @Environment(\.markdownSVGBlockRenderer) private var svgBlockRenderer
-    @Environment(\.markdownRemoteImageConfiguration) private var remoteImages
+    @Environment(\.markdownImageConfiguration) private var remoteImages
     @Environment(\.markdownResourceErrorHandler) private var resourceErrorHandler
     @Environment(\.markdownLinkConfiguration) private var linkConfiguration
     @Environment(\.markdownSelectionProxy) private var selectionProxy
@@ -76,7 +76,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     let style: RenderStyle
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
-    let remoteImages: MarkdownRemoteImageConfiguration
+    let remoteImages: MarkdownImageConfiguration
     let linkConfiguration: MarkdownLinkConfiguration?
     let selectionProxy: MarkdownSelectionProxy?
     let resourceErrorHandler: MarkdownResourceErrorHandler?
@@ -177,7 +177,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     let style: RenderStyle
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
-    let remoteImages: MarkdownRemoteImageConfiguration
+    let remoteImages: MarkdownImageConfiguration
     let linkConfiguration: MarkdownLinkConfiguration?
     let selectionProxy: MarkdownSelectionProxy?
     let resourceErrorHandler: MarkdownResourceErrorHandler?

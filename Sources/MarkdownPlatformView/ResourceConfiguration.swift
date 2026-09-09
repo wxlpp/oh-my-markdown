@@ -2,7 +2,7 @@ import Foundation
 import MarkdownRenderKit
 
 /// Owns the cache namespace and replacement identity, independently of the loader.
-public struct MarkdownRemoteImageConfiguration: Sendable {
+public struct MarkdownImageConfiguration: Sendable {
     package let loader: (any MarkdownImageLoading)?
     public let configurationID: MarkdownConfigurationID
     public static let disabled = Self(optionalLoader: nil, configurationID: .semantic(namespace: "markdown-images-disabled", version: 1))

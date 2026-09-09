@@ -74,6 +74,9 @@ private struct RenderTab: View {
             ScrollView {
                 MarkdownText(sampleMarkdown)
                     .markdownStyle(self.preset.renderStyle)
+                    // Bundle images, not remote ones: these ship inside the app,
+                    // so there is no network egress to opt into.
+                    .markdownImages(.bundle())
                     .mathRenderer(self.mathRenderer)
                     .svgRenderer(self.svgBlockRenderer)
                     .padding(.horizontal, 16)
@@ -342,7 +345,7 @@ private struct CapabilitiesTab: View {
 
     private var document: some View {
         MarkdownText(capabilitiesMarkdown)
-            .markdownRemoteImages(self.remoteImages ? .defaultHTTPS : .disabled)
+            .markdownImages(self.remoteImages ? .defaultHTTPS : .disabled)
             .markdownLinkPolicy(
                 self.allowCustomScheme ? AnySchemePolicy() : .webOnly,
                 handler: self.linkHandler
@@ -509,6 +512,13 @@ MarkdownText(source)
 - [x] Markdown 源文本编辑器
 - [ ] 表格支持
 - [x] 代码语法高亮
+
+## 图片（随 app 打包）
+
+`markdownkit-banner.png` 是 app 自己的资源，由内置的 bundle loader 提供——不联网，
+也不需要开任何开关。远程图片才需要 `.markdownImages(.defaultHTTPS)`。
+
+![MarkdownKit bundle banner](markdownkit-banner.png)
 
 ## 表格（窄表）
 

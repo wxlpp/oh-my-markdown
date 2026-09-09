@@ -203,15 +203,36 @@ Not included in the current editor release:
 - Image paste to Markdown conversion
 - Collaborative editing semantics
 
-## 🔒 Remote images and links
+## 🖼️ Images
 
-Both are **off until you opt in**. A document that arrives from a network — a chat
-reply, a feed item — cannot make the library fetch anything or open anything by
-itself.
+Images that ship inside the app need no opt-in and reach no network:
 
 ```swift
 MarkdownText(markdown)
-    .markdownRemoteImages(.defaultHTTPS)
+    .markdownImages(.bundle())      // resources in Bundle.main
+```
+
+`![alt](banner.png)` then resolves against the bundle by resource name. A
+reference that names a scheme, an absolute path, a `~`, or a `..` segment is
+refused before the bundle is consulted, so a document that arrived over the
+network cannot turn an image into a file read. The bytes still go through the
+same validated decode as a remote image — being local says where they came from,
+not what they decode to.
+
+**Asset catalogs are not supported.** `Assets.xcassets` images are compiled into
+`Assets.car` and are only reachable as an already-decoded `UIImage`, while this
+pipeline is byte-oriented by design. Ship images a document references as loose
+resources; `Bundle.module` works the same way for a package.
+
+## 🔒 Remote images and links
+
+Remote loading and non-web links are **off until you opt in**. A document that
+arrives from a network — a chat reply, a feed item — cannot make the library
+fetch anything or open anything by itself.
+
+```swift
+MarkdownText(markdown)
+    .markdownImages(.defaultHTTPS)
     .markdownLinkPolicy(.webOnly, handler: PlatformMarkdownLinkHandler())
     .onMarkdownResourceError { failure in
         // Category and a sanitized scheme://host — never a path or query.
@@ -225,7 +246,7 @@ pixels per dimension, 32 animation frames, 40 million cumulative pixels, and
 timeouts clamped to 1…120 seconds. Supply your own `MarkdownImageLoading` for
 anything else; the decode-side limits still apply.
 
-Without the opt-in, an image renders as a placeholder and a link is inert.
+Without the opt-in, a remote image renders as a placeholder and a link is inert.
 `.webOnly` is the default policy, so HTTP and HTTPS links work with no code; any
 other scheme needs both a policy that permits it and a handler that opens it.
 

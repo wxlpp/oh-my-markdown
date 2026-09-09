@@ -89,7 +89,7 @@ public struct MarkdownStreamingText: View {
     @Environment(\.markdownStyle) private var style
     @Environment(\.markdownMathRenderer) private var mathRenderer
     @Environment(\.markdownSVGBlockRenderer) private var svgBlockRenderer
-    @Environment(\.markdownRemoteImageConfiguration) private var remoteImages
+    @Environment(\.markdownImageConfiguration) private var remoteImages
     @Environment(\.markdownLinkConfiguration) private var linkConfiguration
     @Environment(\.markdownSelectionProxy) private var selectionProxy
     @Environment(\.markdownResourceErrorHandler) private var resourceErrorHandler
@@ -113,7 +113,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     let style: RenderStyle
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
-    let remoteImages: MarkdownRemoteImageConfiguration
+    let remoteImages: MarkdownImageConfiguration
     let linkConfiguration: MarkdownLinkConfiguration?
     let selectionProxy: MarkdownSelectionProxy?
     let resourceErrorHandler: MarkdownResourceErrorHandler?
@@ -226,7 +226,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
     let style: RenderStyle
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
-    let remoteImages: MarkdownRemoteImageConfiguration
+    let remoteImages: MarkdownImageConfiguration
     let linkConfiguration: MarkdownLinkConfiguration?
     let selectionProxy: MarkdownSelectionProxy?
     let resourceErrorHandler: MarkdownResourceErrorHandler?

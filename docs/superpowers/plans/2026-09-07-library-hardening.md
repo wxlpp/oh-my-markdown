@@ -1028,7 +1028,7 @@ Dispatch `superpowers-reviewer` with correctness/performance focus. Require it t
 
 **Interfaces:**
 - Consumes: Task 4 session configuration events and Task 2 `MarkdownConfigurationID`.
-- Produces: `MarkdownImageLoading`, untrusted `MarkdownImagePayload`, package-validated `MarkdownEncodedImage`, default disabled policy, sanitized failures, and SwiftUI `.markdownRemoteImages(_:)` configuration used by Task 7.
+- Produces: `MarkdownImageLoading`, untrusted `MarkdownImagePayload`, package-validated `MarkdownEncodedImage`, default disabled policy, sanitized failures, and SwiftUI `.markdownImages(_:)` configuration used by Task 7.
 
 - [ ] **Step 1: Write protocol, opt-in, generation, and cache-namespace tests**
 
@@ -1095,7 +1095,7 @@ public struct MarkdownResourceFailure: Sendable, Equatable {
 public typealias MarkdownResourceErrorHandler =
     @MainActor @Sendable (MarkdownResourceFailure) -> Void
 
-public struct MarkdownRemoteImageConfiguration: Sendable {
+public struct MarkdownImageConfiguration: Sendable {
     package let loader: (any MarkdownImageLoading)?
     public let configurationID: MarkdownConfigurationID
     public static let disabled: Self
@@ -1120,9 +1120,9 @@ Every loader result is untrusted `MarkdownImagePayload`. The session always pass
 
 The configuration wrapper, not a loader conformer, owns namespace identity. Custom loader wrappers get `.uniqueInstance()` by default even if two conformers are otherwise identical. `.defaultHTTPS` derives a deterministic semantic ID from the complete normalized built-in settings (timeouts, redirect/MIME policy, byte/metadata limits). Sharing requires an explicit caller-supplied versioned semantic ID. Task 6 tests only ID inequality/equality because no image cache exists yet; Task 7 Step 1 uses two custom loaders with the same internal label to prove default wrappers isolate actual cache entries and an explicit shared semantic ID permits completed-cache reuse.
 
-Expose `.markdownRemoteImages(_:)` and `.onMarkdownResourceError(_:)` from `MarkdownResourceModifiers.swift`. The environment default is `.disabled`; `.defaultHTTPS` constructs the deterministic built-in semantic configuration.
+Expose `.markdownImages(_:)` and `.onMarkdownResourceError(_:)` from `MarkdownResourceModifiers.swift`. The environment default is `.disabled`; `.defaultHTTPS` constructs the deterministic built-in semantic configuration.
 
-Add `RenderSessionEvent.replaceImageConfiguration(MarkdownRemoteImageConfiguration)`; every event increments session generation even when its cache namespace ID remains semantically equal.
+Add `RenderSessionEvent.replaceImageConfiguration(MarkdownImageConfiguration)`; every event increments session generation even when its cache namespace ID remains semantically equal.
 
 - [ ] **Step 3: Implement an isolated URLSession transport**
 
@@ -1894,7 +1894,7 @@ Show secure opt-in code:
 
 ```swift
 MarkdownText(markdown)
-    .markdownRemoteImages(.defaultHTTPS)
+    .markdownImages(.defaultHTTPS)
     .markdownLinkPolicy(.webOnly, handler: PlatformMarkdownLinkHandler())
 ```
 
