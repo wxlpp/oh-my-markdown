@@ -98,3 +98,4 @@ MarkdownSelectionReader { selection in
 - macOS `swift test --filter MarkdownReviewTests`：7 项通过，日志 `/tmp/markdown-inline-tests.log`。
 - iOS 18.0 同组：7 项通过，结果 `/tmp/markdown-inline-ios-verified.xcresult`。
 - 新增覆盖同段多评论不重叠、后续正文下移、移除恢复、复制/选区不变且不触发重物化。
+- 聚焦代码评审指出并修复销毁后的旧布局范围及切换文档身份后的残留间距；对应回归加入同组测试。修复后 macOS 7 项通过（`/tmp/markdown-inline-fixed-final.log`）、iOS 18.0 7 项通过（`/tmp/markdown-inline-ios-final.xcresult`），聚焦复审 PASS。
