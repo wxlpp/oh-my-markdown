@@ -31,6 +31,14 @@ public final class MarkdownSelectionProxy {
         self.view?.markdownSourceSelectionResult()
     }
 
+    public var selectionSnapshot: MarkdownSelectionSnapshot? {
+        self.view?.selectionSnapshot
+    }
+
+    public func annotationRect(id: String) -> CGRect? {
+        self.view?.annotationRect(id: id)
+    }
+
     public func copyMarkdownSourceToPasteboard() {
         self.view?.copyMarkdownSource(nil)
     }

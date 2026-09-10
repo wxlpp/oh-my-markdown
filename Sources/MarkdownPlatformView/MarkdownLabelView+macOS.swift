@@ -29,6 +29,11 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         }
     }
 
+    public var reviewConfiguration: MarkdownReviewConfiguration? {
+        didSet { self.needsDisplay = true }
+    }
+    package var reviewSnapshotReady = true
+
     package private(set) var currentCommitToken: RenderCommitToken?
     package private(set) var lastRenderError: RenderSessionError?
     private let sessionRegistry = RenderSessionSinkRegistry()
@@ -111,6 +116,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     package func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken) {
         precondition(self.currentCommitToken.map { token.sequence >= $0.sequence } ?? true)
         self.currentCommitToken = token
+        self.reviewSnapshotReady = true
         self.imageRequests = self.imageRequests.filter { $0.key.token == token }
         self.lastRenderError = nil
         let previousSnapshot = self.currentSnapshot
@@ -273,6 +279,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             return
         }
         self.decorations.drawAll(blocks: self.blocks, in: ctx)
+        self.drawReviewAnnotations(in: ctx)
         // Selection highlights
         if !self.layoutManager.textSelections.isEmpty {
             NSColor.selectedTextBackgroundColor.withAlphaComponent(0.4).setFill()
@@ -325,6 +332,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
 
     override public func mouseUp(with event: NSEvent) {
         let pt = convert(event.locationInWindow, from: nil)
+        if self.activateReviewAnnotation(at: pt) { return }
         let sels = self.layoutManager.textSelectionNavigation.textSelections(
             interactingAt: pt,
             inContainerAt: self.contentStorage.documentRange.location,
@@ -397,10 +405,18 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         if !menu.items.contains(where: { $0.action == #selector(self.copy(_:)) }) {
             added.insert((MarkdownCopyCommandTitle.copy, #selector(self.copy(_:))), at: 0)
         }
+        if let configuration = self.reviewConfiguration, self.selectionSnapshot != nil {
+            added.append((configuration.commentActionTitle, #selector(self.commentOnSelection(_:))))
+        }
         for (title, action) in added {
             menu.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
         }
         return menu
+    }
+
+    @objc private func commentOnSelection(_ sender: Any?) {
+        guard let snapshot = self.selectionSnapshot else { return }
+        self.performReviewComment(snapshot, snapshotID: self.currentSnapshot?.id)
     }
 
     @objc
@@ -568,19 +584,21 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     }
 
     public func setMarkdown(_ source: String) {
+        self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
         self.renderMode = .static
         self.driver().send(.setSource(source, self.configurationSnapshot()))
     }
 
     public func appendMarkdown(_ chunk: String) {
+        self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
         self.renderMode = .streaming
         self.driver().send(.append(chunk))
     }
 
     private let contentStorage = NSTextContentStorage()
-    private let layoutManager = NSTextLayoutManager()
+    let layoutManager = NSTextLayoutManager()
     private let textContainer = NSTextContainer(
         size: CGSize(
             width: CGFloat.greatestFiniteMagnitude,

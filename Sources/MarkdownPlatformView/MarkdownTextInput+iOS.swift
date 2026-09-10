@@ -72,6 +72,17 @@ final class MarkdownSelectionRect: UITextSelectionRect {
 // MARK: - UITextInput
 
 extension MarkdownLabelView: UITextInput {
+    public func editMenu(for textRange: UITextRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
+        guard let range = textRange as? MarkdownTextRange,
+              let snapshot = self.reviewSelection(in: range.nsRange),
+              let configuration = self.reviewConfiguration else { return nil }
+        let snapshotID = self.currentSnapshot?.id
+        let action = UIAction(title: configuration.commentActionTitle, image: UIImage(systemName: "text.bubble")) { [weak self] _ in
+            self?.performReviewComment(snapshot, snapshotID: snapshotID)
+        }
+        return UIMenu(children: suggestedActions + [action])
+    }
+
     // MARK: UIKeyInput (required by UITextInput)
 
     public var hasText: Bool {

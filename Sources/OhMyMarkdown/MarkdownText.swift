@@ -39,11 +39,13 @@ public struct MarkdownText: View {
             remoteImages: self.remoteImages,
             linkConfiguration: self.linkConfiguration,
             selectionProxy: self.selectionProxy,
-            resourceErrorHandler: self.resourceErrorHandler
+            resourceErrorHandler: self.resourceErrorHandler,
+            reviewConfiguration: self.reviewConfiguration
         )
         .accessibilityElement(children: .contain)
     }
 
+    @Environment(\.markdownReviewConfiguration) private var reviewConfiguration
     @Environment(\.markdownTheme) private var theme
     @Environment(\.markdownStyle) private var style
     @Environment(\.markdownMathRenderer) private var mathRenderer
@@ -83,6 +85,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     let linkConfiguration: MarkdownLinkConfiguration?
     let selectionProxy: MarkdownSelectionProxy?
     let resourceErrorHandler: MarkdownResourceErrorHandler?
+    let reviewConfiguration: MarkdownReviewConfiguration?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -98,6 +101,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
+        uiView.reviewConfiguration = self.reviewConfiguration
         uiView.theme = self.theme
         uiView.onResourceError = self.resourceErrorHandler
         // Always forwarded, like the view's own didSet: identity is derived from
@@ -186,6 +190,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     let linkConfiguration: MarkdownLinkConfiguration?
     let selectionProxy: MarkdownSelectionProxy?
     let resourceErrorHandler: MarkdownResourceErrorHandler?
+    let reviewConfiguration: MarkdownReviewConfiguration?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -196,6 +201,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
+        nsView.reviewConfiguration = self.reviewConfiguration
         nsView.theme = self.theme
         nsView.onResourceError = self.resourceErrorHandler
         // Always forwarded, like the view's own didSet: identity is derived from

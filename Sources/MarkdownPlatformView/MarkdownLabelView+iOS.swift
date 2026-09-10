@@ -29,6 +29,11 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         }
     }
 
+    public var reviewConfiguration: MarkdownReviewConfiguration? {
+        didSet { self.setNeedsDisplay() }
+    }
+    package var reviewSnapshotReady = true
+
     package private(set) var currentCommitToken: RenderCommitToken?
     package private(set) var lastRenderError: RenderSessionError?
     private let sessionRegistry = RenderSessionSinkRegistry()
@@ -118,6 +123,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     package func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken) {
         precondition(self.currentCommitToken.map { token.sequence >= $0.sequence } ?? true)
         self.currentCommitToken = token
+        self.reviewSnapshotReady = true
         self.imageRequests = self.imageRequests.filter { $0.key.token == token }
         self.lastRenderError = nil
         let previousSnapshot = self.currentSnapshot
@@ -540,6 +546,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             return
         }
         self.decorations.drawAll(blocks: self.blocks, in: ctx)
+        self.drawReviewAnnotations(in: ctx)
         self.layoutManager.enumerateTextLayoutFragments(
             from: self.layoutManager.documentRange.location,
             options: [.ensuresLayout, .ensuresExtraLineFragment]
@@ -552,12 +559,14 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     // MARK: Streaming
 
     public func setMarkdown(_ source: String) {
+        self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
         self.renderMode = .static
         self.driver().send(.setSource(source, self.configurationSnapshot()))
     }
 
     public func appendMarkdown(_ chunk: String) {
+        self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
         self.renderMode = .streaming
         self.driver().send(.append(chunk))
@@ -835,6 +844,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             return
         }
         let point = gesture.location(in: self)
+        if self.activateReviewAnnotation(at: point) { return }
         guard
             let pos = closestPosition(to: point) as? MarkdownTextPosition,
             pos.offset < documentLength else {
