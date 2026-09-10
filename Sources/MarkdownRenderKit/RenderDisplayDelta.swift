@@ -63,9 +63,11 @@ package struct RenderDisplayDelta: Equatable {
     package func applying(to previous: RenderDisplayModel, metrics: inout ParseWorkMetrics) -> RenderDisplayModel {
         let prefix = previous.bundles.slice(0 ..< self.replacedPreviousBlocks.lowerBound, metrics: &metrics)
         let suffix = previous.bundles.slice(self.replacedPreviousBlocks.upperBound ..< previous.bundles.count, metrics: &metrics)
-        return RenderDisplayModel(
+        var model = RenderDisplayModel(
             bundles: prefix.appending(self.replacementStorage, metrics: &metrics).appending(suffix, metrics: &metrics), input: self.input
         )
+        model.materializationDelta = MaterializationDelta(baselineModelID: previous.identity, replacedBlocks: self.replacedPreviousBlocks, changedBlocks: self.changedDocumentBlocks)
+        return model
     }
 
     package static func == (lhs: Self, rhs: Self) -> Bool {

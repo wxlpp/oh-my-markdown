@@ -29,6 +29,22 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         }
     }
 
+    public var reviewConfiguration: MarkdownReviewConfiguration? {
+        didSet {
+            if oldValue?.documentID != self.reviewConfiguration?.documentID || oldValue?.revision != self.reviewConfiguration?.revision || oldValue?.annotations != self.reviewConfiguration?.annotations || oldValue?.inlineCommentHeights != self.reviewConfiguration?.inlineCommentHeights {
+                self.applyInlineCommentSpacing()
+                self.resetLayout()
+            }
+            self.publishInlineCommentLayout()
+            self.setNeedsDisplay()
+        }
+    }
+
+    package var reviewSnapshotReady = true
+    var inlineCommentOriginalStyles: [NSRange: NSParagraphStyle] = [:]
+    var inlineCommentSlots: [InlineCommentSlot] = []
+
+    package private(set) var lastStorageEditRange: NSRange?
     package private(set) var currentCommitToken: RenderCommitToken?
     package private(set) var lastRenderError: RenderSessionError?
     private let sessionRegistry = RenderSessionSinkRegistry()
@@ -118,18 +134,39 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     package func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken) {
         precondition(self.currentCommitToken.map { token.sequence >= $0.sequence } ?? true)
         self.currentCommitToken = token
+        self.restoreInlineCommentSpacing()
+        self.reviewSnapshotReady = false
         self.imageRequests = self.imageRequests.filter { $0.key.token == token }
         self.lastRenderError = nil
         let previousSnapshot = self.currentSnapshot
-        self.contentStorage.performEditingTransaction {
-            self.contentStorage.attributedString = NSAttributedString(string: "")
-            self.currentSnapshot = nil
-            self.currentSnapshot = snapshot
-            self.contentStorage.attributedString = snapshot.attributedString
+        let previousSelection = self.currentRenderedSelectionRange()
+        let edit = snapshot.edit.flatMap { edit -> MaterializedEdit? in
+            guard edit.baselineSnapshotID == previousSnapshot?.id,
+                  edit.range.location >= 0, edit.range.location <= self._liveString.length,
+                  edit.range.length <= self._liveString.length - edit.range.location else { return nil }
+            return edit
         }
-        self._liveString = NSMutableAttributedString(attributedString: snapshot.attributedString)
+        self.lastStorageEditRange = edit?.range
+        self._inputDelegate?.textWillChange(self)
+        self._inputDelegate?.selectionWillChange(self)
+        self.contentStorage.performEditingTransaction {
+            if let edit, let storage = self.contentStorage.textStorage {
+                storage.replaceCharacters(in: edit.range, with: edit.replacement)
+                self._liveString.replaceCharacters(in: edit.range, with: edit.replacement)
+            } else {
+                self.contentStorage.textStorage?.setAttributedString(snapshot.attributedString)
+                self._liveString = NSMutableAttributedString(attributedString: snapshot.attributedString)
+            }
+            self.currentSnapshot = snapshot
+        }
+        self.restoreSelection(previousSelection, after: edit)
+        self._inputDelegate?.textDidChange(self)
+        self._inputDelegate?.selectionDidChange(self)
         self.blockStarts = snapshot.blockStarts
         self.renderedDocument = snapshot.displayModel.preparedDocument
+        if self.reviewConfiguration != nil { _ = snapshot.renderedContentID }
+        self.reviewSnapshotReady = true
+        self.applyInlineCommentSpacing()
         self.trailingDecorationInset = 0
         if let blocks = self.renderedDocument?.blockStorage, blocks.count > 0 {
             switch blocks[blocks.count - 1].block {
@@ -145,7 +182,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         // come from laid-out text segments, and `_syncTableOverlays` is the last
         // step that can move them.
         self.resetLayout()
-        let range = NSRange(location: 0, length: snapshot.attributedString.length)
+        let range = NSRange(location: 0, length: snapshot.renderedLength)
         self.triggerImageLoads(in: range)
         self.triggerMathLoads(in: range)
         self.triggerSVGBlockLoads(in: range)
@@ -191,9 +228,11 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     package func dismantleRenderSession() {
         guard !self.isDismantled else { return }
         self.isDismantled = true
+        self.inlineCommentSlots = []
+        self.inlineCommentOriginalStyles = [:]
         let previousSnapshot = self.currentSnapshot
         self.contentStorage.performEditingTransaction {
-            self.contentStorage.attributedString = NSAttributedString(string: "")
+            self.contentStorage.textStorage?.setAttributedString(NSAttributedString(string: ""))
             self.currentSnapshot = nil
         }
         self._liveString = NSMutableAttributedString(string: "")
@@ -266,6 +305,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         get { self.renderedDocument?.blocks ?? [] }
         set {
             guard !self.isDismantled else { return }
+            self.reviewSnapshotReady = false
             self.driver().send(.setDocument(MarkdownDocument(parsedBlocks: newValue.map { ParsedBlockNode(block: $0) }), self.configurationSnapshot()))
         }
     }
@@ -309,7 +349,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         // chain, so anonymous ones would append a duplicate item per Markdown
         // view rather than replace.
         let command = UICommand(
-            title: MarkdownCopyCommandTitle.markdownSource,
+            title: self.reviewConfiguration?.copyMarkdownSourceActionTitle ?? MarkdownCopyCommandTitle.markdownSource,
             action: #selector(self.copyMarkdownSource(_:)),
             propertyList: nil,
             alternates: []
@@ -335,7 +375,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     var renderedAttributedStringForCopy: NSAttributedString? {
-        self.contentStorage.attributedString
+        self.contentStorage.textStorage
     }
 
     /// Reused platform objects, keyed by the identity that survives streaming.
@@ -412,7 +452,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     /// Test-support: math-resolution state of the *actual* production-rendered
-    /// string (`contentStorage.attributedString`, i.e. what is drawn).
+    /// string (`contentStorage.textStorage`, i.e. what is drawn).
     /// Read-only forwarder; mirrors `_blockFrameUnionForTesting`.
     ///
     /// `mathSourceCount` = residual unresolved-math placeholders;
@@ -426,7 +466,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// the resolved math survive renderer recreation" — distinct from the
     /// separately-guarded TextKit2 relayout-timing concern.
     func _renderedMathStateForTesting() -> (mathSourceCount: Int, attachmentCount: Int) {
-        guard let str = self.contentStorage.attributedString else {
+        guard let str = self.contentStorage.textStorage else {
             return (0, 0)
         }
         var srcCount = 0
@@ -445,7 +485,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// 镜像 `_renderedMathStateForTesting`，是「已解析 svg 是否熬过 renderer 重建」
     /// 的无解耦直读信号（看 view 真正绘制的串）。
     func _renderedSVGBlockStateForTesting() -> (markerCount: Int, attachmentCount: Int) {
-        guard let str = self.contentStorage.attributedString else {
+        guard let str = self.contentStorage.textStorage else {
             return (0, 0)
         }
         var markerCount = 0
@@ -464,7 +504,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// swap 测试 —— 不同 renderer 配置不同 stub size，验证 swap 后 attachment
     /// 真的换成新 renderer 输出。返回 nil 表示还没解析为 attachment。
     func _firstSVGAttachmentImageSizeForTesting() -> CGSize? {
-        guard let str = self.contentStorage.attributedString else { return nil }
+        guard let str = self.contentStorage.textStorage else { return nil }
         var found: CGSize?
         let full = NSRange(location: 0, length: str.length)
         str.enumerateAttribute(.attachment, in: full) { value, _, stop in
@@ -510,6 +550,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             self._pendingTableOverlaySyncStart = nil
             self._syncTableOverlays(from: startIndex)
         }
+        self.publishInlineCommentLayout()
     }
 
     override public func sizeThatFits(_ size: CGSize) -> CGSize {
@@ -540,6 +581,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             return
         }
         self.decorations.drawAll(blocks: self.blocks, in: ctx)
+        self.drawReviewAnnotations(in: ctx)
         self.layoutManager.enumerateTextLayoutFragments(
             from: self.layoutManager.documentRange.location,
             options: [.ensuresLayout, .ensuresExtraLineFragment]
@@ -552,12 +594,14 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     // MARK: Streaming
 
     public func setMarkdown(_ source: String) {
+        self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
         self.renderMode = .static
         self.driver().send(.setSource(source, self.configurationSnapshot()))
     }
 
     public func appendMarkdown(_ chunk: String) {
+        self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
         self.renderMode = .streaming
         self.driver().send(.append(chunk))
@@ -626,7 +670,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// Last measured intrinsic height — gates invalidateIntrinsicContentSize() calls.
     private var trailingDecorationInset: CGFloat = 0
     private var contentHeight: CGFloat {
-        ceil(self.layoutManager.usageBoundsForTextContainer.height) + self.trailingDecorationInset
+        max(ceil(self.layoutManager.usageBoundsForTextContainer.height) + self.trailingDecorationInset, self.inlineCommentFrames().values.map(\.maxY).max() ?? 0)
     }
 
     private var _lastHeight: CGFloat = 0
@@ -644,7 +688,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     package var sessionOverrides = RenderSessionOverrides()
     /// Test seam: forces the snapshot-replacement install closure to throw.
     package var _materializationFailureForTesting: (any Error)?
-    /// Every full re-materialization of the display model, including the ones each
+    /// Every materialization transaction, including incremental updates and ones each
     /// coalesced batch of resolved resources triggers. Bounds the cost that
     /// per-arrival resource completion imposes on a long document.
     package private(set) var _materializationCount = 0 {
@@ -693,7 +737,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// from here.
     @discardableResult
     package func activateLink(at offset: Int) -> Bool {
-        guard !self.isDismantled, let string = contentStorage.attributedString,
+        guard !self.isDismantled, let string = contentStorage.textStorage,
               offset >= 0, offset < string.length else { return false }
         let attributes = string.attributes(at: offset, effectiveRange: nil)
         let url: URL? = if let value = attributes[.link] as? URL {
@@ -759,7 +803,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.layoutManager.textContainer = self.textContainer
         self.contentStorage.addTextLayoutManager(self.layoutManager)
         // Seed backing store so textStorage is always non-nil.
-        self.contentStorage.attributedString = NSAttributedString(string: "")
+        self.contentStorage.textStorage = NSTextStorage()
         isOpaque = false
         backgroundColor = .clear
         contentMode = .redraw
@@ -804,6 +848,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.scheduleDeferredHeightUpdate()
         self._pendingTableOverlaySyncStart = nil
         self._syncTableOverlays(from: 0)
+        self.publishInlineCommentLayout()
     }
 
     private func scheduleDeferredHeightUpdate() {
@@ -831,10 +876,11 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     private func handleTap(_ gesture: UITapGestureRecognizer) {
         guard
             gesture.state == .ended,
-            let str = contentStorage.attributedString else {
+            let str = contentStorage.textStorage else {
             return
         }
         let point = gesture.location(in: self)
+        if self.activateReviewAnnotation(at: point) { return }
         guard
             let pos = closestPosition(to: point) as? MarkdownTextPosition,
             pos.offset < documentLength else {
@@ -854,7 +900,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
 
     private func triggerImageLoads(in range: NSRange, string: NSAttributedString? = nil) {
         guard self.remoteImages.loader != nil else { return }
-        guard let str = string ?? contentStorage.attributedString, let token = self.currentCommitToken else { return }
+        guard let str = string ?? contentStorage.textStorage, let token = self.currentCommitToken else { return }
         let safeRange = range.clamped(to: str.length)
         guard safeRange.length > 0 else { return }
         let registry = self.sessionRegistry
@@ -900,9 +946,8 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
 
     /// The new owners are admitted, the snapshot is materialized and the sink is
     /// installed inside one synchronous MainActor turn. The outgoing snapshot's
-    /// own leases are never touched here: `replaceSnapshot` clears TextKit and
-    /// installs the replacement first, so the old backing stays charged until the
-    /// old snapshot itself is released.
+    /// own leases remain charged until `replaceSnapshot` finishes editing TextKit,
+    /// the drawing mirror and overlays; only then may the old snapshot be released.
     package func installSnapshot(model: RenderDisplayModel, configuration: RenderConfigurationSnapshot, token: RenderCommitToken) {
         guard !self.isDismantled else { return }
         self._materializationCount += 1
@@ -917,7 +962,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             try transaction.commit { handOver, _ in
                 if let failure = self._materializationFailureForTesting { throw failure }
                 let snapshot = RenderMaterializer(configuration: configuration)
-                    .materialize(model, resources: resources, snapshotID: snapshotID)
+                    .materialize(model, resources: resources, snapshotID: snapshotID, previous: self.currentSnapshot)
                 handOver(snapshot.resourceOwners)
                 self.replaceSnapshot(snapshot, token: token)
             }
@@ -953,7 +998,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     private func triggerMathLoads(in range: NSRange, string: NSAttributedString? = nil) {
-        guard let str = string ?? contentStorage.attributedString, let token = self.currentCommitToken else { return }
+        guard let str = string ?? contentStorage.textStorage, let token = self.currentCommitToken else { return }
         let registry = self.sessionRegistry
         let owner = self.driver().resourceTaskOwner
         let configuration = self.configurationSnapshot()
@@ -973,7 +1018,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     private func triggerSVGBlockLoads(in range: NSRange, string: NSAttributedString? = nil) {
-        guard let str = string ?? contentStorage.attributedString, let token = self.currentCommitToken else { return }
+        guard let str = string ?? contentStorage.textStorage, let token = self.currentCommitToken else { return }
         let registry = self.sessionRegistry
         let owner = self.driver().resourceTaskOwner
         let width = self.currentSnapshot?.displayModel.availableWidth ?? self.requestedWidth

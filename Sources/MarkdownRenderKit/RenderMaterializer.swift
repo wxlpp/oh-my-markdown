@@ -21,10 +21,10 @@ package struct RenderMaterializer {
     }
 
     package func materialize(
-        _ model: RenderDisplayModel, resources: ResolvedResourceSnapshot, snapshotID: UUID = UUID()
+        _ model: RenderDisplayModel, resources: ResolvedResourceSnapshot, snapshotID: UUID = UUID(), previous: RenderSnapshot? = nil
     ) -> RenderSnapshot {
         if model.preparedDocument != nil {
-            return self.materializePrepared(model: model, resources: resources, snapshotID: snapshotID)
+            return self.materializePrepared(model: model, resources: resources, snapshotID: snapshotID, previous: previous)
         }
         let result = NSMutableAttributedString(string: "")
         var owners: [any ResourceResidencyOwner] = []
@@ -119,59 +119,127 @@ package struct RenderMaterializer {
         PlatformColor(red: token.red, green: token.green, blue: token.blue, alpha: token.alpha)
     }
 
-    private func materializePrepared(model: RenderDisplayModel, resources: ResolvedResourceSnapshot, snapshotID: UUID) -> RenderSnapshot {
-        let result = NSMutableAttributedString(string: "")
-        var starts: [Int] = []
-        var owners: [any ResourceResidencyOwner] = []
-        var overlays: [Int: RenderTableOverlay] = [:]
-        let blocks = model.preparedDocument?.blockStorage ?? PersistentValues([])
-        for (index, bundle) in model.bundles.enumerated() {
-            var prepared = self
-            // Recipes have the same traversal order as their prepared runs.
-            // No source-key hashing/equality is moved into platform assembly.
-            prepared.syntaxSpans = bundle.syntaxSpans
-            prepared.syntaxIndex = 0
-            prepared.currentBlockIndex = index
-            if index > 0 {
-                // Renders no leaf: it is the join between two blocks, and a
-                // newline's segment sits at the end of the *previous* line, so
-                // tagging it would stretch the next block's first element up
-                // into the block before it.
-                let separator = PreparedRun(
-                    text: "\n", attributes: PreparedAttributes(color: nil, paragraph: PreparedParagraph(lineSpacing: 0)),
-                    accessibilityOrdinal: -1
-                )
-                let join = NSMutableAttributedString(attributedString: prepared.materializeRun(separator, resources: resources, owners: &owners))
-                if index - 1 < blocks.count, self.chromeInset(for: blocks[index - 1].block) > 0, result.length > 0,
-                   let paragraph = result.attribute(.paragraphStyle, at: result.length - 1, effectiveRange: nil) {
-                    join.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: join.length))
-                }
-                result.append(join)
-            }
-            let blockStart = result.length
-            for piece in bundle.content {
-                switch piece {
-                case .blockStart: starts.append(result.length)
-                case .run(let run): result.append(prepared.materializeRun(run, resources: resources, owners: &owners))
-                case .table(let table): result.append(prepared.materializeTable(table, resources: resources, owners: &owners, overlays: &overlays))
-                }
-            }
-            if index < blocks.count {
-                let inset = self.chromeInset(for: blocks[index].block)
-                if inset > 0, result.length > blockStart {
-                    let string = result.mutableString
-                    let first = string.paragraphRange(for: NSRange(location: blockStart, length: 0))
-                    let last = string.paragraphRange(for: NSRange(location: result.length - 1, length: 0))
-                    for (range, leading) in [(first, true), (last, false)] {
-                        let style = ((result.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle) ?? .default).mutableCopy() as! NSMutableParagraphStyle
-                        if leading { style.paragraphSpacingBefore = max(style.paragraphSpacingBefore, inset + 4) }
-                        else { style.paragraphSpacing = max(style.paragraphSpacing, inset + 4) }
-                        result.addAttribute(.paragraphStyle, value: style, range: range)
+    private func materializePrepared(model: RenderDisplayModel, resources: ResolvedResourceSnapshot, snapshotID: UUID, previous: RenderSnapshot?) -> RenderSnapshot {
+        let count = model.bundles.count
+        var fallback: MarkdownMaterializationFallback? = .initial
+        var oldRange = 0 ..< 0
+        var newRange = 0 ..< count
+        var contentOldRange = oldRange
+        var contentNewRange = newRange
+        if let previous {
+            fallback = .missingDelta
+            if let delta = model.materializationDelta {
+                fallback = .baselineMismatch
+                if delta.baselineModelID == previous.displayModel.identity, previous.chunks.count == previous.displayModel.bundles.count {
+                    fallback = .configurationChanged
+                    if previous.configuration == self.configuration,
+                       previous.displayModel.availableWidth == model.availableWidth,
+                       previous.displayModel.placeholderMode == model.placeholderMode {
+                        oldRange = delta.replacedBlocks
+                        newRange = delta.changedBlocks
+                        fallback = .invalidRange
+                        if oldRange.lowerBound >= 0, oldRange.upperBound <= previous.chunks.count,
+                           newRange.lowerBound == oldRange.lowerBound, newRange.upperBound <= count,
+                           count - newRange.upperBound == previous.chunks.count - oldRange.upperBound {
+                            fallback = .shiftedSuffix
+                            if oldRange.count == newRange.count || oldRange.upperBound == previous.chunks.count {
+                                contentOldRange = oldRange
+                                contentNewRange = newRange
+                                // A changed block can alter the following join's paragraph spacing.
+                                // Rebuild that one neighbour, never the entire suffix.
+                                if oldRange.upperBound < previous.chunks.count {
+                                    oldRange = oldRange.lowerBound ..< oldRange.upperBound + 1
+                                    newRange = newRange.lowerBound ..< newRange.upperBound + 1
+                                }
+                                // Resource publications can replace attachment metrics independently
+                                // of source deltas. Keep their existing residency transaction path.
+                                var resourcesIterator = model.resourceValues.makeIterator()
+                                fallback = resourcesIterator.next() == nil ? nil : .resources
+                            }
+                        }
                     }
                 }
             }
         }
-        return RenderSnapshot(id: snapshotID, attributedString: result, displayModel: model, resourceOwners: owners, blockStarts: starts, tableOverlays: overlays)
+        if fallback != nil { newRange = 0 ..< count }
+        var chunks: [MaterializedBlock] = fallback == nil ? Array(previous!.chunks[..<oldRange.lowerBound]) : []
+        let replacement = NSMutableAttributedString(string: "")
+        var materializedUTF16 = 0
+        for index in newRange {
+            let chunk = self.materializePreparedBlock(model: model, index: index, predecessor: chunks.last, resources: resources)
+            chunks.append(chunk)
+            materializedUTF16 += chunk.text.length
+            if fallback == nil { replacement.append(chunk.text) }
+        }
+        var edit: MaterializedEdit?
+        if fallback == nil, let previous {
+            chunks.append(contentsOf: previous.chunks[oldRange.upperBound...])
+            let lower = previous.chunks[..<oldRange.lowerBound].reduce(0) { $0 + $1.text.length }
+            let length = previous.chunks[oldRange].reduce(0) { $0 + $1.text.length }
+            let contentLength = previous.chunks[contentOldRange].reduce(0) { $0 + $1.text.length }
+            let replacementContentLength = chunks[contentNewRange].reduce(0) { $0 + $1.text.length }
+            edit = MaterializedEdit(
+                baselineSnapshotID: previous.id, range: NSRange(location: lower, length: length), replacement: replacement,
+                contentChangeRange: NSRange(location: lower, length: contentLength),
+                contentLengthDelta: replacementContentLength - contentLength
+            )
+        }
+        return RenderSnapshot(id: snapshotID, displayModel: model, chunks: chunks, configuration: self.configuration, edit: edit, work: MarkdownMaterializationWork(materializedBlocks: newRange.count, reusedBlocks: count - newRange.count, materializedUTF16: materializedUTF16, fallbackReason: fallback))
+    }
+
+    private func materializePreparedBlock(model: RenderDisplayModel, index: Int, predecessor: MaterializedBlock?, resources: ResolvedResourceSnapshot) -> MaterializedBlock {
+        let result = NSMutableAttributedString(string: "")
+        var owners: [any ResourceResidencyOwner] = []
+        var overlays: [Int: RenderTableOverlay] = [:]
+        var contentStart = 0
+        let blocks = model.preparedDocument?.blockStorage ?? PersistentValues([])
+        let bundle = model.bundles[index]
+        var prepared = self
+        // Recipes have the same traversal order as their prepared runs.
+        // No source-key hashing/equality is moved into platform assembly.
+        prepared.syntaxSpans = bundle.syntaxSpans
+        prepared.syntaxIndex = 0
+        prepared.currentBlockIndex = index
+        if index > 0 {
+            // Renders no leaf: it is the join between two blocks, and a
+            // newline's segment sits at the end of the *previous* line, so
+            // tagging it would stretch the next block's first element up
+            // into the block before it.
+            let separator = PreparedRun(
+                text: "\n", attributes: PreparedAttributes(color: nil, paragraph: PreparedParagraph(lineSpacing: 0)),
+                accessibilityOrdinal: -1
+            )
+            let join = NSMutableAttributedString(attributedString: prepared.materializeRun(separator, resources: resources, owners: &owners))
+            if index - 1 < blocks.count, self.chromeInset(for: blocks[index - 1].block) > 0, let predecessor, predecessor.text.length > 0,
+               let paragraph = predecessor.text.attribute(.paragraphStyle, at: predecessor.text.length - 1, effectiveRange: nil) {
+                join.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: join.length))
+            }
+            result.append(join)
+        }
+        let blockStart = result.length
+        for piece in bundle.content {
+            switch piece {
+            case .blockStart: contentStart = result.length
+            case .run(let run): result.append(prepared.materializeRun(run, resources: resources, owners: &owners))
+            case .table(let table): result.append(prepared.materializeTable(table, resources: resources, owners: &owners, overlays: &overlays))
+            }
+        }
+        if index < blocks.count {
+            let inset = self.chromeInset(for: blocks[index].block)
+            if inset > 0, result.length > blockStart {
+                let string = result.mutableString
+                let first = string.paragraphRange(for: NSRange(location: blockStart, length: 0))
+                let last = string.paragraphRange(for: NSRange(location: result.length - 1, length: 0))
+                for (range, leading) in [(first, true), (last, false)] {
+                    let style = ((result.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle) ?? .default).mutableCopy() as! NSMutableParagraphStyle
+                    if leading { style.paragraphSpacingBefore = max(style.paragraphSpacingBefore, inset + 4) }
+                    else { style.paragraphSpacing = max(style.paragraphSpacing, inset + 4) }
+                    result.addAttribute(.paragraphStyle, value: style, range: range)
+                }
+            }
+        }
+
+        return MaterializedBlock(text: result, contentStart: contentStart, owners: owners, overlay: overlays[index])
     }
 
     private func chromeInset(for block: BlockNode) -> CGFloat {

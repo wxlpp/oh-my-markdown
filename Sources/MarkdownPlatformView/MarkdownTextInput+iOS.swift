@@ -72,6 +72,29 @@ final class MarkdownSelectionRect: UITextSelectionRect {
 // MARK: - UITextInput
 
 extension MarkdownLabelView: UITextInput {
+    public func editMenu(for textRange: UITextRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
+        guard let range = textRange as? MarkdownTextRange,
+              let configuration = self.reviewConfiguration else { return nil }
+        func localized(_ element: UIMenuElement) -> UIMenuElement {
+            if let menu = element as? UIMenu { return menu.replacingChildren(menu.children.map(localized)) }
+            guard let command = element as? UICommand,
+                  let copy = command.copy() as? UICommand else { return element }
+            if command.action == #selector(self.copy(_:)), let title = configuration.copyActionTitle { copy.title = title }
+            if command.action == #selector(self.copyMarkdownSource(_:)), let title = configuration.copyMarkdownSourceActionTitle { copy.title = title }
+            return copy
+        }
+        var actions = suggestedActions.map(localized)
+        if configuration.isCommentingEnabled, let snapshot = self.reviewSelection(in: range.nsRange) {
+            let snapshotID = self.currentSnapshot?.id
+            actions.insert(UIAction(title: configuration.commentActionTitle) { [weak self] _ in
+                self?.performReviewComment(snapshot, snapshotID: snapshotID)
+            }, at: 0)
+        } else if configuration.copyActionTitle == nil, configuration.copyMarkdownSourceActionTitle == nil {
+            return nil
+        }
+        return UIMenu(children: actions)
+    }
+
     // MARK: UIKeyInput (required by UITextInput)
 
     public var hasText: Bool {
@@ -145,7 +168,7 @@ extension MarkdownLabelView: UITextInput {
     public func text(in range: UITextRange) -> String? {
         guard
             let r = range as? MarkdownTextRange,
-            let str = contentStorage.attributedString?.string,
+            let str = contentStorage.textStorage?.string,
             NSMaxRange(r.nsRange) <= (str as NSString).length else {
             return nil
         }

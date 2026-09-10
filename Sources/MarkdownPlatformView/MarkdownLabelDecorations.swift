@@ -187,7 +187,7 @@ struct MarkdownLabelDecorations {
             ? self.blockStarts[blockIndex + 1] - 1
             : self.documentLength
         guard
-            let str = contentStorage.attributedString,
+            let str = (contentStorage.textStorage as NSAttributedString?) ?? contentStorage.attributedString,
             let startLoc = locationAt(blockStart) else {
             return
         }
@@ -287,5 +287,20 @@ struct MarkdownLabelDecorations {
         ctx.strokePath()
 
         ctx.restoreGState()
+    }
+}
+
+@MainActor
+extension MarkdownLabelView {
+    func drawReviewAnnotations(in context: CGContext) {
+        context.saveGState()
+        context.setFillColor(PlatformColor.systemYellow.withAlphaComponent(0.24).cgColor)
+        for annotation in self.validReviewAnnotations {
+            for rect in self.reviewRects(for: annotation.selection.renderedRange) {
+                context.fill(rect)
+                context.fill(CGRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2))
+            }
+        }
+        context.restoreGState()
     }
 }
