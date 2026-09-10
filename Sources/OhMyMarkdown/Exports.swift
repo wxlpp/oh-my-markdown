@@ -102,3 +102,7 @@ public typealias RenderedSVG = MarkdownRenderKit.RenderedSVG
 public typealias MarkdownSelectionSnapshot = MarkdownPlatformView.MarkdownSelectionSnapshot
 public typealias MarkdownAnnotation = MarkdownPlatformView.MarkdownAnnotation
 public typealias MarkdownReviewConfiguration = MarkdownPlatformView.MarkdownReviewConfiguration
+
+public typealias MarkdownAnnotationStatus = MarkdownPlatformView.MarkdownAnnotationStatus
+public typealias MarkdownMaterializationWork = MarkdownRenderKit.MarkdownMaterializationWork
+public typealias MarkdownMaterializationFallback = MarkdownRenderKit.MarkdownMaterializationFallback

@@ -8,21 +8,28 @@ public struct MarkdownSelectionSnapshot: Sendable, Equatable, Codable {
     public let revision: String
     public let renderedRange: NSRange
     public let quote: String
+    public let renderedContentID: String
 
-    public init(documentID: String, revision: String, renderedRange: NSRange, quote: String) {
+    public init(documentID: String, revision: String, renderedRange: NSRange, quote: String, renderedContentID: String = "") {
         self.documentID = documentID
         self.revision = revision
         self.renderedRange = renderedRange
         self.quote = quote
+        self.renderedContentID = renderedContentID
     }
 
-    package func matches(documentID: String, revision: String, text: NSAttributedString) -> Bool {
+    package func matches(documentID: String, revision: String, text: NSAttributedString, renderedContentID: String) -> Bool {
+        self.status(documentID: documentID, revision: revision, text: text, renderedContentID: renderedContentID) == .located
+    }
+
+    package func status(documentID: String, revision: String, text: NSAttributedString, renderedContentID: String) -> MarkdownAnnotationStatus {
         let range = self.renderedRange
-        guard self.documentID == documentID, self.revision == revision,
-              range.location >= 0, range.length > 0, range.location <= text.length,
+        guard self.documentID == documentID, self.revision == revision else { return .documentMismatch }
+        guard !self.renderedContentID.isEmpty, self.renderedContentID == renderedContentID else { return .renderedContentChanged }
+        guard range.location >= 0, range.length > 0, range.location <= text.length,
               range.length <= text.length - range.location,
-              Range(range, in: text.string) != nil else { return false }
-        return (text.string as NSString).substring(with: range) == self.quote
+              Range(range, in: text.string) != nil else { return .invalidRange }
+        return (text.string as NSString).substring(with: range) == self.quote ? .located : .quoteMismatch
     }
 }
 
@@ -42,14 +49,16 @@ public struct MarkdownReviewConfiguration {
     public let revision: String
     public var annotations: [MarkdownAnnotation]
     public var commentActionTitle: String
+    public var isCommentingEnabled: Bool
     public var onComment: @MainActor (MarkdownSelectionSnapshot) -> Void
     public var onAnnotationTap: @MainActor (String) -> Void
 
-    public init(documentID: String, revision: String, annotations: [MarkdownAnnotation] = [], commentActionTitle: String = "Comment", onComment: @escaping @MainActor (MarkdownSelectionSnapshot) -> Void, onAnnotationTap: @escaping @MainActor (String) -> Void = { _ in }) {
+    public init(documentID: String, revision: String, annotations: [MarkdownAnnotation] = [], commentActionTitle: String = "Comment", isCommentingEnabled: Bool = true, onComment: @escaping @MainActor (MarkdownSelectionSnapshot) -> Void, onAnnotationTap: @escaping @MainActor (String) -> Void = { _ in }) {
         self.documentID = documentID
         self.revision = revision
         self.annotations = annotations
         self.commentActionTitle = commentActionTitle
+        self.isCommentingEnabled = isCommentingEnabled
         self.onComment = onComment
         self.onAnnotationTap = onAnnotationTap
     }
@@ -74,13 +83,20 @@ extension MarkdownLabelView {
               range.location >= 0, range.length > 0, range.location <= text.length,
               range.length <= text.length - range.location,
               Range(range, in: text.string) != nil else { return nil }
-        return MarkdownSelectionSnapshot(documentID: configuration.documentID, revision: configuration.revision, renderedRange: range, quote: (text.string as NSString).substring(with: range))
+        return MarkdownSelectionSnapshot(documentID: configuration.documentID, revision: configuration.revision, renderedRange: range, quote: (text.string as NSString).substring(with: range), renderedContentID: self.currentSnapshot?.renderedContentID ?? "")
     }
 
     package var validReviewAnnotations: [MarkdownAnnotation] {
         guard self.reviewSnapshotReady, let configuration = self.reviewConfiguration,
               let text = self.renderedAttributedStringForCopy else { return [] }
-        return configuration.annotations.filter { $0.selection.matches(documentID: configuration.documentID, revision: configuration.revision, text: text) }
+        return configuration.annotations.filter { $0.selection.matches(documentID: configuration.documentID, revision: configuration.revision, text: text, renderedContentID: self.currentSnapshot?.renderedContentID ?? "") }
+    }
+
+    public func annotationStatus(id: String) -> MarkdownAnnotationStatus? {
+        guard let configuration = self.reviewConfiguration,
+              let annotation = configuration.annotations.first(where: { $0.id == id }) else { return nil }
+        guard self.reviewSnapshotReady, let text = self.renderedAttributedStringForCopy else { return .rendering }
+        return annotation.selection.status(documentID: configuration.documentID, revision: configuration.revision, text: text, renderedContentID: self.currentSnapshot?.renderedContentID ?? "")
     }
 
     /// 返回视图本地坐标中的批注范围；无有效批注时返回 nil。
@@ -136,9 +152,13 @@ extension MarkdownLabelView {
 
     func performReviewComment(_ snapshot: MarkdownSelectionSnapshot, snapshotID: UUID?) {
         guard self.reviewSnapshotReady, self.currentSnapshot?.id == snapshotID,
-              let configuration = self.reviewConfiguration,
+              let configuration = self.reviewConfiguration, configuration.isCommentingEnabled,
               let text = self.renderedAttributedStringForCopy,
-              snapshot.matches(documentID: configuration.documentID, revision: configuration.revision, text: text) else { return }
+              snapshot.matches(documentID: configuration.documentID, revision: configuration.revision, text: text, renderedContentID: self.currentSnapshot?.renderedContentID ?? "") else { return }
         configuration.onComment(snapshot)
     }
+}
+
+public enum MarkdownAnnotationStatus: String, Sendable, Equatable {
+    case located, rendering, documentMismatch, renderedContentChanged, invalidRange, quoteMismatch
 }

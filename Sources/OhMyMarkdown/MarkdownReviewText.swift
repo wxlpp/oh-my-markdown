@@ -7,9 +7,9 @@ public struct MarkdownReviewText: View {
     private let source: String
     private let configuration: MarkdownReviewConfiguration
 
-    public init(_ source: String, documentID: String, revision: String, annotations: [MarkdownAnnotation] = [], commentActionTitle: String = "Comment", onComment: @escaping @MainActor (MarkdownSelectionSnapshot) -> Void, onAnnotationTap: @escaping @MainActor (String) -> Void = { _ in }) {
+    public init(_ source: String, documentID: String, revision: String, annotations: [MarkdownAnnotation] = [], commentActionTitle: String = "Comment", isCommentingEnabled: Bool = true, onComment: @escaping @MainActor (MarkdownSelectionSnapshot) -> Void, onAnnotationTap: @escaping @MainActor (String) -> Void = { _ in }) {
         self.source = source
-        self.configuration = MarkdownReviewConfiguration(documentID: documentID, revision: revision, annotations: annotations, commentActionTitle: commentActionTitle, onComment: onComment, onAnnotationTap: onAnnotationTap)
+        self.configuration = MarkdownReviewConfiguration(documentID: documentID, revision: revision, annotations: annotations, commentActionTitle: commentActionTitle, isCommentingEnabled: isCommentingEnabled, onComment: onComment, onAnnotationTap: onAnnotationTap)
     }
 
     public var body: some View {

@@ -187,7 +187,7 @@ struct MarkdownLabelDecorations {
             ? self.blockStarts[blockIndex + 1] - 1
             : self.documentLength
         guard
-            let str = contentStorage.attributedString,
+            let str = (contentStorage.textStorage as NSAttributedString?) ?? contentStorage.attributedString,
             let startLoc = locationAt(blockStart) else {
             return
         }

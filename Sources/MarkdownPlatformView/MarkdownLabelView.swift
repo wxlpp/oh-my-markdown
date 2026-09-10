@@ -40,3 +40,35 @@ private func markdownBlocksMatch(
     }
     return prevBlock == newBlock
 }
+
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
+
+@MainActor
+extension MarkdownLabelView {
+    /// Restore only selections whose characters survive the splice. TextKit's
+    /// previous locations must not be kept across a replacement transaction.
+    func restoreSelection(_ selection: NSRange?, after edit: MaterializedEdit?) {
+        self.layoutManager.textSelections = []
+        guard var selection else { return }
+        if let edit {
+            let end = NSMaxRange(selection)
+            if end <= edit.range.location {
+                // Entirely before the edit.
+            } else if selection.location >= NSMaxRange(edit.range) {
+                selection.location += edit.replacement.length - edit.range.length
+            } else { return }
+        }
+        let length = self.contentStorage.textStorage?.length ?? 0
+        guard selection.location < length else { return }
+        selection.length = min(selection.length, length - selection.location)
+        let start = self.contentStorage.documentRange.location
+        guard let lower = self.contentStorage.location(start, offsetBy: selection.location),
+              let upper = self.contentStorage.location(start, offsetBy: NSMaxRange(selection)),
+              let range = NSTextRange(location: lower, end: upper) else { return }
+        self.layoutManager.textSelections = [NSTextSelection(range: range, affinity: .downstream, granularity: .character)]
+    }
+}

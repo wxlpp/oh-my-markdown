@@ -75,7 +75,7 @@ extension MarkdownLabelView: UITextInput {
     public func editMenu(for textRange: UITextRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
         guard let range = textRange as? MarkdownTextRange,
               let snapshot = self.reviewSelection(in: range.nsRange),
-              let configuration = self.reviewConfiguration else { return nil }
+              let configuration = self.reviewConfiguration, configuration.isCommentingEnabled else { return nil }
         let snapshotID = self.currentSnapshot?.id
         let action = UIAction(title: configuration.commentActionTitle, image: UIImage(systemName: "text.bubble")) { [weak self] _ in
             self?.performReviewComment(snapshot, snapshotID: snapshotID)
@@ -156,7 +156,7 @@ extension MarkdownLabelView: UITextInput {
     public func text(in range: UITextRange) -> String? {
         guard
             let r = range as? MarkdownTextRange,
-            let str = contentStorage.attributedString?.string,
+            let str = contentStorage.textStorage?.string,
             NSMaxRange(r.nsRange) <= (str as NSString).length else {
             return nil
         }

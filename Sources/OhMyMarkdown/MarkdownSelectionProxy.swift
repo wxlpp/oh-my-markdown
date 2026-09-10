@@ -35,6 +35,10 @@ public final class MarkdownSelectionProxy {
         self.view?.selectionSnapshot
     }
 
+    public func annotationStatus(id: String) -> MarkdownAnnotationStatus? {
+        self.view?.annotationStatus(id: id)
+    }
+
     public func annotationRect(id: String) -> CGRect? {
         self.view?.annotationRect(id: id)
     }

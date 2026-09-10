@@ -1,6 +1,11 @@
+import Foundation
 import MarkdownCore
 
 public struct RenderDisplayModel: Sendable, Equatable {
+    /// Opaque provenance; never compare document text to authorize a splice.
+    package let identity: UUID
+    package var materializationDelta: MaterializationDelta?
+
     /// Explicit diagnostic facade. Materialization reads each bundle directly.
     package var syntaxSpans: [SyntaxHighlightKey: [SyntaxHighlightSpan]] {
         var metrics = ParseWorkMetrics()
@@ -100,6 +105,8 @@ public struct RenderDisplayModel: Sendable, Equatable {
         runs: [DisplayRun], blocks: [DisplayBlock], resources: [UnresolvedResource],
         accessibility: AccessibilityTree
     ) {
+        self.identity = UUID()
+        self.materializationDelta = nil
         self.preparedDocument = nil
         self.storedSource = nil
         self.sourceBuffer = nil
@@ -112,6 +119,8 @@ public struct RenderDisplayModel: Sendable, Equatable {
     }
 
     package init(bundles: PersistentValues<DisplayBlockBundle>, input: RenderInput) {
+        self.identity = UUID()
+        self.materializationDelta = nil
         self.bundles = bundles
         self.standaloneRuns = []
         self.standaloneResources = []
@@ -124,6 +133,8 @@ public struct RenderDisplayModel: Sendable, Equatable {
     }
 
     private init(copying model: Self, bundles: PersistentValues<DisplayBlockBundle>) {
+        self.identity = model.identity
+        self.materializationDelta = model.materializationDelta
         self.bundles = bundles
         self.standaloneRuns = model.standaloneRuns
         self.standaloneResources = model.standaloneResources
@@ -368,4 +379,10 @@ public struct DisplayBlock: Sendable, Equatable {
         self.runs = runs
         self.sourceRange = sourceRange
     }
+}
+
+package struct MaterializationDelta {
+    package let baselineModelID: UUID
+    package let replacedBlocks: Range<Int>
+    package let changedBlocks: Range<Int>
 }

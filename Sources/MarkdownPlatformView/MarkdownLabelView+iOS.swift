@@ -32,8 +32,10 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     public var reviewConfiguration: MarkdownReviewConfiguration? {
         didSet { self.setNeedsDisplay() }
     }
+
     package var reviewSnapshotReady = true
 
+    package private(set) var lastStorageEditRange: NSRange?
     package private(set) var currentCommitToken: RenderCommitToken?
     package private(set) var lastRenderError: RenderSessionError?
     private let sessionRegistry = RenderSessionSinkRegistry()
@@ -127,13 +129,29 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.imageRequests = self.imageRequests.filter { $0.key.token == token }
         self.lastRenderError = nil
         let previousSnapshot = self.currentSnapshot
-        self.contentStorage.performEditingTransaction {
-            self.contentStorage.attributedString = NSAttributedString(string: "")
-            self.currentSnapshot = nil
-            self.currentSnapshot = snapshot
-            self.contentStorage.attributedString = snapshot.attributedString
+        let previousSelection = self.currentRenderedSelectionRange()
+        let edit = snapshot.edit.flatMap { edit -> MaterializedEdit? in
+            guard edit.baselineSnapshotID == previousSnapshot?.id,
+                  edit.range.location >= 0, edit.range.location <= self._liveString.length,
+                  edit.range.length <= self._liveString.length - edit.range.location else { return nil }
+            return edit
         }
-        self._liveString = NSMutableAttributedString(attributedString: snapshot.attributedString)
+        self.lastStorageEditRange = edit?.range
+        self._inputDelegate?.textWillChange(self)
+        self._inputDelegate?.selectionWillChange(self)
+        self.contentStorage.performEditingTransaction {
+            if let edit, let storage = self.contentStorage.textStorage {
+                storage.replaceCharacters(in: edit.range, with: edit.replacement)
+                self._liveString.replaceCharacters(in: edit.range, with: edit.replacement)
+            } else {
+                self.contentStorage.textStorage?.setAttributedString(snapshot.attributedString)
+                self._liveString = NSMutableAttributedString(attributedString: snapshot.attributedString)
+            }
+            self.currentSnapshot = snapshot
+        }
+        self.restoreSelection(previousSelection, after: edit)
+        self._inputDelegate?.textDidChange(self)
+        self._inputDelegate?.selectionDidChange(self)
         self.blockStarts = snapshot.blockStarts
         self.renderedDocument = snapshot.displayModel.preparedDocument
         self.trailingDecorationInset = 0
@@ -151,7 +169,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         // come from laid-out text segments, and `_syncTableOverlays` is the last
         // step that can move them.
         self.resetLayout()
-        let range = NSRange(location: 0, length: snapshot.attributedString.length)
+        let range = NSRange(location: 0, length: snapshot.renderedLength)
         self.triggerImageLoads(in: range)
         self.triggerMathLoads(in: range)
         self.triggerSVGBlockLoads(in: range)
@@ -199,7 +217,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.isDismantled = true
         let previousSnapshot = self.currentSnapshot
         self.contentStorage.performEditingTransaction {
-            self.contentStorage.attributedString = NSAttributedString(string: "")
+            self.contentStorage.textStorage?.setAttributedString(NSAttributedString(string: ""))
             self.currentSnapshot = nil
         }
         self._liveString = NSMutableAttributedString(string: "")
@@ -341,7 +359,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     var renderedAttributedStringForCopy: NSAttributedString? {
-        self.contentStorage.attributedString
+        self.contentStorage.textStorage
     }
 
     /// Reused platform objects, keyed by the identity that survives streaming.
@@ -418,7 +436,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     /// Test-support: math-resolution state of the *actual* production-rendered
-    /// string (`contentStorage.attributedString`, i.e. what is drawn).
+    /// string (`contentStorage.textStorage`, i.e. what is drawn).
     /// Read-only forwarder; mirrors `_blockFrameUnionForTesting`.
     ///
     /// `mathSourceCount` = residual unresolved-math placeholders;
@@ -432,7 +450,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// the resolved math survive renderer recreation" — distinct from the
     /// separately-guarded TextKit2 relayout-timing concern.
     func _renderedMathStateForTesting() -> (mathSourceCount: Int, attachmentCount: Int) {
-        guard let str = self.contentStorage.attributedString else {
+        guard let str = self.contentStorage.textStorage else {
             return (0, 0)
         }
         var srcCount = 0
@@ -451,7 +469,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// 镜像 `_renderedMathStateForTesting`，是「已解析 svg 是否熬过 renderer 重建」
     /// 的无解耦直读信号（看 view 真正绘制的串）。
     func _renderedSVGBlockStateForTesting() -> (markerCount: Int, attachmentCount: Int) {
-        guard let str = self.contentStorage.attributedString else {
+        guard let str = self.contentStorage.textStorage else {
             return (0, 0)
         }
         var markerCount = 0
@@ -470,7 +488,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// swap 测试 —— 不同 renderer 配置不同 stub size，验证 swap 后 attachment
     /// 真的换成新 renderer 输出。返回 nil 表示还没解析为 attachment。
     func _firstSVGAttachmentImageSizeForTesting() -> CGSize? {
-        guard let str = self.contentStorage.attributedString else { return nil }
+        guard let str = self.contentStorage.textStorage else { return nil }
         var found: CGSize?
         let full = NSRange(location: 0, length: str.length)
         str.enumerateAttribute(.attachment, in: full) { value, _, stop in
@@ -702,7 +720,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// from here.
     @discardableResult
     package func activateLink(at offset: Int) -> Bool {
-        guard !self.isDismantled, let string = contentStorage.attributedString,
+        guard !self.isDismantled, let string = contentStorage.textStorage,
               offset >= 0, offset < string.length else { return false }
         let attributes = string.attributes(at: offset, effectiveRange: nil)
         let url: URL? = if let value = attributes[.link] as? URL {
@@ -768,7 +786,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.layoutManager.textContainer = self.textContainer
         self.contentStorage.addTextLayoutManager(self.layoutManager)
         // Seed backing store so textStorage is always non-nil.
-        self.contentStorage.attributedString = NSAttributedString(string: "")
+        self.contentStorage.textStorage = NSTextStorage()
         isOpaque = false
         backgroundColor = .clear
         contentMode = .redraw
@@ -840,7 +858,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     private func handleTap(_ gesture: UITapGestureRecognizer) {
         guard
             gesture.state == .ended,
-            let str = contentStorage.attributedString else {
+            let str = contentStorage.textStorage else {
             return
         }
         let point = gesture.location(in: self)
@@ -864,7 +882,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
 
     private func triggerImageLoads(in range: NSRange, string: NSAttributedString? = nil) {
         guard self.remoteImages.loader != nil else { return }
-        guard let str = string ?? contentStorage.attributedString, let token = self.currentCommitToken else { return }
+        guard let str = string ?? contentStorage.textStorage, let token = self.currentCommitToken else { return }
         let safeRange = range.clamped(to: str.length)
         guard safeRange.length > 0 else { return }
         let registry = self.sessionRegistry
@@ -927,7 +945,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             try transaction.commit { handOver, _ in
                 if let failure = self._materializationFailureForTesting { throw failure }
                 let snapshot = RenderMaterializer(configuration: configuration)
-                    .materialize(model, resources: resources, snapshotID: snapshotID)
+                    .materialize(model, resources: resources, snapshotID: snapshotID, previous: self.currentSnapshot)
                 handOver(snapshot.resourceOwners)
                 self.replaceSnapshot(snapshot, token: token)
             }
@@ -963,7 +981,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     private func triggerMathLoads(in range: NSRange, string: NSAttributedString? = nil) {
-        guard let str = string ?? contentStorage.attributedString, let token = self.currentCommitToken else { return }
+        guard let str = string ?? contentStorage.textStorage, let token = self.currentCommitToken else { return }
         let registry = self.sessionRegistry
         let owner = self.driver().resourceTaskOwner
         let configuration = self.configurationSnapshot()
@@ -983,7 +1001,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     private func triggerSVGBlockLoads(in range: NSRange, string: NSAttributedString? = nil) {
-        guard let str = string ?? contentStorage.attributedString, let token = self.currentCommitToken else { return }
+        guard let str = string ?? contentStorage.textStorage, let token = self.currentCommitToken else { return }
         let registry = self.sessionRegistry
         let owner = self.driver().resourceTaskOwner
         let width = self.currentSnapshot?.displayModel.availableWidth ?? self.requestedWidth
