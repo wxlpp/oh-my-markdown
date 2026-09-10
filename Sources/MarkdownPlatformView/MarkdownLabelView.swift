@@ -54,12 +54,12 @@ extension MarkdownLabelView {
     func restoreSelection(_ selection: NSRange?, after edit: MaterializedEdit?) {
         self.layoutManager.textSelections = []
         guard var selection else { return }
-        if let edit {
+        if let edit, edit.contentChangeRange.length != 0 || edit.contentLengthDelta != 0 {
             let end = NSMaxRange(selection)
-            if end <= edit.range.location {
+            if end <= edit.contentChangeRange.location {
                 // Entirely before the edit.
-            } else if selection.location >= NSMaxRange(edit.range) {
-                selection.location += edit.replacement.length - edit.range.length
+            } else if selection.location >= NSMaxRange(edit.contentChangeRange) {
+                selection.location += edit.contentLengthDelta
             } else { return }
         }
         let length = self.contentStorage.textStorage?.length ?? 0

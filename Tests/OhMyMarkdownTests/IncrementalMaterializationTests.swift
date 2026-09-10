@@ -65,6 +65,34 @@ struct IncrementalMaterializationTests {
         }
     }
 
+    @Test(arguments: [1, 2, 3])
+    func middleReplacementPreservesUnchangedSelectionAndClearsChangedSelection(selectedBlock: Int) throws {
+        let initial: [BlockNode] = [.paragraph([.text("prefix")]), .paragraph([.text("old")]), .paragraph([.text("next")]), .paragraph([.text("suffix")])]
+        var edited = initial
+        edited[1] = .codeBlock(language: "swift", body: "longer replacement")
+        let materializer = RenderMaterializer(configuration: self.configuration)
+        let oldModel = try self.model(initial)
+        let old = materializer.materialize(oldModel, resources: .init(values: [:]))
+        let next = try materializer.materialize(self.model(edited, previous: oldModel, range: 1 ..< 2), resources: .init(values: [:]), previous: old)
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        let session = RenderSessionID(rawValue: UUID())
+        view.replaceSnapshot(old, token: RenderCommitToken(sessionID: session, sequence: 1, sourceRevision: 1, configurationGeneration: 0))
+        let offset = old.blockStarts[selectedBlock]
+        let root = view.contentStorage.documentRange.location
+        let lower = try #require(view.contentStorage.location(root, offsetBy: offset))
+        let upper = try #require(view.contentStorage.location(root, offsetBy: offset + 3))
+        let range = try #require(NSTextRange(location: lower, end: upper))
+        view.layoutManager.textSelections = [NSTextSelection(range: range, affinity: .downstream, granularity: .character)]
+        view.replaceSnapshot(next, token: RenderCommitToken(sessionID: session, sequence: 2, sourceRevision: 2, configurationGeneration: 0))
+        if selectedBlock == 1 {
+            #expect(view.currentRenderedSelectionRange() == nil)
+        } else {
+            #expect(view.currentRenderedSelectionRange() == NSRange(location: next.blockStarts[selectedBlock], length: 3))
+            #expect(view.renderedSelectionResult()?.text == (selectedBlock == 2 ? "nex" : "suf"))
+        }
+        view.dismantleRenderSession()
+    }
+
     @Test func staleBaselineAndConfigurationFallBack() throws {
         let blocks: [BlockNode] = [.paragraph([.text("first")]), .paragraph([.text("tail")])]
         let oldModel = try self.model(blocks)

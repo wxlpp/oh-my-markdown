@@ -92,6 +92,41 @@ struct MarkdownReviewTests {
         view.dismantleRenderSession()
     }
 
+    #if canImport(AppKit)
+    @Test func nativeMenuRetainsItsSelectionGenerationAcrossResourceRefresh() throws {
+        _ = NSApplication.shared
+        let blocks: [BlockNode] = [.paragraph([.text("same "), .image(source: "https://example.com/menu.png", alt: "alt"), .text(" same")])]
+        let old = MaterializationFixture().snapshot(blocks)
+        var fixture = MaterializationFixture()
+        fixture.images["https://example.com/menu.png"] = NSImage(size: CGSize(width: 10, height: 10))
+        let resolved = fixture.snapshot(blocks)
+        var comments: [MarkdownSelectionSnapshot] = []
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        view.reviewConfiguration = MarkdownReviewConfiguration(documentID: "c", revision: "1", commentActionTitle: "评论", onComment: { comments.append($0) })
+        let token = RenderCommitToken(sessionID: RenderSessionID(rawValue: UUID()), sequence: 1, sourceRevision: 1, configurationGeneration: 0)
+        view.replaceSnapshot(old, token: token)
+        let root = view.contentStorage.documentRange.location
+        let end = try #require(view.contentStorage.location(root, offsetBy: 4))
+        let range = try #require(NSTextRange(location: root, end: end))
+        view.layoutManager.textSelections = [NSTextSelection(range: range, affinity: .downstream, granularity: .character)]
+        let menu = try #require(view.menu(for: NSEvent()))
+        let index = try #require(menu.items.firstIndex { $0.title == "评论" })
+        menu.performActionForItem(at: index)
+        #expect(comments.count == 1)
+        #expect(comments.first?.renderedContentID == old.renderedContentID)
+        // Resource publication replaces a snapshot without advancing the source token.
+        view.replaceSnapshot(resolved, token: token)
+        menu.performActionForItem(at: index)
+        #expect(comments.count == 1)
+        let currentMenu = try #require(view.menu(for: NSEvent()))
+        let currentIndex = try #require(currentMenu.items.firstIndex { $0.title == "评论" })
+        currentMenu.performActionForItem(at: currentIndex)
+        #expect(comments.count == 2)
+        #expect(comments.last?.renderedContentID == resolved.renderedContentID)
+        view.dismantleRenderSession()
+    }
+    #endif
+
     #if canImport(UIKit)
     @Test func nativeSelectionMenuAddsCommentAndHonorsReadOnlyState() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))

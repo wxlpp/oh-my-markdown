@@ -124,6 +124,8 @@ package struct RenderMaterializer {
         var fallback: MarkdownMaterializationFallback? = .initial
         var oldRange = 0 ..< 0
         var newRange = 0 ..< count
+        var contentOldRange = oldRange
+        var contentNewRange = newRange
         if let previous {
             fallback = .missingDelta
             if let delta = model.materializationDelta {
@@ -141,6 +143,8 @@ package struct RenderMaterializer {
                            count - newRange.upperBound == previous.chunks.count - oldRange.upperBound {
                             fallback = .shiftedSuffix
                             if oldRange.count == newRange.count || oldRange.upperBound == previous.chunks.count {
+                                contentOldRange = oldRange
+                                contentNewRange = newRange
                                 // A changed block can alter the following join's paragraph spacing.
                                 // Rebuild that one neighbour, never the entire suffix.
                                 if oldRange.upperBound < previous.chunks.count {
@@ -172,7 +176,13 @@ package struct RenderMaterializer {
             chunks.append(contentsOf: previous.chunks[oldRange.upperBound...])
             let lower = previous.chunks[..<oldRange.lowerBound].reduce(0) { $0 + $1.text.length }
             let length = previous.chunks[oldRange].reduce(0) { $0 + $1.text.length }
-            edit = MaterializedEdit(baselineSnapshotID: previous.id, range: NSRange(location: lower, length: length), replacement: replacement)
+            let contentLength = previous.chunks[contentOldRange].reduce(0) { $0 + $1.text.length }
+            let replacementContentLength = chunks[contentNewRange].reduce(0) { $0 + $1.text.length }
+            edit = MaterializedEdit(
+                baselineSnapshotID: previous.id, range: NSRange(location: lower, length: length), replacement: replacement,
+                contentChangeRange: NSRange(location: lower, length: contentLength),
+                contentLengthDelta: replacementContentLength - contentLength
+            )
         }
         return RenderSnapshot(id: snapshotID, displayModel: model, chunks: chunks, configuration: self.configuration, edit: edit, work: MarkdownMaterializationWork(materializedBlocks: newRange.count, reusedBlocks: count - newRange.count, materializedUTF16: materializedUTF16, fallbackReason: fallback))
     }

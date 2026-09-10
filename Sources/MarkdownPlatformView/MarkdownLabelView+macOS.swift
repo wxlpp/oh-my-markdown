@@ -427,18 +427,26 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         if !menu.items.contains(where: { $0.action == #selector(self.copy(_:)) }) {
             added.insert((self.reviewConfiguration?.copyActionTitle ?? MarkdownCopyCommandTitle.copy, #selector(self.copy(_:))), at: 0)
         }
-        if let configuration = self.reviewConfiguration, configuration.isCommentingEnabled, self.selectionSnapshot != nil {
-            added.append((configuration.commentActionTitle, #selector(self.commentOnSelection(_:))))
-        }
         for (title, action) in added {
             menu.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
+        }
+        if let configuration = self.reviewConfiguration, configuration.isCommentingEnabled,
+           let selection = self.selectionSnapshot, let snapshotID = self.currentSnapshot?.id {
+            let item = menu.addItem(withTitle: configuration.commentActionTitle, action: #selector(self.commentOnSelection(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ReviewMenuSelection(selection: selection, snapshotID: snapshotID)
         }
         return menu
     }
 
+    private struct ReviewMenuSelection {
+        let selection: MarkdownSelectionSnapshot
+        let snapshotID: UUID
+    }
+
     @objc private func commentOnSelection(_ sender: Any?) {
-        guard let snapshot = self.selectionSnapshot else { return }
-        self.performReviewComment(snapshot, snapshotID: self.currentSnapshot?.id)
+        guard let item = sender as? NSMenuItem, let captured = item.representedObject as? ReviewMenuSelection else { return }
+        self.performReviewComment(captured.selection, snapshotID: captured.snapshotID)
     }
 
     @objc

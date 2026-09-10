@@ -142,6 +142,10 @@ package struct MaterializedEdit {
     package let baselineSnapshotID: UUID
     package let range: NSRange
     package let replacement: NSAttributedString
+    /// Only the source delta's blocks invalidate selections. A following block
+    /// may be re-materialized solely to update its leading separator style.
+    package let contentChangeRange: NSRange
+    package let contentLengthDelta: Int
 }
 
 /// Stable block-composed identity. Hash each changed UTF-16 block once; combine

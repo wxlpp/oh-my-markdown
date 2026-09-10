@@ -59,7 +59,7 @@ MarkdownSelectionReader { selection in
 - 未变代码块、引用等复杂前缀不会导致整份文档重建。代码与引用改变也走同一范围算法。
 - 含图片、公式或 SVG 资源的文档暂时全量回退，保持已审计的资源租约事务。后缀块索引变化时也回退，避免复用错误的辅助功能索引。
 
-平台视图明确使用 `NSTextStorage` backing，在 `NSTextContentStorage` 编辑事务内调用 `replaceCharacters(in:with:)`，同步编辑绘制镜像。未变前缀选区保留，未变后缀选区平移，覆盖改变内容的选区清除。原有全量替换路径继续保留有效范围内的选区行为。
+平台视图明确使用 `NSTextStorage` backing，在 `NSTextContentStorage` 编辑事务内调用 `replaceCharacters(in:with:)`，同步编辑绘制镜像。选区映射使用原始内容变化范围，与为更新段落间距而扩大的富文本替换范围分开：未变前缀选区保留，未变后继与后缀选区平移，覆盖改变内容的选区清除。原有全量替换路径继续保留有效范围内的选区行为。
 
 每份快照按块持有富文本和资源 owner，不引用整串历史快照。`RenderSnapshot.attributedString` 是兼容入口，调用时才组装全文；增量安装不调用它。新 owner 在事务内接管之后才安装，旧快照一直存活到 TextKit、绘制镜像与表格视图完成替换。物化失败保持旧内容和 owner。
 
@@ -80,3 +80,11 @@ MarkdownSelectionReader { selection in
 - 本机 Xcode 26.4 / Swift 6.3 / macOS 26.3.1。最低 macOS 15 运行环境检查不满足；没有把本机测试充当 macOS 15 证据。尚未执行 Example iOS 18 的完整发布测试矩阵；本记录为本次库改动验证，不是完整版本发布声明。
 
 首次完整静态运行发现两个问题后进行了修复和复跑：新增绘制代码需归入现有审计文件；普通渲染路径不应支付审阅摘要计算成本。后者在三种 1 MiB 生产 session 与1000次生命周期压力测试中定向复跑通过，再通过完整门禁。未修改测试时限或放宽审计清单。
+
+### 独立终审修复验证（2026-09-10）
+
+两项回归先在原实现上失败，再在修复后通过：macOS 使用真实 `NSMenuItem` 创建和派发动作，确认同一源 token 的资源回填后旧菜单不会发起评论，新菜单仍可使用；iOS/macOS 使用四块文档把中间普通段落改为代码块，确认被重物化以调整间距的未变后继选区保留并平移，改变内容内的选区清除。菜单项只保存创建时的选区值与快照 ID，不持有旧资源快照。
+
+- macOS 定向运行 `MarkdownReviewTests`、`IncrementalMaterializationTests`、`MarkdownCopyTests`、`PlatformSessionWiringTests`：58项 / 4组通过。
+- 同组测试在 iOS 18.0 / iPhone 16 Pro：57项 / 4组通过；结果为 `.artifacts/review-ios18-review-fixes.xcresult`。macOS 独有菜单测试不计入 iOS 数量。
+- Release warnings-as-errors 构建、图片 owner 审计、链接激活审计、SwiftFormat 和 `git diff --check` 通过。本次修复未更改公共 API。
