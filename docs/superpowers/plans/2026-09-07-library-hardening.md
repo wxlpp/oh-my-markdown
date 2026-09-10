@@ -1,8 +1,8 @@
-# MarkdownKit Library Hardening Implementation Plan
+# OhMyMarkdown Library Hardening Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver MarkdownKit 0.2.0 with bounded and cancellable rendering work, near-linear safe streaming, secure opt-in remote images, exact copying, structured accessibility, Dynamic Type, lower platform floors, and enforceable delivery gates.
+**Goal:** Deliver OhMyMarkdown 0.2.0 with bounded and cancellable rendering work, near-linear safe streaming, secure opt-in remote images, exact copying, structured accessibility, Dynamic Type, lower platform floors, and enforceable delivery gates.
 
 **Architecture:** Keep `MarkdownCore` as immutable IR and parsing logic, introduce a bounded process-wide cmark executor plus a session-owned orchestration layer in `MarkdownPlatformView`, and split rendering into a `Sendable` display model followed by `@MainActor` platform materialization. Resource work remains session-owned while shared actors grant hard budgets and completed-result caches use explicit configuration namespaces and residency leases.
 
@@ -71,7 +71,7 @@ Do not change `.swiftformat`, declarations, tests, deployment targets, or behavi
 swiftformat --lint Package.swift Sources Tests Example/Sources Example/ExampleTests Example/ExampleUITests
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild build -scheme MarkdownKit -destination 'generic/platform=iOS Simulator'
+xcodebuild build -scheme OhMyMarkdown -destination 'generic/platform=iOS Simulator'
 git diff --check
 git add Package.swift Sources Tests Example/Sources Example/ExampleTests Example/ExampleUITests
 git commit -m "style: establish SwiftFormat baseline"
@@ -96,7 +96,7 @@ Dispatch `superpowers-reviewer` over only this commit and require formatter-only
 - Replace: `Example/ExampleUITests/ExampleUITests.swift`
 
 **Interfaces:**
-- Consumes: real schemes `MarkdownKit-Package`, `MarkdownKit`, `MarkdownMath`, and `Example`.
+- Consumes: real schemes `OhMyMarkdown-Package`, `OhMyMarkdown`, `MarkdownMath`, and `Example`.
 - Produces: iOS 18/macOS 15 targets, non-template smoke tests, deterministic floor checks, an explicit runtime test manifest, xcresult execution assertions, and mandatory actual-runtime CI evidence.
 
 - [ ] **Step 1: Record missing delivery gates**
@@ -117,9 +117,9 @@ Add `.artifacts/` to `.gitignore`; all local/CI result bundles and extracted tes
 
 - [ ] **Step 3: Replace empty tests with executable smoke assertions**
 
-Make the Example unit test parse `# Smoke` and assert one heading. Give the root demo `markdownkit.example.root` and make the UI test launch and locate it. Run the two focused test commands and expect PASS.
+Make the Example unit test parse `# Smoke` and assert one heading. Give the root demo `oh-my-markdown.example.root` and make the UI test launch and locate it. Run the two focused test commands and expect PASS.
 
-Create `Tests/runtime-test-manifest.json` as the checked-in test plan for both runtime jobs. It names the required targets (`MarkdownKitTests`, `MarkdownMathTests`, `ExampleTests`, `ExampleUITests`) and required platform behavior suites/cases, initially including smoke tests and later extended by Tasks 10/11 with accessibility and Dynamic Type cases. `Scripts/assert-xcresult-tests.sh <manifest-section> <xcresult...>` reads `xcrun xcresulttool get test-results tests`, fails on zero executed tests, missing required target/case names, skips, or unexpected failures, and prints the observed counts/names into evidence.
+Create `Tests/runtime-test-manifest.json` as the checked-in test plan for both runtime jobs. It names the required targets (`OhMyMarkdownTests`, `MarkdownMathTests`, `ExampleTests`, `ExampleUITests`) and required platform behavior suites/cases, initially including smoke tests and later extended by Tasks 10/11 with accessibility and Dynamic Type cases. `Scripts/assert-xcresult-tests.sh <manifest-section> <xcresult...>` reads `xcrun xcresulttool get test-results tests`, fails on zero executed tests, missing required target/case names, skips, or unexpected failures, and prints the observed counts/names into evidence.
 
 - [ ] **Step 4: Add mandatory actual-runtime CI**
 
@@ -136,11 +136,11 @@ HARDENING_RESULT_DIR="$(mktemp -d .artifacts/platform-gate.XXXXXX)"
 Scripts/check-platform-floors.sh
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -resultBundlePath "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.xcresult"
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -resultBundlePath "$HARDENING_RESULT_DIR/OhMyMarkdown-iOS18.xcresult"
 xcodebuild test -project Example/Example.xcodeproj -scheme Example -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -resultBundlePath "$HARDENING_RESULT_DIR/Example-iOS18.xcresult"
-Scripts/assert-xcresult-tests.sh ios18 "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.xcresult" "$HARDENING_RESULT_DIR/Example-iOS18.xcresult"
+Scripts/assert-xcresult-tests.sh ios18 "$HARDENING_RESULT_DIR/OhMyMarkdown-iOS18.xcresult" "$HARDENING_RESULT_DIR/Example-iOS18.xcresult"
 git add .gitignore Package.swift .github/workflows/ci.yml Scripts/check-platform-floors.sh Scripts/assert-xcresult-tests.sh Tests/runtime-test-manifest.json RTK.md Example
-git commit -m "ci: enforce MarkdownKit minimum runtimes"
+git commit -m "ci: enforce OhMyMarkdown minimum runtimes"
 ```
 
 The macOS 15 CI run must finish and upload matching metadata before Task 1B is marked complete; running on the current macOS 26 workstation is not substitute evidence.
@@ -163,10 +163,10 @@ Dispatch `superpowers-reviewer` over Task 1B and require exact floor assertions,
 - Modify: `Sources/MarkdownRenderKit/RenderStyle.swift`
 - Modify: `Sources/MarkdownRenderKit/MathRendering.swift`
 - Modify: `Sources/MarkdownRenderKit/SVGBlockRendering.swift`
-- Modify: `Sources/MarkdownKit/MarkdownText.swift`
-- Modify: `Sources/MarkdownKit/MarkdownEditor.swift`
-- Test: `Tests/MarkdownKitTests/RenderIsolationTests.swift`
-- Test: `Tests/MarkdownKitTests/RenderConfigurationTests.swift`
+- Modify: `Sources/OhMyMarkdown/MarkdownText.swift`
+- Modify: `Sources/OhMyMarkdown/MarkdownEditor.swift`
+- Test: `Tests/OhMyMarkdownTests/RenderIsolationTests.swift`
+- Test: `Tests/OhMyMarkdownTests/RenderConfigurationTests.swift`
 - Create: `Tests/CompileFail/PlatformStateRequiresMainActor.swift`
 - Create: `Scripts/check-api-isolation.sh`
 
@@ -421,8 +421,8 @@ swift test --filter 'RenderIsolationTests|RenderConfigurationTests|MarkdownRende
 chmod +x Scripts/check-api-isolation.sh
 Scripts/check-api-isolation.sh
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
-git add Sources/MarkdownRenderKit Sources/MarkdownKit/MarkdownText.swift Sources/MarkdownKit/MarkdownEditor.swift Tests/MarkdownKitTests/RenderIsolationTests.swift Tests/MarkdownKitTests/RenderConfigurationTests.swift Tests/CompileFail/PlatformStateRequiresMainActor.swift Scripts/check-api-isolation.sh
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+git add Sources/MarkdownRenderKit Sources/OhMyMarkdown/MarkdownText.swift Sources/OhMyMarkdown/MarkdownEditor.swift Tests/OhMyMarkdownTests/RenderIsolationTests.swift Tests/OhMyMarkdownTests/RenderConfigurationTests.swift Tests/CompileFail/PlatformStateRequiresMainActor.swift Scripts/check-api-isolation.sh
 git commit -m "refactor: make render boundaries actor-safe"
 ```
 
@@ -437,8 +437,8 @@ Dispatch `superpowers-reviewer` over the Task 2 commit. Require it to trace ever
 - Create: `Sources/MarkdownPlatformView/ParseExecutor.swift`
 - Create: `Sources/MarkdownPlatformView/MarkdownRenderSession.swift`
 - Modify: `Sources/MarkdownCore/DocumentParser.swift`
-- Test: `Tests/MarkdownKitTests/ParseExecutorTests.swift`
-- Test: `Tests/MarkdownKitTests/MarkdownRenderSessionTests.swift`
+- Test: `Tests/OhMyMarkdownTests/ParseExecutorTests.swift`
+- Test: `Tests/OhMyMarkdownTests/MarkdownRenderSessionTests.swift`
 
 **Interfaces:**
 - Consumes: Task 2 `RenderInput`, `RenderDisplayModel`, `RenderSnapshot`.
@@ -627,8 +627,8 @@ Add tests for 1,000 create/dismantle cycles returning executor/result registries
 swift test --filter 'ParseExecutorTests|MarkdownRenderSessionTests|MarkdownCoreIncrementalParseTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
-git add Sources/MarkdownCore/DocumentParser.swift Sources/MarkdownPlatformView/RenderSessionTypes.swift Sources/MarkdownPlatformView/ParseExecutor.swift Sources/MarkdownPlatformView/MarkdownRenderSession.swift Tests/MarkdownKitTests/ParseExecutorTests.swift Tests/MarkdownKitTests/MarkdownRenderSessionTests.swift
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+git add Sources/MarkdownCore/DocumentParser.swift Sources/MarkdownPlatformView/RenderSessionTypes.swift Sources/MarkdownPlatformView/ParseExecutor.swift Sources/MarkdownPlatformView/MarkdownRenderSession.swift Tests/OhMyMarkdownTests/ParseExecutorTests.swift Tests/OhMyMarkdownTests/MarkdownRenderSessionTests.swift
 git commit -m "feat: add bounded markdown render sessions"
 ```
 
@@ -672,7 +672,7 @@ Leave only cross-platform value/helper declarations in `MarkdownLabelView.swift`
 ```bash
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 git add Sources/MarkdownPlatformView/MarkdownLabelView.swift Sources/MarkdownPlatformView/MarkdownLabelView+iOS.swift Sources/MarkdownPlatformView/MarkdownLabelView+macOS.swift Sources/MarkdownPlatformView/MarkdownTextInput+iOS.swift Sources/MarkdownPlatformView/MarkdownSelection.swift Sources/MarkdownPlatformView/MarkdownTableOverlay.swift
 git commit -m "refactor: split markdown platform view files"
 ```
@@ -688,10 +688,10 @@ Dispatch `superpowers-reviewer` over only this commit and require behavior-only 
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+iOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+macOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownRenderSession.swift`
-- Modify: `Sources/MarkdownKit/MarkdownText.swift`
-- Modify: `Sources/MarkdownKit/MarkdownStreamingText.swift`
-- Test: `Tests/MarkdownKitTests/PlatformSessionWiringTests.swift`
-- Test: `Tests/MarkdownKitTests/RenderMigrationParityTests.swift`
+- Modify: `Sources/OhMyMarkdown/MarkdownText.swift`
+- Modify: `Sources/OhMyMarkdown/MarkdownStreamingText.swift`
+- Test: `Tests/OhMyMarkdownTests/PlatformSessionWiringTests.swift`
+- Test: `Tests/OhMyMarkdownTests/RenderMigrationParityTests.swift`
 
 **Interfaces:**
 - Consumes: Task 3 `MarkdownRenderSessionDriver` and Task 2 snapshots.
@@ -717,7 +717,7 @@ This step migrates existing behavior only. Task 8 still owns the new typed link 
 ```bash
 swift test --filter 'RenderMigrationParityTests|MarkdownRenderKitTests|PlaceholderModeRendererTests|TableMeasurementLaidOutEquivalenceTests|ReadOnlyCopyOriginalSourceTests|AsyncMathWritebackRelayoutTests'
 swift test
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 ```
 
 Record the differential tests and pre-migration suite results as checkpoint evidence. Expected: PASS while both views still use the legacy renderer. Only then proceed to driver wiring.
@@ -763,8 +763,8 @@ Both platform views conform to `RenderSessionSink` and strongly retain the curre
 swift test --filter 'RenderMigrationParityTests|PlatformSessionWiringTests|MarkdownLabelViewRenderModeTests|TableMeasurementLaidOutEquivalenceTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
-git add Sources/MarkdownRenderKit/RenderPreparer.swift Sources/MarkdownRenderKit/RenderMaterializer.swift Sources/MarkdownRenderKit/RenderDisplayModel.swift Sources/MarkdownPlatformView Sources/MarkdownKit/MarkdownText.swift Sources/MarkdownKit/MarkdownStreamingText.swift Tests/MarkdownKitTests/PlatformSessionWiringTests.swift Tests/MarkdownKitTests/RenderMigrationParityTests.swift
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+git add Sources/MarkdownRenderKit/RenderPreparer.swift Sources/MarkdownRenderKit/RenderMaterializer.swift Sources/MarkdownRenderKit/RenderDisplayModel.swift Sources/MarkdownPlatformView Sources/OhMyMarkdown/MarkdownText.swift Sources/OhMyMarkdown/MarkdownStreamingText.swift Tests/OhMyMarkdownTests/PlatformSessionWiringTests.swift Tests/OhMyMarkdownTests/RenderMigrationParityTests.swift
 git commit -m "refactor: route platform views through render sessions"
 ```
 
@@ -845,7 +845,7 @@ swift build -c release -Xswiftc -warnings-as-errors
 chmod +x Scripts/check-unchecked-sendable.sh
 Scripts/check-unchecked-sendable.sh
 Scripts/check-api-isolation.sh
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
 git add Sources/MarkdownPlatformView Sources/MarkdownRenderKit Sources/MarkdownMath Tests Scripts/check-unchecked-sendable.sh
 git commit -m "refactor: move rendered resources into sessions"
 ```
@@ -866,8 +866,8 @@ Dispatch `superpowers-reviewer` from Task 4B head through Task 4C head. Require 
 - Create: `Sources/MarkdownRenderKit/RenderDisplayDelta.swift`
 - Modify: `Sources/MarkdownRenderKit/RenderPreparer.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownRenderSession.swift`
-- Test: `Tests/MarkdownKitTests/IncrementalParseDifferentialTests.swift`
-- Test: `Tests/MarkdownKitTests/IncrementalWorkBudgetTests.swift`
+- Test: `Tests/OhMyMarkdownTests/IncrementalParseDifferentialTests.swift`
+- Test: `Tests/OhMyMarkdownTests/IncrementalWorkBudgetTests.swift`
 - Test: existing scanner/incremental suites
 
 **Interfaces:**
@@ -1002,8 +1002,8 @@ Run focused tests after implementing state, metrics, buffer/session integration,
 swift test --filter 'IncrementalParseDifferentialTests|IncrementalWorkBudgetTests|MarkdownCoreIncrementalParseTests|MathScannerTests|MathScannerCodeRegionHardStopTests|MathScannerCurrencyDollarTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
-git add Sources/MarkdownCore Sources/MarkdownRenderKit/RenderDisplayDelta.swift Sources/MarkdownRenderKit/RenderPreparer.swift Sources/MarkdownPlatformView/MarkdownRenderSession.swift Tests/MarkdownKitTests
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+git add Sources/MarkdownCore Sources/MarkdownRenderKit/RenderDisplayDelta.swift Sources/MarkdownRenderKit/RenderPreparer.swift Sources/MarkdownPlatformView/MarkdownRenderSession.swift Tests/OhMyMarkdownTests
 git commit -m "perf: bound incremental markdown work"
 ```
 
@@ -1020,11 +1020,11 @@ Dispatch `superpowers-reviewer` with correctness/performance focus. Require it t
 - Create: `Sources/MarkdownPlatformView/ValidatedImageFactory.swift`
 - Create: `Scripts/check-validated-image-construction.sh`
 - Modify: `Sources/MarkdownPlatformView/RenderSessionTypes.swift`
-- Modify: `Sources/MarkdownKit/MarkdownText.swift`
-- Modify: `Sources/MarkdownKit/MarkdownStreamingText.swift`
-- Create: `Sources/MarkdownKit/MarkdownResourceModifiers.swift`
-- Test: `Tests/MarkdownKitTests/MarkdownImageLoaderTests.swift`
-- Test: `Tests/MarkdownKitTests/ResourceConfigurationTests.swift`
+- Modify: `Sources/OhMyMarkdown/MarkdownText.swift`
+- Modify: `Sources/OhMyMarkdown/MarkdownStreamingText.swift`
+- Create: `Sources/OhMyMarkdown/MarkdownResourceModifiers.swift`
+- Test: `Tests/OhMyMarkdownTests/MarkdownImageLoaderTests.swift`
+- Test: `Tests/OhMyMarkdownTests/ResourceConfigurationTests.swift`
 
 **Interfaces:**
 - Consumes: Task 4 session configuration events and Task 2 `MarkdownConfigurationID`.
@@ -1146,8 +1146,8 @@ swift test
 swift build -c release -Xswiftc -warnings-as-errors
 chmod +x Scripts/check-validated-image-construction.sh
 Scripts/check-validated-image-construction.sh
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
-git add Package.swift Sources/MarkdownPlatformView Sources/MarkdownKit Scripts/check-validated-image-construction.sh Tests/MarkdownKitTests/MarkdownImageLoaderTests.swift Tests/MarkdownKitTests/ResourceConfigurationTests.swift
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+git add Package.swift Sources/MarkdownPlatformView Sources/OhMyMarkdown Scripts/check-validated-image-construction.sh Tests/OhMyMarkdownTests/MarkdownImageLoaderTests.swift Tests/OhMyMarkdownTests/ResourceConfigurationTests.swift
 git commit -m "feat: add secure opt-in markdown image transport"
 ```
 
@@ -1164,9 +1164,9 @@ Dispatch `superpowers-reviewer` with network/privacy focus. Require verification
 - Modify: `Sources/MarkdownPlatformView/MarkdownRenderSession.swift`
 - Modify: `Sources/MarkdownRenderKit/RenderSnapshot.swift`
 - Modify: `Sources/MarkdownRenderKit/ResolvedResource.swift`
-- Test: `Tests/MarkdownKitTests/ImageResourceCoordinatorTests.swift`
-- Test: `Tests/MarkdownKitTests/ImageResidencyLedgerTests.swift`
-- Test: `Tests/MarkdownKitTests/ImageAdversarialTests.swift`
+- Test: `Tests/OhMyMarkdownTests/ImageResourceCoordinatorTests.swift`
+- Test: `Tests/OhMyMarkdownTests/ImageResidencyLedgerTests.swift`
+- Test: `Tests/OhMyMarkdownTests/ImageAdversarialTests.swift`
 
 **Interfaces:**
 - Consumes: validated `MarkdownEncodedImage`, session revisions/configuration generations, unresolved display resources.
@@ -1327,8 +1327,8 @@ swift test --filter 'ImageResourceCoordinatorTests|ImageResidencyLedgerTests|Ima
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
 test -z "$(rg -n '\bLegacyResourceOwner\b' Sources)"
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
-git add Sources/MarkdownPlatformView Sources/MarkdownRenderKit/RenderSnapshot.swift Sources/MarkdownRenderKit/ResolvedResource.swift Tests/MarkdownKitTests
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+git add Sources/MarkdownPlatformView Sources/MarkdownRenderKit/RenderSnapshot.swift Sources/MarkdownRenderKit/ResolvedResource.swift Tests/OhMyMarkdownTests
 git commit -m "feat: bound markdown image residency"
 ```
 
@@ -1344,9 +1344,9 @@ Dispatch `superpowers-reviewer` with critical resource-ownership focus. Require 
 - Modify: `Sources/MarkdownPlatformView/MarkdownRenderSession.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+iOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+macOS.swift`
-- Modify: `Sources/MarkdownKit/MarkdownText.swift`
-- Modify: `Sources/MarkdownKit/MarkdownStreamingText.swift`
-- Test: `Tests/MarkdownKitTests/MarkdownLinkPolicyTests.swift`
+- Modify: `Sources/OhMyMarkdown/MarkdownText.swift`
+- Modify: `Sources/OhMyMarkdown/MarkdownStreamingText.swift`
+- Test: `Tests/OhMyMarkdownTests/MarkdownLinkPolicyTests.swift`
 
 **Interfaces:**
 - Consumes: configuration ID/generation rules and platform bridge.
@@ -1429,8 +1429,8 @@ Run `swift test --filter MarkdownLinkPolicyTests`; expected PASS, including repl
 swift test --filter MarkdownLinkPolicyTests
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
-git add Sources/MarkdownPlatformView Sources/MarkdownKit Tests/MarkdownKitTests/MarkdownLinkPolicyTests.swift
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+git add Sources/MarkdownPlatformView Sources/OhMyMarkdown Tests/OhMyMarkdownTests/MarkdownLinkPolicyTests.swift
 git commit -m "feat: enforce markdown link policy"
 ```
 
@@ -1446,12 +1446,12 @@ Dispatch `superpowers-reviewer` for Task 8, focusing on TOCTOU generation checks
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+iOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+macOS.swift`
 - Modify: `Sources/MarkdownRenderKit/RenderDisplayModel.swift`
-- Create: `Sources/MarkdownKit/MarkdownSelectionProxy.swift`
-- Create: `Sources/MarkdownKit/MarkdownSelectionReader.swift`
+- Create: `Sources/OhMyMarkdown/MarkdownSelectionProxy.swift`
+- Create: `Sources/OhMyMarkdown/MarkdownSelectionReader.swift`
 - Create: `Sources/MarkdownPlatformView/Resources/en.lproj/Localizable.strings`
 - Create: `Sources/MarkdownPlatformView/Resources/zh-Hans.lproj/Localizable.strings`
 - Modify: `Package.swift` to process localization resources
-- Test: `Tests/MarkdownKitTests/MarkdownCopyTests.swift`
+- Test: `Tests/OhMyMarkdownTests/MarkdownCopyTests.swift`
 - Test: `Tests/MarkdownMathTests/ReadOnlyCopyOriginalSourceTests.swift`
 
 **Interfaces:**
@@ -1507,8 +1507,8 @@ Run `swift test --filter 'MarkdownCopyTests|ReadOnlyCopyOriginalSourceTests'`; e
 swift test --filter 'MarkdownCopyTests|ReadOnlyCopyOriginalSourceTests'
 swift test
 swift build -c release -Xswiftc -warnings-as-errors
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
-git add Package.swift Sources/MarkdownPlatformView Sources/MarkdownRenderKit/RenderDisplayModel.swift Sources/MarkdownKit/MarkdownSelectionProxy.swift Sources/MarkdownKit/MarkdownSelectionReader.swift Tests/MarkdownKitTests/MarkdownCopyTests.swift Tests/MarkdownMathTests/ReadOnlyCopyOriginalSourceTests.swift
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro'
+git add Package.swift Sources/MarkdownPlatformView Sources/MarkdownRenderKit/RenderDisplayModel.swift Sources/OhMyMarkdown/MarkdownSelectionProxy.swift Sources/OhMyMarkdown/MarkdownSelectionReader.swift Tests/OhMyMarkdownTests/MarkdownCopyTests.swift Tests/MarkdownMathTests/ReadOnlyCopyOriginalSourceTests.swift
 git commit -m "feat: separate rendered and source copying"
 ```
 
@@ -1525,8 +1525,8 @@ Dispatch `superpowers-reviewer` over Task 9. Require exact selection boundaries,
 - Create: `Sources/MarkdownPlatformView/MarkdownAccessibility+macOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+iOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+macOS.swift`
-- Test: `Tests/MarkdownKitTests/MarkdownAccessibilityModelTests.swift`
-- Test: `Tests/MarkdownKitTests/MarkdownAccessibilityPlatformTests.swift`
+- Test: `Tests/OhMyMarkdownTests/MarkdownAccessibilityModelTests.swift`
+- Test: `Tests/OhMyMarkdownTests/MarkdownAccessibilityPlatformTests.swift`
 - Modify: `Example/ExampleUITests/ExampleUITests.swift`
 - Modify: `Tests/runtime-test-manifest.json`
 
@@ -1578,10 +1578,10 @@ swift test
 swift build -c release -Xswiftc -warnings-as-errors
 mkdir -p .artifacts
 HARDENING_RESULT_DIR="$(mktemp -d .artifacts/accessibility.XXXXXX)"
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:MarkdownKitTests/MarkdownAccessibilityPlatformTests -resultBundlePath "$HARDENING_RESULT_DIR/Accessibility-iOS18.xcresult"
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:OhMyMarkdownTests/MarkdownAccessibilityPlatformTests -resultBundlePath "$HARDENING_RESULT_DIR/Accessibility-iOS18.xcresult"
 xcodebuild test -project Example/Example.xcodeproj -scheme Example -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:ExampleUITests
 Scripts/assert-xcresult-tests.sh ios18-accessibility "$HARDENING_RESULT_DIR/Accessibility-iOS18.xcresult"
-git add Sources/MarkdownRenderKit Sources/MarkdownPlatformView Tests/MarkdownKitTests Tests/runtime-test-manifest.json Example/ExampleUITests
+git add Sources/MarkdownRenderKit Sources/MarkdownPlatformView Tests/OhMyMarkdownTests Tests/runtime-test-manifest.json Example/ExampleUITests
 git commit -m "feat: expose structured markdown accessibility"
 ```
 
@@ -1599,8 +1599,8 @@ Dispatch `superpowers-reviewer` for semantic correctness and focus stability. Re
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+iOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView+macOS.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownTableOverlay.swift`
-- Test: `Tests/MarkdownKitTests/DynamicTypeTests.swift`
-- Test: `Tests/MarkdownKitTests/AdaptiveLayoutTests.swift`
+- Test: `Tests/OhMyMarkdownTests/DynamicTypeTests.swift`
+- Test: `Tests/OhMyMarkdownTests/AdaptiveLayoutTests.swift`
 - Modify: `Example/ExampleUITests/ExampleUITests.swift`
 - Modify: `Tests/runtime-test-manifest.json`
 
@@ -1652,10 +1652,10 @@ swift test
 swift build -c release -Xswiftc -warnings-as-errors
 mkdir -p .artifacts
 HARDENING_RESULT_DIR="$(mktemp -d .artifacts/dynamic-type.XXXXXX)"
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:MarkdownKitTests/DynamicTypeTests -only-testing:MarkdownKitTests/AdaptiveLayoutTests -resultBundlePath "$HARDENING_RESULT_DIR/DynamicType-iOS18.xcresult"
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:OhMyMarkdownTests/DynamicTypeTests -only-testing:OhMyMarkdownTests/AdaptiveLayoutTests -resultBundlePath "$HARDENING_RESULT_DIR/DynamicType-iOS18.xcresult"
 xcodebuild test -project Example/Example.xcodeproj -scheme Example -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:ExampleUITests
 Scripts/assert-xcresult-tests.sh ios18-dynamic-type "$HARDENING_RESULT_DIR/DynamicType-iOS18.xcresult"
-git add Sources/MarkdownRenderKit Sources/MarkdownPlatformView Tests/MarkdownKitTests Tests/runtime-test-manifest.json Example/ExampleUITests
+git add Sources/MarkdownRenderKit Sources/MarkdownPlatformView Tests/OhMyMarkdownTests Tests/runtime-test-manifest.json Example/ExampleUITests
 git commit -m "feat: support adaptive markdown typography"
 ```
 
@@ -1696,15 +1696,15 @@ indicator.
 **Golden fixtures.** Four files (two IDs × two platforms) gained
 `defaultTabInterval` on their list-item paragraph rows. It is the only field that
 changed, their layout frames were not re-exported and still match, and
-`Tests/MarkdownKitTests/Fixtures/RenderGolden/README.md` records why.
+`Tests/OhMyMarkdownTests/Fixtures/RenderGolden/README.md` records why.
 
 **Deviations from the task's file list, deliberate:**
-- `Sources/MarkdownKit/Exports.swift` re-exports `MarkdownContentSizeCategory` and
+- `Sources/OhMyMarkdown/Exports.swift` re-exports `MarkdownContentSizeCategory` and
   `MarkdownScaledFont`; without it the new public types are unreachable from the
   umbrella module.
 - `Sources/MarkdownRenderKit/MarkdownContentSizeCategory.swift` is a new file
   rather than an addition to `RenderStyle.swift`.
-- `Tests/MarkdownKitTests/MaterializationFixture.swift` gained a
+- `Tests/OhMyMarkdownTests/MaterializationFixture.swift` gained a
   `contentSizeCategory` field so the layout tests drive the real
   prepare/materialize boundary.
 - `RenderMaterializer.swift` needed no change for attachment bounds or table
@@ -1740,7 +1740,7 @@ changed, their layout frames were not re-exported and still match, and
   square-cornered box with no horizontal padding that breaks into slabs when the
   span wraps; `<hr>` is pixel-identical to the heading rule; an h2 rule is missing
   whenever the next block has a background panel.
-- At the maximum category the h1 "MarkdownKit" breaks mid-word to a one-glyph
+- At the maximum category the h1 "OhMyMarkdown" breaks mid-word to a one-glyph
   orphan — it misses fitting by about 1% of the column. A hyphenation or
   tightening factor on the heading paragraph would absorb it; lowering the ratio
   floor would not, it would undo the hierarchy fix.
@@ -1749,7 +1749,7 @@ changed, their layout frames were not re-exported and still match, and
 - `Scripts/run-static-gates.sh` — every gate passed at `ff7df32`'s tree:
   platform-floors, image-ownership, link-activation, `swift test` (511 tests),
   `swift build -c release -Xswiftc -warnings-as-errors`, `swiftformat --lint .`.
-- `xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:MarkdownKitTests/DynamicTypeTests -only-testing:MarkdownKitTests/AdaptiveLayoutTests` — 20 tests passed, and `Scripts/assert-xcresult-tests.sh ios18-dynamic-type` passed against that bundle.
+- `xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -only-testing:OhMyMarkdownTests/DynamicTypeTests -only-testing:OhMyMarkdownTests/AdaptiveLayoutTests` — 20 tests passed, and `Scripts/assert-xcresult-tests.sh ios18-dynamic-type` passed against that bundle.
 - `xcodebuild test -project Example/Example.xcodeproj -scheme Example -only-testing:ExampleUITests` — 3 tests plus the launch measurements passed.
 - Screenshots of the whole Example render tab at `large` and
   `accessibility-extra-extra-extra-large`, light and dark, reviewed by
@@ -1836,9 +1836,9 @@ cleans of the individual `.build` module directories did not.
 - `.markdownCopyText` substitution is only valid for one-character runs, because `renderedCopyText` emits the whole value for any sub-range that touches it. The invariant is structural, not merely tested: every application goes through `attachment(...)`, which builds a one-character string, or the one-character overflow-table placeholder. `everyCopyTextRunIsExactlyOneCharacter` guards the two placeholder paths a headless test can reach; the resolved image/math/SVG paths never resolve headlessly. It still earned its place — it failed on its first run, when a fix for the load-state inconsistency had attached the key to a 6-character placeholder. Decorative text a reader *does* see — the `🖼 ` marker on an unloaded image — is dropped with `.markdownCopySkip` instead, so a copy does not change meaning depending on whether the image loaded.
 - On iOS the localized source-copy command reaches the **main menu only** (iPad and Mac Catalyst menu bar). The iPhone selection callout is presented by `UITextInteraction`, not built from this responder's `buildMenu(with:)`. The concrete consequence: on iPhone, a UIKit host with no SwiftUI wrapper and no menu of its own has **no user-reachable way to copy source** — `canPerformAction` returns true but nothing presents it. Adding a `UIEditMenuInteraction` beside the one `UITextInteraction` manages was not attempted, because a double-presented callout cannot be verified headlessly here; it belongs in the runtime-verification list. macOS has a real context menu, which now *adds* to the host's rather than replacing it.
 - `MarkdownSelectionProxy.copyMarkdownSourceToPasteboard()` is an untested seam. Both halves are covered — the result path by the copy suite, the selector's reachability by the command test — but the pasteboard write itself is not, deliberately: `ReadOnlyCopyOriginalSourceTests` records the decision not to touch the system pasteboard in tests because it is unreliable headless. What is uncovered is the weak-view nil case and the write.
-- `MarkdownCopyCommandTitle` is a mutable `@MainActor` static: safe from data races, but process-global, so two hosts in one process cannot differ. An environment entry alongside `markdownSelectionProxy` would match the house pattern. `MarkdownCopyGranularity`/`MarkdownCopyResult` also live in `MarkdownPlatformView`, so a `MarkdownKit`-only consumer must add an import to name `.blockExpanded`.
+- `MarkdownCopyCommandTitle` is a mutable `@MainActor` static: safe from data races, but process-global, so two hosts in one process cannot differ. An environment entry alongside `markdownSelectionProxy` would match the house pattern. `MarkdownCopyGranularity`/`MarkdownCopyResult` also live in `MarkdownPlatformView`, so a `OhMyMarkdown`-only consumer must add an import to name `.blockExpanded`.
 - Rendered copy joins blocks with the single `"\n"` the materializer inserts, so copying two paragraphs yields `"a\nb"` rather than a blank-line-separated pair. Plan Step 2 specifies only cell and row separators, so this was a judgement call, but it is reader-visible.
-- `Package.swift` gained `resources:` and `defaultLocalization`, so every consumer now gets a `MarkdownKit_MarkdownPlatformView` resource bundle. With the macOS context-menu change, that is the 0.1.x → 0.2.0 integration-surface list for this task.
+- `Package.swift` gained `resources:` and `defaultLocalization`, so every consumer now gets a `OhMyMarkdown_MarkdownPlatformView` resource bundle. With the macOS context-menu change, that is the 0.1.x → 0.2.0 integration-surface list for this task.
 - The parity goldens strip the three copy keys before comparing (`strippingCopyMetadata`): they change no glyph but do split runs at boundaries the fixtures never had. The goldens therefore no longer pin copy-run structure.
 - `markdownSourceForRenderedSelection` is deleted. It had become a thin forwarder to `markdownSourceCopy`, so describing it as an insulated legacy path — as both its comment and this record did — was false: it carried every change made to the new algorithm. The two parity assertions call `markdownSourceCopy` directly with the fallbacks disabled. The per-view `_copiedStringForCurrentSelection*` seams are also gone, and the assertions that rested on them drive `markdownSourceSelectionResult()`.
 - The first `xcodebuild test` of the Example scheme after `Package.swift` gained `resources:` failed every UI test with `Cannot launch simulated executable: no file found at …/Example.app`; two later runs passed unchanged. **The cause is unknown, and the log rules out the stale-install explanation first recorded here**: `ExampleTests/smokeMarkdownParsesOneHeading()` — hosted *in* `Example.app` — passed on Clone 1 in that same run, so the app was present and launchable. Only Clone 2, the UI-test runner, failed, and immediately before the first failure the log shows `IDELaunchParametersSnapshot: … DebuggerLLDB.DebuggerVersionStore.StoreError error 0` and `no debugger version`, suggesting launch-parameter resolution failed first and "no file found" is the downstream symptom. Logs: `.artifacts/task-9-example.log` (failing) and `.artifacts/task-9-example-retry.log`. It recurred once more, four fix rounds later, with a *different* signature — the UI-test **runner** was refused launch (`FBSOpenApplicationServiceErrorDomain Code=1`, `RequestDenied` from `SBMainWorkspace`) rather than the app being missing — and again passed on an unchanged retry (`.artifacts/task-9-r4-example.log`, `…-retry.log`). Five different signatures now (the fourth and fifth: the runner killed during bootstrap, and `Mach error -308 … server died` while installing it), all at simulator launch, all transient on retry: the app bundle reported missing while `ExampleTests` passed in the same run, the UI runner refused launch (`RequestDenied`), and the runner killed during bootstrap (`Early unexpected exit … signal kill`). Treat the Example UI suite as needing a retry on this host rather than as a signal about the package — but **not automatically**: a fourth failure, a 285 s hang across all four `testLaunch` variants, was a real re-entrant loop in this task's own code, and would have been dismissed by that rule. The distinguishing sign is reproducibility: the transient ones pass on an unchanged retry, the real one did not.
@@ -1850,7 +1850,7 @@ cleans of the individual `.build` module directories did not.
 
 - Deviation from this task's Step 3: the plan specifies `RenderSessionEvent.replaceLinkConfiguration(policyID:handlerID:)`. The implemented case carries no payload, because the driver is the sole owner of the live policy/handler and shipping the IDs into the session would create a second copy that can disagree with it. The session generation *is* still bumped by the mutation, as the plan requires — what deviates is the plan's "revalidate both IDs and generation immediately before activation": activation revalidates `linkConfigurationRevision` instead, a counter bumped by every link-configuration install and by nothing else. `configurationGeneration` also moves on width and style changes, so a generation-based guard rejected in-flight decisions that no replacement had invalidated.
 - `send(.replaceLinkConfiguration)` fires only when an identity differs, but when it does fire the session performs a full document reparse for state it never reads. Deliberate: the session's mutation channel has no cheaper "driver-only" lane today, identity-equal installs are already filtered out before the send, and adding a lane touches Task 4's mutation contract. If Task 12 measures reparse cost on link-configuration churn, this is the first candidate.
-- The SwiftUI representables forward the link configuration on every body evaluation, so `linkConfigurationRevision` bumps on every update and a body evaluation landing inside an in-flight decision voids that tap, with no feedback to the reader. This is the deliberate fail-closed side of the round-3 Critical (suppressing the forward on equal identities left a superseded policy deciding). The window is one executor hop: measured over 200 activations, 30 µs median, 47 µs p95, 197 µs max. Comparing that to a 120 Hz cadence of 8.3 ms would understate it, because the two events are **not** independent — a streaming chunk or a scroll updates the body precisely when the main actor is free, which is exactly the window; `MarkdownStreamingText` under active streaming is the exposed case. Reviewer-proposed alternative, deliberately not taken in Task 8: on a revision mismatch, re-decide against the *current* configuration with a bounded retry instead of returning. It drops nothing and stays fail-closed (a tightened policy simply rejects on the retry), but it changes activation semantics that this task's plan specifies and that two tests pin — `replacementDuringEvaluationPreventsTheOldDecisionFromActivating` and `anInFlightDecisionDoesNotSurviveAnEqualIdentityReplacement`, both in `Tests/MarkdownKitTests/MarkdownLinkPolicyTests.swift`, which a retry would break by opening through the current handler. Whichever task takes this must rewrite those two first. Note also that the *drop rate* is unmeasured: the 30 µs figure is decision latency, not observed dropped activations, so measure before changing semantics.
+- The SwiftUI representables forward the link configuration on every body evaluation, so `linkConfigurationRevision` bumps on every update and a body evaluation landing inside an in-flight decision voids that tap, with no feedback to the reader. This is the deliberate fail-closed side of the round-3 Critical (suppressing the forward on equal identities left a superseded policy deciding). The window is one executor hop: measured over 200 activations, 30 µs median, 47 µs p95, 197 µs max. Comparing that to a 120 Hz cadence of 8.3 ms would understate it, because the two events are **not** independent — a streaming chunk or a scroll updates the body precisely when the main actor is free, which is exactly the window; `MarkdownStreamingText` under active streaming is the exposed case. Reviewer-proposed alternative, deliberately not taken in Task 8: on a revision mismatch, re-decide against the *current* configuration with a bounded retry instead of returning. It drops nothing and stays fail-closed (a tightened policy simply rejects on the retry), but it changes activation semantics that this task's plan specifies and that two tests pin — `replacementDuringEvaluationPreventsTheOldDecisionFromActivating` and `anInFlightDecisionDoesNotSurviveAnEqualIdentityReplacement`, both in `Tests/OhMyMarkdownTests/MarkdownLinkPolicyTests.swift`, which a retry would break by opening through the current handler. Whichever task takes this must rewrite those two first. Note also that the *drop rate* is unmeasured: the 30 µs figure is decision latency, not observed dropped activations, so measure before changing semantics.
 - Clearing the environment entry now reverts a view to `.platformDefault`, on the non-nil→nil edge only. Round 5 found the third shape of the round-3 fail-open here — a host writing `trusted ? config : nil` against one stable view identity kept the permissive configuration it had installed earlier (measured: the revoked policy opened a `myapp://` link a second time). Edge-triggered rather than `?? .platformDefault`, so a view that never had a configuration does not re-install one on every body evaluation and take on the revision-bump window above. Pinned by `clearingTheConfigurationRevertsTheViewToTheWebOnlyDefault`.
 - `MarkdownLabelView.linkConfiguration` is non-optional, so a UIKit/AppKit host has no "clear" and revokes by assigning `.platformDefault`; only the SwiftUI environment entry reverts by itself. The `package convenience init(frame:driver:)` also installs a driver without seeding it from the view's configuration, so the two can disagree from birth — test-reachable only, fails closed, and it is the "second source of truth" shape the payload-free mutation case exists to avoid.
 - `MarkdownLinkRequest.configurationGeneration` is carried for a policy's own use and is **not** revalidated; the public doc previously promised the opposite. Activation gates on `linkConfigurationRevision` alone, so a host policy must not assume that a width change, a style change or a source replacement voids an in-flight tap.
@@ -1864,7 +1864,7 @@ cleans of the individual `.build` module directories did not.
 - Pre-existing platform behaviours this task did not change, confirmed non-blocking in review: a double tap on iOS activates twice, and on macOS `mouseUp` after a drag-selection that ends inside a link activates it. Rejected links keep their link styling and stay readable, which is the specified behaviour, not a defect.
 
 **Files:**
-- Modify: remaining files under `Tests/MarkdownKitTests` and `Tests/MarkdownMathTests` containing `Task.sleep`
+- Modify: remaining files under `Tests/OhMyMarkdownTests` and `Tests/MarkdownMathTests` containing `Task.sleep`
 - Modify: `Example/Sources/ContentView.swift`
 - Modify: `README.md`
 - Modify: `CHANGELOG.md`
@@ -1908,9 +1908,9 @@ swift test
 swift build -c release -Xswiftc -warnings-as-errors
 mkdir -p .artifacts
 HARDENING_RESULT_DIR="$(mktemp -d .artifacts/final-ios18.XXXXXX)"
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -resultBundlePath "$HARDENING_RESULT_DIR/MarkdownKit-iOS18-final.xcresult"
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -resultBundlePath "$HARDENING_RESULT_DIR/OhMyMarkdown-iOS18-final.xcresult"
 xcodebuild test -project Example/Example.xcodeproj -scheme Example -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' -resultBundlePath "$HARDENING_RESULT_DIR/Example-iOS18-final.xcresult"
-Scripts/assert-xcresult-tests.sh ios18-final "$HARDENING_RESULT_DIR/MarkdownKit-iOS18-final.xcresult" "$HARDENING_RESULT_DIR/Example-iOS18-final.xcresult"
+Scripts/assert-xcresult-tests.sh ios18-final "$HARDENING_RESULT_DIR/OhMyMarkdown-iOS18-final.xcresult" "$HARDENING_RESULT_DIR/Example-iOS18-final.xcresult"
 Scripts/check-unchecked-sendable.sh
 Scripts/check-validated-image-construction.sh
 test -z "$(rg -n '\bLegacyResourceOwner\b' Sources)"
@@ -1929,8 +1929,8 @@ swift test 2>&1 | tee macos15-swift-test.log
 swift build -c release -Xswiftc -warnings-as-errors 2>&1 | tee macos15-release.log
 mkdir -p .artifacts
 HARDENING_RESULT_DIR="$(mktemp -d .artifacts/final-macos15.XXXXXX)"
-xcodebuild test -scheme MarkdownKit-Package -destination 'platform=macOS' -resultBundlePath "$HARDENING_RESULT_DIR/MarkdownKit-macOS15-final.xcresult"
-Scripts/assert-xcresult-tests.sh macos15 "$HARDENING_RESULT_DIR/MarkdownKit-macOS15-final.xcresult"
+xcodebuild test -scheme OhMyMarkdown-Package -destination 'platform=macOS' -resultBundlePath "$HARDENING_RESULT_DIR/OhMyMarkdown-macOS15-final.xcresult"
+Scripts/assert-xcresult-tests.sh macos15 "$HARDENING_RESULT_DIR/OhMyMarkdown-macOS15-final.xcresult"
 ```
 
 `docs/release/0.2.0-runtime-evidence.md` records the artifact names and SHA-256 hashes. Missing OS assertions, logs, hashes, or a nonzero command makes the release gate fail.
@@ -1943,7 +1943,7 @@ On the actual supported runtimes, record VoiceOver traversal/speech, Voice Contr
 
 ```bash
 git add Sources Tests Example README.md CHANGELOG.md CONTRIBUTING.md .github docs/release
-git commit -m "docs: prepare MarkdownKit 0.2 release"
+git commit -m "docs: prepare OhMyMarkdown 0.2 release"
 ```
 
 - [ ] **Step 7: Assert committed evidence and a clean tree**

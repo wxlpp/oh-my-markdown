@@ -6,7 +6,7 @@
 
 ## 1. 目标与范围
 
-为 MarkdownKit 增加 LaTeX 数学公式渲染能力。
+为 OhMyMarkdown 增加 LaTeX 数学公式渲染能力。
 
 **支持范围（已确认）**
 
@@ -37,7 +37,7 @@
 MarkdownCore         新增 IR 节点 + MathScanner（零新依赖）
 MarkdownRenderKit    新增占位/缓存 + MathRendering 协议（零新依赖，仍平台无关）
 MarkdownPlatformView 新增异步加载循环，镜像图片那套（零新依赖）
-MarkdownKit          SwiftUI 透出 .mathRenderer(_:) 修饰符（零新依赖）
+OhMyMarkdown          SwiftUI 透出 .mathRenderer(_:) 修饰符（零新依赖）
 MarkdownMath  [新]   MathJaxSwift + SwiftDraw，实现 MathRendering（独立 product）
 ```
 
@@ -100,7 +100,7 @@ case mathBlock(latex: String)   // 块级：$$…$$、\[…\]
 
 ```swift
 extension NSAttributedString.Key {
-    static let markdownMathSource = NSAttributedString.Key("MarkdownKit.mathSource")
+    static let markdownMathSource = NSAttributedString.Key("OhMyMarkdown.mathSource")
     // 编码 latex + display 标志，对标 .markdownImageSource
 }
 
@@ -180,7 +180,7 @@ RenderKit 只定义协议与类型，不依赖任何 MathJax 实现。
 - 注意：LaTeX 语法错误**不算失败**——MathJax 返回错误 SVG，渲染成功并正常进 `mathCache`（对应已确认的「展示 MathJax 错误输出」）
 - 负缓存键即 `MathCacheKey`：`pointSize` / `colorHex` / `rasterScale` / `rendererGeneration` 任一变化 ⇒ 新 key ⇒ 给一次重新尝试的机会（renderer 切换/恢复时负缓存随 generation 失效）
 
-## 7. MarkdownKit（SwiftUI）
+## 7. OhMyMarkdown（SwiftUI）
 
 新增 `.mathRenderer(_:)` 修饰符，消费者显式 opt-in 注入 `MathJaxRenderer`。
 

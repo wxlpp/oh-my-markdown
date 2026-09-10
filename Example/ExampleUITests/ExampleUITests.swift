@@ -10,7 +10,7 @@ final class ExampleUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        XCTAssertTrue(app.otherElements["markdownkit.example.root"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.otherElements["oh-my-markdown.example.root"].waitForExistence(timeout: 10))
     }
 
     /// The rendered document must reach the accessibility tree as **many**
@@ -26,7 +26,7 @@ final class ExampleUITests: XCTestCase {
     func testRenderedMarkdownIsTraversedElementByElement() {
         let app = XCUIApplication()
         app.launch()
-        XCTAssertTrue(app.otherElements["markdownkit.example.root"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.otherElements["oh-my-markdown.example.root"].waitForExistence(timeout: 15))
 
         let texts = app.staticTexts
         XCTAssertTrue(texts.element(boundBy: 0).waitForExistence(timeout: 10))
@@ -61,13 +61,13 @@ final class ExampleUITests: XCTestCase {
             let app = XCUIApplication()
             app.launchArguments = ["-UIPreferredContentSizeCategoryName", category]
             app.launch()
-            XCTAssertTrue(app.otherElements["markdownkit.example.root"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.otherElements["oh-my-markdown.example.root"].waitForExistence(timeout: 10))
             let document = app.textViews.element(boundBy: 0)
             XCTAssertTrue(document.waitForExistence(timeout: 10))
             // The render tab holds the only text view today. Checking what it
             // says keeps the measurement honest if the editor's ever joins it.
             XCTAssertTrue(
-                (document.value as? String ?? "").hasPrefix("MarkdownKit"),
+                (document.value as? String ?? "").hasPrefix("oh-my-markdown"),
                 "measured something other than the rendered document"
             )
             return document.frame.height

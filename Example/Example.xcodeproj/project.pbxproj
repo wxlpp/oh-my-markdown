@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		D99B7A212CA4E49A0010B87C /* MarkdownKit in Frameworks */ = {isa = PBXBuildFile; productRef = D99B7A202CA4E49A0010B87C /* MarkdownKit */; };
+		D99B7A212CA4E49A0010B87C /* OhMyMarkdown in Frameworks */ = {isa = PBXBuildFile; productRef = D99B7A202CA4E49A0010B87C /* OhMyMarkdown */; };
 		D99B7A232CA4E49A0010B87C /* MarkdownMath in Frameworks */ = {isa = PBXBuildFile; productRef = D99B7A222CA4E49A0010B87C /* MarkdownMath */; };
 		D99B7A252CA4E49A0010B87C /* MarkdownCore in Frameworks */ = {isa = PBXBuildFile; productRef = D99B7A242CA4E49A0010B87C /* MarkdownCore */; };
 /* End PBXBuildFile section */
@@ -58,7 +58,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D99B7A212CA4E49A0010B87C /* MarkdownKit in Frameworks */,
+				D99B7A212CA4E49A0010B87C /* OhMyMarkdown in Frameworks */,
 				D99B7A232CA4E49A0010B87C /* MarkdownMath in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -121,7 +121,7 @@
 			);
 			name = Example;
 			packageProductDependencies = (
-				D99B7A202CA4E49A0010B87C /* MarkdownKit */,
+				D99B7A202CA4E49A0010B87C /* OhMyMarkdown */,
 				D99B7A222CA4E49A0010B87C /* MarkdownMath */,
 			);
 			productName = Example;
@@ -606,9 +606,9 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		D99B7A202CA4E49A0010B87C /* MarkdownKit */ = {
+		D99B7A202CA4E49A0010B87C /* OhMyMarkdown */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = MarkdownKit;
+			productName = OhMyMarkdown;
 		};
 		D99B7A222CA4E49A0010B87C /* MarkdownMath */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -1,4 +1,4 @@
-# MarkdownKit Library Hardening Design
+# OhMyMarkdown Library Hardening Design
 
 **Date:** 2026-09-07
 **Target release:** 0.2.0
@@ -6,7 +6,7 @@
 
 ## 1. Context
 
-MarkdownKit has a strong behavioral regression suite, but its current architecture leaves production risks around accessibility, Dynamic Type, image loading, task cancellation, streaming complexity, concurrency contracts, platform duplication, and delivery automation.
+OhMyMarkdown has a strong behavioral regression suite, but its current architecture leaves production risks around accessibility, Dynamic Type, image loading, task cancellation, streaming complexity, concurrency contracts, platform duplication, and delivery automation.
 
 This project addresses all findings from the 2026-09-07 repository audit while preserving the existing Markdown IR and the TextKit 2 rendering behavior already covered by tests. Breaking public API changes are allowed for the 0.2.0 release.
 
@@ -28,7 +28,7 @@ This project addresses all findings from the 2026-09-07 repository audit while p
 - Adding WYSIWYG editing, collaborative editing, or table-editing UI.
 - Adding disk image caching, offline persistence, or a general networking framework.
 - Expanding MathJax package coverage beyond the currently documented core feature set.
-- Guaranteeing source compatibility with MarkdownKit 0.1.x.
+- Guaranteeing source compatibility with OhMyMarkdown 0.1.x.
 
 ## 4. Architecture
 
@@ -38,7 +38,7 @@ This project addresses all findings from the 2026-09-07 repository audit while p
 
 `MarkdownCore` remains the platform-independent Markdown IR and parser layer. It will add:
 
-- cooperative cancellation in MarkdownKit-owned scanner, mapping, and transformation loops;
+- cooperative cancellation in OhMyMarkdown-owned scanner, mapping, and transformation loops;
 - an explicit non-cancellable-region contract around synchronous swift-markdown/cmark parsing;
 - incremental scanner state sufficient to resume math and code-region analysis from a proven-safe boundary;
 - precise source-map data for rendered selections where the parser can provide it;
@@ -65,7 +65,7 @@ Platform types that cannot be proven `Sendable` stay on the main actor. `@unchec
 - UIKit and AppKit views retain only TextKit setup, layout/drawing, native selection/input plumbing, platform link opening, and accessibility bridges.
 - Shared caches are separate dependencies and contain completed results only. In-flight resource-request ownership and deduplication stay inside a session. A cache may outlive a view. Cooperative work started for a view must not outlive it; the process parse executor described below is the sole explicit exception for an already-entered synchronous cmark call.
 
-#### MarkdownKit
+#### OhMyMarkdown
 
 The SwiftUI module continues to expose `MarkdownText`, `MarkdownStreamingText`, `MarkdownEditor`, style modifiers, and renderer modifiers. It additionally exposes configuration for image loading, link policy, load-error reporting, and Markdown-source copying.
 
@@ -86,7 +86,7 @@ View/session teardown tombstones its token in the executor-facing result registr
 ## 5. Data flow and concurrency
 
 1. A static or streaming source update enters `MarkdownRenderSession` and receives a monotonically increasing revision.
-2. Replacing a source cancels MarkdownKit-owned cooperative phases and replaces the pending input with the newest revision. Appending coalesces pending chunks.
+2. Replacing a source cancels OhMyMarkdown-owned cooperative phases and replaces the pending input with the newest revision. Appending coalesces pending chunks.
 3. Cancellable parsing preparation executes away from `MainActor` through an explicitly concurrent async function or structured child task. It does not use an unowned `Task.detached`. Entry into synchronous cmark is admitted by the bounded process-wide `ParseExecutor`.
 4. Long scanner, substitution, mapping, and rendering-preparation loops check cancellation at bounded intervals.
 5. `Markdown.Document(parsing:)` is a synchronous cmark call with no cancellation hook. It is treated as a non-cancellable region. The executor permits at most two active cmark calls process-wide and at most one per session token; updates arriving during one are coalesced into that session token's single latest pending input.
@@ -126,7 +126,7 @@ If state is absent, invalid, or inconsistent with the source prefix, the parser 
 
 Regular expressions and other immutable scanners are compiled once. Performance tests will cover 10 KB, 100 KB, and 1 MB documents, with plain Markdown and delimiter-heavy fixtures.
 
-The primary acceptance metric is deterministic work, not wall-clock time. Internal test instrumentation records all MarkdownKit-owned source-proportional work separately: scanner bytes, source-map bytes, UTF-8 materialization/copy and substitution bytes, bytes submitted to cmark, and rendering-preparation bytes. Moving a full-source pass into an uncounted phase is not permitted.
+The primary acceptance metric is deterministic work, not wall-clock time. Internal test instrumentation records all OhMyMarkdown-owned source-proportional work separately: scanner bytes, source-map bytes, UTF-8 materialization/copy and substitution bytes, bytes submitted to cmark, and rendering-preparation bytes. Moving a full-source pass into an uncounted phase is not permitted.
 
 For a fixed 1 KB chunk sequence whose constructs remain incrementally safe, cumulative work must stay within these budgets relative to `N = initialBytes + appendedBytes`: scanner `≤ 3N`, mapping `≤ 3N`, materialization/copy/substitution `≤ 4N`, cmark input `≤ 4N`, rendering preparation `≤ 4N`, and all counted phases combined `≤ 16N`. Fixtures that intentionally trigger a documented non-local full fallback are measured and reported separately by phase. Wall-clock benchmarks use one warm-up plus five measured runs and compare the median; they are diagnostic and do not replace the work assertions.
 
@@ -312,7 +312,7 @@ GitHub Actions will run:
 1. SwiftFormat lint with zero violations.
 2. macOS 15 debug tests.
 3. macOS 15 release build with warnings as errors.
-4. iOS 18 Simulator build and test for `MarkdownKit` and `MarkdownMath`.
+4. iOS 18 Simulator build and test for `OhMyMarkdown` and `MarkdownMath`.
 5. Example application build and UI smoke tests as a release gate. When GitHub-hosted runtime support is unavailable, the documented self-hosted/local/VM run from §12 is archived instead of skipping the gate.
 
 The existing 875 SwiftFormat findings will be fixed in a dedicated mechanical change before enabling the zero-violation gate. Empty template tests will be replaced or removed.

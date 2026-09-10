@@ -396,7 +396,7 @@ public struct RenderStyle {
         for value in [spacing.paragraph, spacing.block, spacing.codeInsets, spacing.quoteIndent, spacing.listIndent, spacing.chromeScale, Double(self.mathScale)] {
             identity += field(String(value == 0 ? 0 : value))
         }
-        let id = configurationID ?? (usesPreferredMetrics ? .semantic(namespace: "MarkdownKit.default:" + identity, version: 1) : .uniqueInstance())
+        let id = configurationID ?? (usesPreferredMetrics ? .semantic(namespace: "OhMyMarkdown.default:" + identity, version: 1) : .uniqueInstance())
         return RenderConfigurationSnapshot(id: id, typography: typography, colors: colors, spacing: spacing, generation: generation, mathScale: Double(self.mathScale))
     }
 }

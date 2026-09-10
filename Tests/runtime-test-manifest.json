@@ -1,7 +1,7 @@
 {
   "ios18": {
     "requiredTargets": [
-      "MarkdownKitTests",
+      "OhMyMarkdownTests",
       "MarkdownMathTests",
       "ExampleTests",
       "ExampleUITests"
@@ -17,7 +17,7 @@
   },
   "macos15": {
     "requiredTargets": [
-      "MarkdownKitTests",
+      "OhMyMarkdownTests",
       "MarkdownMathTests"
     ],
     "requiredTests": [
@@ -27,7 +27,7 @@
   },
   "ios18-dynamic-type": {
     "requiredTargets": [
-      "MarkdownKitTests"
+      "OhMyMarkdownTests"
     ],
     "requiredTests": [
       "defaultMetricsGrowMonotonicallyWithTheCategory(role:)",
@@ -44,7 +44,7 @@
   },
   "ios18-accessibility": {
     "requiredTargets": [
-      "MarkdownKitTests"
+      "OhMyMarkdownTests"
     ],
     "requiredTests": [
       "theExposedLeafSequenceIsTheDocumentReadInOrder()",

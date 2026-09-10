@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让 MarkdownKit 渲染 `$…$` / `$$…$$` / `\(…\)` / `\[…\]` 四种 LaTeX 数学公式（只读视图渲染、编辑器仅 token 高亮），渲染后端用 MathJaxSwift+SwiftDraw 收敛在独立可选产品 `MarkdownMath`。
+**Goal:** 让 OhMyMarkdown 渲染 `$…$` / `$$…$$` / `\(…\)` / `\[…\]` 四种 LaTeX 数学公式（只读视图渲染、编辑器仅 token 高亮），渲染后端用 MathJaxSwift+SwiftDraw 收敛在独立可选产品 `MarkdownMath`。
 
 **Architecture:** `MarkdownCore` 在喂 swift-markdown 前做源码层数学预扫描（哨兵替换 + 防伪造转义），解析后就地、保留容器结构地回填 `InlineNode.math` / `BlockNode.mathBlock`。`MarkdownRenderKit` 定义 `MathRendering` 注入协议与缓存（零依赖、平台无关），未命中走占位文本 + 自定义属性。`MarkdownPlatformView` 用平台无关的 `MathLoadCoordinator` 异步驱动渲染、负缓存、失效。`MarkdownMath` 实现协议（MathJax→SVG→SwiftDraw 光栅化）。
 
@@ -19,15 +19,15 @@
 - `Sources/MarkdownCore/MathSentinel.swift` — 哨兵编解码：保留标量、预存在转义、替换、还原
 - `Sources/MarkdownRenderKit/MathRendering.swift` — `MathRenderOutcome` / `MathRenderedGlyph` / `MathCacheKey` / `MathRendering` 协议 / 有效字号工具 / `.markdownMathSource`
 - `Sources/MarkdownPlatformView/MathLoadCoordinator.swift` — 平台无关的异步加载/缓存/负缓存/失效协调器
-- `Sources/MarkdownKit/MathRendererModifier.swift` — SwiftUI `.mathRenderer(_:)`
+- `Sources/OhMyMarkdown/MathRendererModifier.swift` — SwiftUI `.mathRenderer(_:)`
 - `Sources/MarkdownMath/SVGRasterizer.swift` — SVG 字符串 → `PlatformImage` + 基线（颜色注入、ex/viewBox/vertical-align 解析、SwiftDraw）
 - `Sources/MarkdownMath/MathJaxRenderer.swift` — `MathJaxRenderer: MathRendering`
-- `Tests/MarkdownKitTests/MathScannerTests.swift`
-- `Tests/MarkdownKitTests/MathSentinelTests.swift`
-- `Tests/MarkdownKitTests/MathParsingTests.swift`
-- `Tests/MarkdownKitTests/MathRenderingTests.swift`
-- `Tests/MarkdownKitTests/MathLoadCoordinatorTests.swift`
-- `Tests/MarkdownKitTests/MathEditorHighlightTests.swift`
+- `Tests/OhMyMarkdownTests/MathScannerTests.swift`
+- `Tests/OhMyMarkdownTests/MathSentinelTests.swift`
+- `Tests/OhMyMarkdownTests/MathParsingTests.swift`
+- `Tests/OhMyMarkdownTests/MathRenderingTests.swift`
+- `Tests/OhMyMarkdownTests/MathLoadCoordinatorTests.swift`
+- `Tests/OhMyMarkdownTests/MathEditorHighlightTests.swift`
 - `Tests/MarkdownMathTests/SVGRasterizerTests.swift`
 - `Tests/MarkdownMathTests/MathJaxRendererTests.swift`
 
@@ -59,7 +59,7 @@
 .package(url: "https://github.com/swhitty/SwiftDraw.git", branch: "main"),
 ```
 
-`targets` 数组追加（放在 `MarkdownKit` target 之后、`testTarget` 之前）：
+`targets` 数组追加（放在 `OhMyMarkdown` target 之后、`testTarget` 之前）：
 
 ```swift
 .target(
@@ -144,11 +144,11 @@ git commit -m "feat(math): 加 MathJaxSwift+SwiftDraw 依赖与 MarkdownMath 产
 **Files:**
 - Modify: `Sources/MarkdownCore/InlineNode.swift`
 - Modify: `Sources/MarkdownCore/BlockNode.swift`
-- Test: `Tests/MarkdownKitTests/MathParsingTests.swift`
+- Test: `Tests/OhMyMarkdownTests/MathParsingTests.swift`
 
 - [ ] **Step 1: 写失败测试**
 
-Create `Tests/MarkdownKitTests/MathParsingTests.swift`:
+Create `Tests/OhMyMarkdownTests/MathParsingTests.swift`:
 
 ```swift
 import MarkdownCore
@@ -195,7 +195,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/MarkdownCore/InlineNode.swift Sources/MarkdownCore/BlockNode.swift Tests/MarkdownKitTests/MathParsingTests.swift
+git add Sources/MarkdownCore/InlineNode.swift Sources/MarkdownCore/BlockNode.swift Tests/OhMyMarkdownTests/MathParsingTests.swift
 git commit -m "feat(core): 新增 InlineNode.math / BlockNode.mathBlock IR 节点"
 ```
 
@@ -207,11 +207,11 @@ git commit -m "feat(core): 新增 InlineNode.math / BlockNode.mathBlock IR 节�
 
 **Files:**
 - Create: `Sources/MarkdownCore/MathScanner.swift`
-- Test: `Tests/MarkdownKitTests/MathScannerTests.swift`
+- Test: `Tests/OhMyMarkdownTests/MathScannerTests.swift`
 
 - [ ] **Step 1: 写失败测试**
 
-Create `Tests/MarkdownKitTests/MathScannerTests.swift`:
+Create `Tests/OhMyMarkdownTests/MathScannerTests.swift`:
 
 ```swift
 @testable import MarkdownCore
@@ -472,7 +472,7 @@ Expected: PASS（8 个用例全绿）。若某用例红，按 spec §4.2 规则�
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/MarkdownCore/MathScanner.swift Tests/MarkdownKitTests/MathScannerTests.swift
+git add Sources/MarkdownCore/MathScanner.swift Tests/OhMyMarkdownTests/MathScannerTests.swift
 git commit -m "feat(core): MathScanner 源码层四定界符扫描（转义/代码区/配对/分类）"
 ```
 
@@ -484,11 +484,11 @@ git commit -m "feat(core): MathScanner 源码层四定界符扫描（转义/代�
 
 **Files:**
 - Create: `Sources/MarkdownCore/MathSentinel.swift`
-- Test: `Tests/MarkdownKitTests/MathSentinelTests.swift`
+- Test: `Tests/OhMyMarkdownTests/MathSentinelTests.swift`
 
 - [ ] **Step 1: 写失败测试**
 
-Create `Tests/MarkdownKitTests/MathSentinelTests.swift`:
+Create `Tests/OhMyMarkdownTests/MathSentinelTests.swift`:
 
 ```swift
 @testable import MarkdownCore
@@ -653,7 +653,7 @@ Expected: PASS。若 `lookalikeNotAnchor` 红，确认 `escapeReservedScalar` �
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/MarkdownCore/MathSentinel.swift Tests/MarkdownKitTests/MathSentinelTests.swift
+git add Sources/MarkdownCore/MathSentinel.swift Tests/OhMyMarkdownTests/MathSentinelTests.swift
 git commit -m "feat(core): MathSentinel 防伪造哨兵编解码（保留标量+转义+旁路表）"
 ```
 
@@ -668,11 +668,11 @@ spec §4.2 步骤 3-4。
 **Files:**
 - Modify: `Sources/MarkdownCore/DocumentParser.swift`
 - Modify: `Sources/MarkdownCore/MathScanner.swift`（仅当上述 (b) 需要时）
-- Test: `Tests/MarkdownKitTests/MathParsingTests.swift`（追加）
+- Test: `Tests/OhMyMarkdownTests/MathParsingTests.swift`（追加）
 
 - [ ] **Step 1: 追加失败测试**
 
-在 `Tests/MarkdownKitTests/MathParsingTests.swift` 末尾追加：
+在 `Tests/OhMyMarkdownTests/MathParsingTests.swift` 末尾追加：
 
 ```swift
 @Suite("Math parsing integration")
@@ -915,7 +915,7 @@ Expected: PASS（既有指纹/增量测试不回归）。
 - [ ] **Step 7: Commit**
 
 ```bash
-git add Sources/MarkdownCore/DocumentParser.swift Tests/MarkdownKitTests/MathParsingTests.swift
+git add Sources/MarkdownCore/DocumentParser.swift Tests/OhMyMarkdownTests/MathParsingTests.swift
 git commit -m "feat(core): 预扫描+就地容器保留回填，块级公式不上提、表格降级行内"
 ```
 
@@ -927,7 +927,7 @@ spec §4.3、§11.4。开界符在被保留 prefix、闭界符在追加文本时
 
 **Files:**
 - Modify: `Sources/MarkdownCore/DocumentParser.swift`
-- Test: `Tests/MarkdownKitTests/MathParsingTests.swift`（追加）
+- Test: `Tests/OhMyMarkdownTests/MathParsingTests.swift`（追加）
 
 - [ ] **Step 1: 追加失败测试**
 
@@ -1038,7 +1038,7 @@ Expected: PASS（无公式时 `previousSourceHasOpenMathDelimiter` 返回 false�
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/MarkdownCore/DocumentParser.swift Sources/MarkdownCore/MathScanner.swift Tests/MarkdownKitTests/MathParsingTests.swift
+git add Sources/MarkdownCore/DocumentParser.swift Sources/MarkdownCore/MathScanner.swift Tests/OhMyMarkdownTests/MathParsingTests.swift
 git commit -m "feat(core): parsingAppend 数学感知边界，跨保留块公式全量回退"
 ```
 
@@ -1050,11 +1050,11 @@ spec §5.1、§5.3。
 
 **Files:**
 - Create: `Sources/MarkdownRenderKit/MathRendering.swift`
-- Test: `Tests/MarkdownKitTests/MathRenderingTests.swift`
+- Test: `Tests/OhMyMarkdownTests/MathRenderingTests.swift`
 
 - [ ] **Step 1: 写失败测试**
 
-Create `Tests/MarkdownKitTests/MathRenderingTests.swift`:
+Create `Tests/OhMyMarkdownTests/MathRenderingTests.swift`:
 
 ```swift
 import MarkdownRenderKit
@@ -1103,7 +1103,7 @@ import AppKit
 
 extension NSAttributedString.Key {
     /// 未渲染数学占位标记，载荷为 "<display 0|1>\u{1F}<latex>"，对标 .markdownImageSource。
-    public static let markdownMathSource = NSAttributedString.Key("MarkdownKit.mathSource")
+    public static let markdownMathSource = NSAttributedString.Key("OhMyMarkdown.mathSource")
 }
 
 /// 渲染好的公式字形。
@@ -1178,7 +1178,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/MarkdownRenderKit/MathRendering.swift Tests/MarkdownKitTests/MathRenderingTests.swift
+git add Sources/MarkdownRenderKit/MathRendering.swift Tests/OhMyMarkdownTests/MathRenderingTests.swift
 git commit -m "feat(renderkit): MathRendering 协议、MathRenderOutcome、MathCacheKey、有效字号契约"
 ```
 
@@ -1190,7 +1190,7 @@ spec §5.2。命中缓存→attachment+基线；未命中→占位文本+属性�
 
 **Files:**
 - Modify: `Sources/MarkdownRenderKit/AttributedStringRenderer.swift`
-- Test: `Tests/MarkdownKitTests/MathRenderingTests.swift`（追加）
+- Test: `Tests/OhMyMarkdownTests/MathRenderingTests.swift`（追加）
 
 - [ ] **Step 1: 追加失败测试**
 
@@ -1346,7 +1346,7 @@ Expected: PASS（既有渲染行为不回归）。
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/MarkdownRenderKit/AttributedStringRenderer.swift Tests/MarkdownKitTests/MathRenderingTests.swift
+git add Sources/MarkdownRenderKit/AttributedStringRenderer.swift Tests/OhMyMarkdownTests/MathRenderingTests.swift
 git commit -m "feat(renderkit): 渲染 .math/.mathBlock，命中出 attachment、未命中出占位"
 ```
 
@@ -1356,12 +1356,12 @@ git commit -m "feat(renderkit): 渲染 .math/.mathBlock，命中出 attachment�
 
 spec §9。
 
-> ⚠️ **Task 8 评审协调：** Task 8 已提前在 `RenderStyle` 加入 `mathScale: CGFloat = 1.0` 与 `mathColorOverride: PlatformColor?`（带默认值），并已在 `isSemanticallyEqual` 中比较这两者、把 `Tests/MarkdownKitTests/MarkdownRenderKitTests.swift` 里「覆盖每个存储属性」的属性计数守卫从 20 → 22。**本任务不得重复添加这两个字段**，只新增 `mathTokenColor`；并相应：在 `isSemanticallyEqual` 增加对 `mathTokenColor` 的比较、把属性计数守卫 22 → 23。
+> ⚠️ **Task 8 评审协调：** Task 8 已提前在 `RenderStyle` 加入 `mathScale: CGFloat = 1.0` 与 `mathColorOverride: PlatformColor?`（带默认值），并已在 `isSemanticallyEqual` 中比较这两者、把 `Tests/OhMyMarkdownTests/MarkdownRenderKitTests.swift` 里「覆盖每个存储属性」的属性计数守卫从 20 → 22。**本任务不得重复添加这两个字段**，只新增 `mathTokenColor`；并相应：在 `isSemanticallyEqual` 增加对 `mathTokenColor` 的比较、把属性计数守卫 22 → 23。
 
 **Files:**
 - Modify: `Sources/MarkdownRenderKit/RenderStyle.swift`
-- Modify: `Tests/MarkdownKitTests/MarkdownRenderKitTests.swift`（属性计数守卫 22→23）
-- Test: `Tests/MarkdownKitTests/MathRenderingTests.swift`（追加）
+- Modify: `Tests/OhMyMarkdownTests/MarkdownRenderKitTests.swift`（属性计数守卫 22→23）
+- Test: `Tests/OhMyMarkdownTests/MathRenderingTests.swift`（追加）
 
 - [ ] **Step 1: 追加失败测试**
 
@@ -1402,7 +1402,7 @@ Expected: 编译失败，`value of type 'RenderStyle' has no member 'mathTokenCo
 
 - [ ] **Step 4: 同步 isSemanticallyEqual 与属性计数守卫**
 
-在 `RenderStyle.isSemanticallyEqual` 中，紧随已有的 `mathScale`/`mathColorOverride` 比较，增加对 `mathTokenColor` 的比较（与现有 `PlatformColor` 比较风格一致，如 `lhs.mathTokenColor.isEqual(rhs.mathTokenColor)` 或代码库既有等值写法）。在 `Tests/MarkdownKitTests/MarkdownRenderKitTests.swift` 的「覆盖每个存储属性」守卫里，把期望属性数 **22 → 23**（连同其注释一并更新）。
+在 `RenderStyle.isSemanticallyEqual` 中，紧随已有的 `mathScale`/`mathColorOverride` 比较，增加对 `mathTokenColor` 的比较（与现有 `PlatformColor` 比较风格一致，如 `lhs.mathTokenColor.isEqual(rhs.mathTokenColor)` 或代码库既有等值写法）。在 `Tests/OhMyMarkdownTests/MarkdownRenderKitTests.swift` 的「覆盖每个存储属性」守卫里，把期望属性数 **22 → 23**（连同其注释一并更新）。
 
 - [ ] **Step 5: 运行验证通过**
 
@@ -1417,7 +1417,7 @@ Expected: 退出码 0；全量绿、零回归。
 - [ ] **Step 7: Commit**
 
 ```bash
-git add Sources/MarkdownRenderKit/RenderStyle.swift Tests/MarkdownKitTests/MarkdownRenderKitTests.swift Tests/MarkdownKitTests/MathRenderingTests.swift
+git add Sources/MarkdownRenderKit/RenderStyle.swift Tests/OhMyMarkdownTests/MarkdownRenderKitTests.swift Tests/OhMyMarkdownTests/MathRenderingTests.swift
 git commit -m "feat(renderkit): RenderStyle 新增 mathTokenColor（mathScale/Override 已于 Task 8 加入）"
 ```
 
@@ -1429,11 +1429,11 @@ spec §6、§6.1。这是平台层逻辑核心，纯逻辑、可在 macOS 跑测
 
 **Files:**
 - Create: `Sources/MarkdownPlatformView/MathLoadCoordinator.swift`
-- Test: `Tests/MarkdownKitTests/MathLoadCoordinatorTests.swift`
+- Test: `Tests/OhMyMarkdownTests/MathLoadCoordinatorTests.swift`
 
 - [ ] **Step 1: 写失败测试**
 
-Create `Tests/MarkdownKitTests/MathLoadCoordinatorTests.swift`:
+Create `Tests/OhMyMarkdownTests/MathLoadCoordinatorTests.swift`:
 
 ```swift
 @testable import MarkdownPlatformView
@@ -1623,7 +1623,7 @@ Expected: PASS（6 用例全绿）。
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/MarkdownPlatformView/MathLoadCoordinator.swift Tests/MarkdownKitTests/MathLoadCoordinatorTests.swift
+git add Sources/MarkdownPlatformView/MathLoadCoordinator.swift Tests/OhMyMarkdownTests/MathLoadCoordinatorTests.swift
 git commit -m "feat(platformview): MathLoadCoordinator 异步派发/三态/负缓存/代际失效"
 ```
 
@@ -1635,7 +1635,7 @@ spec §6。把 coordinator 接到读视图：渲染产出占位 → 视图枚举
 
 **Files:**
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView.swift`
-- Test: `Tests/MarkdownKitTests/MathLoadCoordinatorTests.swift`（追加端到端用例）
+- Test: `Tests/OhMyMarkdownTests/MathLoadCoordinatorTests.swift`（追加端到端用例）
 
 - [ ] **Step 1: 追加端到端失败测试（驱动 coordinator + renderer 回写闭环，不依赖真实 NSView 布局）**
 
@@ -1741,7 +1741,7 @@ Expected: PASS（此用例只依赖已实现的 renderer + coordinator；作为�
 
 Run: `swift build`
 Expected: 退出码 0（宿主 macOS 编译 AppKit 路径）。
-Run: `xcodebuild -scheme MarkdownKit -destination 'generic/platform=iOS' build` （若无 iOS SDK 环境，跳过并记录「iOS 路径仅静态对称、未机器校验」）
+Run: `xcodebuild -scheme OhMyMarkdown -destination 'generic/platform=iOS' build` （若无 iOS SDK 环境，跳过并记录「iOS 路径仅静态对称、未机器校验」）
 Expected: 成功或显式记录跳过原因。
 
 - [ ] **Step 6: 回归**
@@ -1752,7 +1752,7 @@ Expected: PASS。
 - [ ] **Step 7: Commit**
 
 ```bash
-git add Sources/MarkdownPlatformView/MarkdownLabelView.swift Tests/MarkdownKitTests/MathLoadCoordinatorTests.swift
+git add Sources/MarkdownPlatformView/MarkdownLabelView.swift Tests/OhMyMarkdownTests/MathLoadCoordinatorTests.swift
 git commit -m "feat(platformview): MarkdownLabelView 接入数学异步加载（iOS+AppKit 对称）"
 ```
 
@@ -1763,13 +1763,13 @@ git commit -m "feat(platformview): MarkdownLabelView 接入数学异步加载（
 spec §7。
 
 **Files:**
-- Create: `Sources/MarkdownKit/MathRendererModifier.swift`
-- Test: `Tests/MarkdownKitTests/MathRenderingTests.swift`（追加）
+- Create: `Sources/OhMyMarkdown/MathRendererModifier.swift`
+- Test: `Tests/OhMyMarkdownTests/MathRenderingTests.swift`（追加）
 
 - [ ] **Step 1: 追加失败测试**
 
 ```swift
-import MarkdownKit
+import OhMyMarkdown
 import SwiftUI
 
 @Suite("SwiftUI math renderer env")
@@ -1795,7 +1795,7 @@ Expected: 编译失败，`value of type 'EnvironmentValues' has no member 'markd
 
 - [ ] **Step 3: 实现环境键与修饰符**
 
-Create `Sources/MarkdownKit/MathRendererModifier.swift`:
+Create `Sources/OhMyMarkdown/MathRendererModifier.swift`:
 
 ```swift
 import SwiftUI
@@ -1822,7 +1822,7 @@ extension View {
 
 - [ ] **Step 4: 把环境值接到读视图 representable**
 
-在承载 `MarkdownLabelView` 的 SwiftUI 包装（`MarkdownText` / `MarkdownStreamingText` 对应的 `UIViewRepresentable`/`NSViewRepresentable`，文件 `Sources/MarkdownKit/MarkdownText.swift` 等）里，读 `@Environment(\.markdownMathRenderer)` 并在 `updateUIView`/`updateNSView` 中赋值：
+在承载 `MarkdownLabelView` 的 SwiftUI 包装（`MarkdownText` / `MarkdownStreamingText` 对应的 `UIViewRepresentable`/`NSViewRepresentable`，文件 `Sources/OhMyMarkdown/MarkdownText.swift` 等）里，读 `@Environment(\.markdownMathRenderer)` 并在 `updateUIView`/`updateNSView` 中赋值：
 
 ```swift
     @Environment(\.markdownMathRenderer) private var mathRenderer
@@ -1842,7 +1842,7 @@ Expected: 退出码 0。
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/MarkdownKit/MathRendererModifier.swift Sources/MarkdownKit Tests/MarkdownKitTests/MathRenderingTests.swift
+git add Sources/OhMyMarkdown/MathRendererModifier.swift Sources/OhMyMarkdown Tests/OhMyMarkdownTests/MathRenderingTests.swift
 git commit -m "feat(kit): SwiftUI .mathRenderer(_:) 修饰符与环境注入"
 ```
 
@@ -2144,11 +2144,11 @@ spec §9。复用 `MathScanner` 的同一套规则，只染色不渲染。
 
 **Files:**
 - Modify: `Sources/MarkdownRenderKit/MarkdownSourceHighlighter.swift`
-- Test: `Tests/MarkdownKitTests/MathEditorHighlightTests.swift`
+- Test: `Tests/OhMyMarkdownTests/MathEditorHighlightTests.swift`
 
 - [ ] **Step 1: 写失败测试**
 
-Create `Tests/MarkdownKitTests/MathEditorHighlightTests.swift`:
+Create `Tests/OhMyMarkdownTests/MathEditorHighlightTests.swift`:
 
 ```swift
 import MarkdownRenderKit
@@ -2244,7 +2244,7 @@ Expected: PASS（既有 heading/emphasis/code 高亮不回归）。
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/MarkdownRenderKit/MarkdownSourceHighlighter.swift Tests/MarkdownKitTests/MathEditorHighlightTests.swift
+git add Sources/MarkdownRenderKit/MarkdownSourceHighlighter.swift Tests/OhMyMarkdownTests/MathEditorHighlightTests.swift
 git commit -m "feat(renderkit): 编辑器复用 MathScanner 做数学 token 高亮（只染色不渲染）"
 ```
 
@@ -2330,7 +2330,7 @@ Expected: 全绿。任何既有用例（图片/表格/列表/增量/编辑器命
 `README.md` 的「📋 Supported Markdown Features」列表加一行 `- ✅ LaTeX math via MarkdownMath ($…$, $$…$$, \(…\), \[…\])`；「📖 Public Modules」加 `MarkdownMath` 一条；新增简短「数学公式」小节，示例：
 
 ```swift
-import MarkdownKit
+import OhMyMarkdown
 import MarkdownMath
 
 MarkdownText("Euler: $e^{i\\pi}+1=0$")

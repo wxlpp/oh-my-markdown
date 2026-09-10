@@ -14,11 +14,11 @@ output_path="$3"
 case "$section" in
     ios18)
         simulator_runtime="iOS 18.0"
-        scheme="MarkdownKit-Package,Example"
+        scheme="oh-my-markdown-Package,Example"
         ;;
     macos15)
         simulator_runtime="not_applicable"
-        scheme="MarkdownKit-Package"
+        scheme="oh-my-markdown-Package"
         ;;
     *)
         printf 'unknown runtime metadata section: %s\n' "$section" >&2

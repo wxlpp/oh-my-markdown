@@ -22,10 +22,10 @@
 | `Sources/MarkdownPlatformView/SVGBlockLoadCoordinator.swift` | 加 `public static let shared = SVGBlockLoadCoordinator()` | Modify |
 | `Sources/MarkdownPlatformView/MathLoadCoordinator.swift` | 加 `public static let shared = MathLoadCoordinator()` | Modify |
 | `Sources/MarkdownPlatformView/MarkdownLabelView.swift` | ①`_svgBlockCoordinator` / `_mathCoordinator` 改用 `.shared`；②加 `private var renderMode: PlaceholderMode = .static`，`setMarkdown` 翻 `.static`、`appendMarkdown` 翻 `.streaming`；③6 个 `AttributedStringRenderer(...)` 实例化点传 `placeholderMode: self.renderMode` | Modify |
-| `Tests/MarkdownKitTests/SVGViewBoxParserTests.swift` | 解析器单测（有/无 viewBox、格式坏、4KB 上限、多 `<svg>`） | Create |
-| `Tests/MarkdownKitTests/PlaceholderModeRendererTests.swift` | AttributedStringRenderer 在 static / streaming 两 mode 下 SVG/math cache-miss 分支差异 + cache-hit 一致；TransparentAttachment 尺寸契约 | Create |
-| `Tests/MarkdownKitTests/MarkdownLabelViewRenderModeTests.swift` | view 初始 mode == `.static`、`setMarkdown` 翻 `.static`、`appendMarkdown` 翻 `.streaming`、连续调用按最后一次 | Create |
-| `Tests/MarkdownKitTests/SharedCoordinatorTests.swift` | 两个 view（或 mock 协调消费者）共用 `.shared` 时 renderer 仅被调一次；`init()` 创建的独立实例与 shared 互不影响 | Create |
+| `Tests/OhMyMarkdownTests/SVGViewBoxParserTests.swift` | 解析器单测（有/无 viewBox、格式坏、4KB 上限、多 `<svg>`） | Create |
+| `Tests/OhMyMarkdownTests/PlaceholderModeRendererTests.swift` | AttributedStringRenderer 在 static / streaming 两 mode 下 SVG/math cache-miss 分支差异 + cache-hit 一致；TransparentAttachment 尺寸契约 | Create |
+| `Tests/OhMyMarkdownTests/MarkdownLabelViewRenderModeTests.swift` | view 初始 mode == `.static`、`setMarkdown` 翻 `.static`、`appendMarkdown` 翻 `.streaming`、连续调用按最后一次 | Create |
+| `Tests/OhMyMarkdownTests/SharedCoordinatorTests.swift` | 两个 view（或 mock 协调消费者）共用 `.shared` 时 renderer 仅被调一次；`init()` 创建的独立实例与 shared 互不影响 | Create |
 
 约定遵循（来自 spec §5.3 + 仓 doc 惯例）：
 - 测试用 Swift Testing（`@Test` / `@Suite`）
@@ -38,13 +38,13 @@
 
 **Files:**
 - Create: `Sources/MarkdownRenderKit/SVGViewBoxParser.swift`
-- Test: `Tests/MarkdownKitTests/SVGViewBoxParserTests.swift`
+- Test: `Tests/OhMyMarkdownTests/SVGViewBoxParserTests.swift`
 
 > 独立纯函数。无依赖。先做。
 
 - [ ] **Step 1: 写失败测试**
 
-`Tests/MarkdownKitTests/SVGViewBoxParserTests.swift`：
+`Tests/OhMyMarkdownTests/SVGViewBoxParserTests.swift`：
 
 ```swift
 import Foundation
@@ -108,7 +108,7 @@ struct SVGViewBoxParserTests {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd /Users/evan/Repositories/MarkdownKit && swift test --filter SVGViewBoxParserTests 2>&1 | tail -20`
+Run: `cd /Users/evan/Repositories/OhMyMarkdown && swift test --filter SVGViewBoxParserTests 2>&1 | tail -20`
 Expected: 编译失败 — `SVGViewBoxParser` 未定义。
 
 - [ ] **Step 3: 实现 SVGViewBoxParser**
@@ -176,8 +176,8 @@ Expected: PASS（8 个 case）。
 - [ ] **Step 5: 提交**
 
 ```bash
-cd /Users/evan/Repositories/MarkdownKit
-git add Sources/MarkdownRenderKit/SVGViewBoxParser.swift Tests/MarkdownKitTests/SVGViewBoxParserTests.swift
+cd /Users/evan/Repositories/OhMyMarkdown
+git add Sources/MarkdownRenderKit/SVGViewBoxParser.swift Tests/OhMyMarkdownTests/SVGViewBoxParserTests.swift
 git commit -m "feat(render): SVGViewBoxParser 解析首 4KB 内的 viewBox 取高宽比 + 8 单测"
 ```
 
@@ -189,13 +189,13 @@ git commit -m "feat(render): SVGViewBoxParser 解析首 4KB 内的 viewBox 取�
 - Modify: `Sources/MarkdownPlatformView/SVGBlockLoadCoordinator.swift`
 - Modify: `Sources/MarkdownPlatformView/MathLoadCoordinator.swift`
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView.swift`（2 处 `_xxxCoordinator` 初始化器）
-- Test: `Tests/MarkdownKitTests/SharedCoordinatorTests.swift`
+- Test: `Tests/OhMyMarkdownTests/SharedCoordinatorTests.swift`
 
 > A 块。Coordinator 已有完整 LRU/dedup/gen 逻辑，只是 view-内私有。加 shared 静态属性 + 把 view 字段改用它。`init()` public 保留供测试取独立实例。
 
 - [ ] **Step 1: 写失败测试**
 
-`Tests/MarkdownKitTests/SharedCoordinatorTests.swift`：
+`Tests/OhMyMarkdownTests/SharedCoordinatorTests.swift`：
 
 ```swift
 import Foundation
@@ -235,7 +235,7 @@ struct SharedCoordinatorTests {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd /Users/evan/Repositories/MarkdownKit && swift test --filter SharedCoordinatorTests 2>&1 | tail -15`
+Run: `cd /Users/evan/Repositories/OhMyMarkdown && swift test --filter SharedCoordinatorTests 2>&1 | tail -15`
 Expected: 编译失败 — `static let shared` 未定义。
 
 - [ ] **Step 3: 加 shared 单例**
@@ -248,7 +248,7 @@ extension SVGBlockLoadCoordinator {
     ///
     /// 既存 LRU(256) / negative(1024) / dedup / 代际逻辑全部继承——同 process
     /// 全部 markdown 视图共用这一份。`setRenderer` 调用会清整体 cache + 代际自增，
-    /// 因此**所有 view 应该共用同一个 renderer 实例**（MarkdownKit 的 SwiftUI
+    /// 因此**所有 view 应该共用同一个 renderer 实例**（OhMyMarkdown 的 SwiftUI
     /// 注入约定下成立）；若不同 view 注入不同 renderer，cache 会被互相清掉——
     /// 这条约束记录在此，不视为 bug。
     ///
@@ -301,7 +301,7 @@ Expected: PASS（4 case）。
 
 - [ ] **Step 6: 全量构建 + 既有测试不回归**
 
-Run: `cd /Users/evan/Repositories/MarkdownKit && swift build -Xswiftc -warnings-as-errors 2>&1 | tail -5`
+Run: `cd /Users/evan/Repositories/OhMyMarkdown && swift build -Xswiftc -warnings-as-errors 2>&1 | tail -5`
 Expected: BUILD SUCCEEDED，0 warning。
 
 Run: `swift test 2>&1 | grep -iE "Test Suite|PASSED|FAILED|errors?:" | tail -10`
@@ -313,7 +313,7 @@ Expected: 全绿（既有测试不回归——shared 与 init() 行为等价，c
 git add Sources/MarkdownPlatformView/SVGBlockLoadCoordinator.swift \
         Sources/MarkdownPlatformView/MathLoadCoordinator.swift \
         Sources/MarkdownPlatformView/MarkdownLabelView.swift \
-        Tests/MarkdownKitTests/SharedCoordinatorTests.swift
+        Tests/OhMyMarkdownTests/SharedCoordinatorTests.swift
 git commit -m "feat(coord): SVGBlockLoadCoordinator.shared / MathLoadCoordinator.shared 单例 + MarkdownLabelView 默认引用 + 4 单测"
 ```
 
@@ -324,13 +324,13 @@ git commit -m "feat(coord): SVGBlockLoadCoordinator.shared / MathLoadCoordinator
 **Files:**
 - Create: `Sources/MarkdownRenderKit/PlaceholderMode.swift`
 - Modify: `Sources/MarkdownRenderKit/AttributedStringRenderer.swift`
-- Test: `Tests/MarkdownKitTests/PlaceholderModeRendererTests.swift`
+- Test: `Tests/OhMyMarkdownTests/PlaceholderModeRendererTests.swift`
 
 > B 块 + C 块的渲染器侧。引入 PlaceholderMode、TransparentAttachment（helper 内联在 renderer 文件）、`renderSVGBlock` / `renderMathBlock` 的 static-miss 新分支。默认 `.streaming` 保留旧行为，调用方显式传 `.static` 才走新分支。
 
 - [ ] **Step 1: 写失败测试**
 
-`Tests/MarkdownKitTests/PlaceholderModeRendererTests.swift`：
+`Tests/OhMyMarkdownTests/PlaceholderModeRendererTests.swift`：
 
 ```swift
 import Foundation
@@ -492,7 +492,7 @@ struct PlaceholderModeRendererTests {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd /Users/evan/Repositories/MarkdownKit && swift test --filter PlaceholderModeRendererTests 2>&1 | tail -25`
+Run: `cd /Users/evan/Repositories/OhMyMarkdown && swift test --filter PlaceholderModeRendererTests 2>&1 | tail -25`
 Expected: 编译失败 — `PlaceholderMode` 未定义、`init(..., placeholderMode:)` 参数不存在。
 
 - [ ] **Step 3: 加 PlaceholderMode enum**
@@ -652,7 +652,7 @@ Expected: 全 suite 绿。默认 placeholderMode == `.streaming` 保持旧行为
 ```bash
 git add Sources/MarkdownRenderKit/PlaceholderMode.swift \
         Sources/MarkdownRenderKit/AttributedStringRenderer.swift \
-        Tests/MarkdownKitTests/PlaceholderModeRendererTests.swift
+        Tests/OhMyMarkdownTests/PlaceholderModeRendererTests.swift
 git commit -m "feat(render): PlaceholderMode enum + AttributedStringRenderer init 多收 mode + static-miss 透明 attachment 分支（SVG/Math）"
 ```
 
@@ -662,13 +662,13 @@ git commit -m "feat(render): PlaceholderMode enum + AttributedStringRenderer ini
 
 **Files:**
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView.swift`
-- Test: `Tests/MarkdownKitTests/MarkdownLabelViewRenderModeTests.swift`
+- Test: `Tests/OhMyMarkdownTests/MarkdownLabelViewRenderModeTests.swift`
 
 > view 加 `renderMode` 状态字段；`setMarkdown` / `appendMarkdown` 翻转；6 个 `AttributedStringRenderer(...)` 实例化点传 `placeholderMode: self.renderMode`。
 
 - [ ] **Step 1: 写失败测试**
 
-`Tests/MarkdownKitTests/MarkdownLabelViewRenderModeTests.swift`：
+`Tests/OhMyMarkdownTests/MarkdownLabelViewRenderModeTests.swift`：
 
 ```swift
 import Foundation
@@ -805,7 +805,7 @@ Expected: BUILD SUCCEEDED，0 warning。
 
 ```bash
 git add Sources/MarkdownPlatformView/MarkdownLabelView.swift \
-        Tests/MarkdownKitTests/MarkdownLabelViewRenderModeTests.swift
+        Tests/OhMyMarkdownTests/MarkdownLabelViewRenderModeTests.swift
 git commit -m "feat(view): MarkdownLabelView renderMode 状态 + setMarkdown/appendMarkdown 翻转 + 6 处 AttributedStringRenderer 透传"
 ```
 
@@ -814,13 +814,13 @@ git commit -m "feat(view): MarkdownLabelView renderMode 状态 + setMarkdown/app
 ## Task 5: 跨 view cache 共享集成验证
 
 **Files:**
-- Test: `Tests/MarkdownKitTests/SharedCoordinatorTests.swift`（追加）
+- Test: `Tests/OhMyMarkdownTests/SharedCoordinatorTests.swift`（追加）
 
 > Task 2 加了 shared 单例 + view 用 .shared，但没验过两 view 真的复用 cache。本 task 用 mock renderer 计数器验证。
 
 - [ ] **Step 1: 追加集成测试**
 
-打开 `Tests/MarkdownKitTests/SharedCoordinatorTests.swift`，在 `@Suite("Shared coordinator singletons") struct SharedCoordinatorTests { ... }` 内追加：
+打开 `Tests/OhMyMarkdownTests/SharedCoordinatorTests.swift`，在 `@Suite("Shared coordinator singletons") struct SharedCoordinatorTests { ... }` 内追加：
 
 ```swift
     @Test func twoCoordinatorCallsHitSharedCacheOnSecondView() async {
@@ -872,7 +872,7 @@ Expected: PASS（4 + 1 = 5 case）。
 - [ ] **Step 3: 提交**
 
 ```bash
-git add Tests/MarkdownKitTests/SharedCoordinatorTests.swift
+git add Tests/OhMyMarkdownTests/SharedCoordinatorTests.swift
 git commit -m "test(coord): 跨调用 cache 共享幂等验证（同 key 二次 loadIfNeeded 不再触发 renderer）"
 ```
 
@@ -882,7 +882,7 @@ git commit -m "test(coord): 跨调用 cache 共享幂等验证（同 key 二次 
 
 - [ ] **Step 1: 全量测试**
 
-Run: `cd /Users/evan/Repositories/MarkdownKit && swift test 2>&1 | grep -iE "Test Suite|errors?:|Failure" | tail -20`
+Run: `cd /Users/evan/Repositories/OhMyMarkdown && swift test 2>&1 | grep -iE "Test Suite|errors?:|Failure" | tail -20`
 Expected: 全 suite 绿。
 
 - [ ] **Step 2: 严格 build（warnings-as-errors）**
@@ -909,7 +909,7 @@ gh pr create --base main --head feature/cross-view-cache-and-static-mode \
   --body "$(cat <<'EOF'
 ## Summary
 
-下游 oh-my-exam (PR #7) 因 MarkdownText 的异步 SVG / math 渲染未命中分支显示高亮源码而产生闪烁；app 端已用 .opacity fade-in 兜了一手（PR #7 \`bdca384\`），本 PR 让 MarkdownKit 原生支持掉这层补丁。
+下游 oh-my-exam (PR #7) 因 MarkdownText 的异步 SVG / math 渲染未命中分支显示高亮源码而产生闪烁；app 端已用 .opacity fade-in 兜了一手（PR #7 \`bdca384\`），本 PR 让 OhMyMarkdown 原生支持掉这层补丁。
 
 - **A**：\`SVGBlockLoadCoordinator.shared\` / \`MathLoadCoordinator.shared\` 单例化，\`MarkdownLabelView\` 默认引用（向后兼容：\`init()\` 仍 public，tests 可拿独立实例）。Cache LRU/dedup/in-flight/代际逻辑全部继承——同 process 全部 markdown 视图共享 cache，复访同步出图。
 - **B**：新 \`PlaceholderMode\` enum；\`AttributedStringRenderer.init(...)\` 多收 \`placeholderMode\` 参数（默认 \`.streaming\` 向后兼容）；\`renderSVGBlock\` / \`renderMathBlock\` 的 cache-miss 分支按 mode 分两条——streaming 保留高亮源码、static 改透明 attachment + marker。

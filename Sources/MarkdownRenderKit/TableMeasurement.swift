@@ -11,33 +11,33 @@ import AppKit
 
 extension NSAttributedString.Key {
     /// Image source URL string; marks inline placeholder text pending async load.
-    public static let markdownImageSource = NSAttributedString.Key("MarkdownKit.imageSource")
+    public static let markdownImageSource = NSAttributedString.Key("OhMyMarkdown.imageSource")
     /// Table row section: 0 = header, 1+ = body row index (used by decoration drawing).
-    public static let markdownTableSection = NSAttributedString.Key("MarkdownKit.tableSection")
+    public static let markdownTableSection = NSAttributedString.Key("OhMyMarkdown.tableSection")
     /// Number of columns in the table (used to compute tab stops and draw column separators).
-    public static let markdownTableColumns = NSAttributedString.Key("MarkdownKit.tableColumns")
+    public static let markdownTableColumns = NSAttributedString.Key("OhMyMarkdown.tableColumns")
     /// Natural (uncompressed) table width when the table overflows the available width.
     /// Presence of this attribute signals the view to show a horizontal-scroll overlay.
-    public static let markdownTableNaturalWidth = NSAttributedString.Key("MarkdownKit.tableNaturalWidth")
+    public static let markdownTableNaturalWidth = NSAttributedString.Key("OhMyMarkdown.tableNaturalWidth")
     /// Natural widths for each rendered table column, used by platform views to draw separators.
-    public static let markdownTableColumnWidths = NSAttributedString.Key("MarkdownKit.tableColumnWidths")
+    public static let markdownTableColumnWidths = NSAttributedString.Key("OhMyMarkdown.tableColumnWidths")
     /// Semantic text to substitute for a character that carries no readable text
     /// of its own — an attachment, or an overflow table's placeholder. Only ever
     /// one character long: `renderedCopyText` emits the whole value for any
     /// sub-range that touches it, so a longer run would make a partial selection
     /// paste more than was selected. Pinned by `everyCopyTextRunIsExactlyOneCharacter`.
-    public static let markdownCopyText = NSAttributedString.Key("MarkdownKit.copyText")
+    public static let markdownCopyText = NSAttributedString.Key("OhMyMarkdown.copyText")
     /// Decorative or layout-only characters, dropped from a copy. Two sites: a
     /// table row's *leading indent* tab — don't add it to the tabs between cells,
     /// which are the separators a copied table needs — and the `🖼 ` marker on an
     /// image placeholder, which also splits that placeholder's syntax run in two.
-    public static let markdownCopySkip = NSAttributedString.Key("MarkdownKit.copySkip")
+    public static let markdownCopySkip = NSAttributedString.Key("OhMyMarkdown.copySkip")
     /// Markdown syntax for a character whose block carries no parser source range.
-    public static let markdownCopySource = NSAttributedString.Key("MarkdownKit.copySource")
+    public static let markdownCopySource = NSAttributedString.Key("OhMyMarkdown.copySource")
     /// Which accessibility leaf these characters render, as `block:ordinal`.
     /// The platform layer turns each run of it into one element's frame, so a
     /// reader can point at a link rather than at the paragraph containing it.
-    public static let markdownAccessibilityLeaf = NSAttributedString.Key("MarkdownKit.accessibilityLeaf")
+    public static let markdownAccessibilityLeaf = NSAttributedString.Key("OhMyMarkdown.accessibilityLeaf")
     /// Marks the single transparent placeholder line that reserves vertical
     /// space for an overflowing (horizontally-scrolling) table. The real table is
     /// drawn by the platform scroll overlay; the reserved height is computed *at
@@ -45,7 +45,7 @@ extension NSAttributedString.Key {
     /// `TableContentView` uses), so the main-stack reservation and the overlay
     /// height are constructively equal — no platform write-back needed.
     public static let markdownOverflowTablePlaceholder
-        = NSAttributedString.Key("MarkdownKit.overflowTablePlaceholder")
+        = NSAttributedString.Key("OhMyMarkdown.overflowTablePlaceholder")
 }
 
 // MARK: - TableMeasurement

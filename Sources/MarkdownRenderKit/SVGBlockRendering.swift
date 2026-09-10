@@ -14,7 +14,7 @@ public struct SVGRendererConfiguration: Sendable {
 }
 
 extension NSAttributedString.Key {
-    public static let markdownSVGBlockSource = NSAttributedString.Key("MarkdownKit.svgBlockSource")
+    public static let markdownSVGBlockSource = NSAttributedString.Key("OhMyMarkdown.svgBlockSource")
 }
 
 /// Immutable encoded SVG rasterization output, materialized only on MainActor.

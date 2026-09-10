@@ -6,7 +6,7 @@
 
 ## 1. 背景与目标
 
-MarkdownKit 当前 SVG 与 Math 的异步渲染管道由两个 actor 协调器（`SVGBlockLoadCoordinator` / `MathLoadCoordinator`）负责，每个 `MarkdownLabelView` 实例**各持一份**（私有 `let`）。下游 caller（oh-my-exam）在题库 cover 翻题时通过 `.id(item.id)` 强制重建 `MarkdownText`，view 重建 → 协调器随之重建 → cache 清空 → 同一份 SVG 复访仍重新渲染 → 用户看到 200–300ms 闪烁（代码块源串→图）。
+OhMyMarkdown 当前 SVG 与 Math 的异步渲染管道由两个 actor 协调器（`SVGBlockLoadCoordinator` / `MathLoadCoordinator`）负责，每个 `MarkdownLabelView` 实例**各持一份**（私有 `let`）。下游 caller（oh-my-exam）在题库 cover 翻题时通过 `.id(item.id)` 强制重建 `MarkdownText`，view 重建 → 协调器随之重建 → cache 清空 → 同一份 SVG 复访仍重新渲染 → 用户看到 200–300ms 闪烁（代码块源串→图）。
 
 同时 AttributedStringRenderer 在 cache-miss 分支统一显示「高亮代码块源串 + `.markdownSVGBlockSource` marker」，对**流式聊天**（用户在看着源码到达）合适，但对**静态题目**（题面是一次性渲染的最终状态）不合适——展示中间的 `\`\`\`svg ... \`\`\`` 源串就是闪。
 
@@ -45,7 +45,7 @@ extension SVGBlockLoadCoordinator {
     /// 进程级共享实例。所有 MarkdownLabelView 默认引用，cache 跨 view。
     /// 已存 LRU 256 / negative 1024（actor 隔离），同 process 全部 markdown
     /// 视图共用一份；renderer 切换（setRenderer 调用）会清整体 cache + 代际自增——
-    /// 在 MarkdownKit 的 SwiftUI 注入约定下，所有 view 用同一 renderer 实例时
+    /// 在 OhMyMarkdown 的 SwiftUI 注入约定下，所有 view 用同一 renderer 实例时
     /// 这条不构成问题。tests 通过 `init()` 取独立实例。
     public static let shared = SVGBlockLoadCoordinator()
 }
@@ -232,7 +232,7 @@ let attachment = TransparentAttachment(size: CGSize(width: self.availableWidth, 
 
 ### 5.3 命令
 
-沿用 MarkdownKit 现状（仓 Tests/ 下用 Swift Testing 框架）：
+沿用 OhMyMarkdown 现状（仓 Tests/ 下用 Swift Testing 框架）：
 
 - `swift build -Xswiftc -warnings-as-errors`（零警告通过）
 - `swift test`
@@ -240,9 +240,9 @@ let attachment = TransparentAttachment(size: CGSize(width: self.availableWidth, 
 
 ## 6. 与下游 oh-my-exam 的整合
 
-本 spec 落地后，oh-my-exam 端需要的 follow-up（不在 MarkdownKit 仓内，单独 PR 处理）：
+本 spec 落地后，oh-my-exam 端需要的 follow-up（不在 OhMyMarkdown 仓内，单独 PR 处理）：
 
-1. bump MarkdownKit 依赖到含本切片的 commit
+1. bump OhMyMarkdown 依赖到含本切片的 commit
 2. `QuestionMarkdownView` 删除 `hasAsyncContent` 启发式 + `@State visible` + `.opacity` + `.task(id:markdown)` 整段（PR #7 `bdca384` 引入的 fade-in 补丁）
 3. iPad sim 实测验证：含 SVG/公式题目首次访问空白→图、复访同步出图、无源串闪烁
 

@@ -1,6 +1,6 @@
 #if UMBRELLA_CLIENT
-import MarkdownKit
 import MarkdownMath
+import OhMyMarkdown
 #else
 import MarkdownRenderKit
 #endif

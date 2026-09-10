@@ -1,15 +1,16 @@
 # Change Log
 All notable changes to this project will be documented in this file.
-MarkdownKit adheres to [Semantic Versioning](http://semver.org/).
+OhMyMarkdown adheres to [Semantic Versioning](http://semver.org/).
 
-## [Main](https://github.com/wxlpp/MarkdownKit)
+## [Main](https://github.com/wxlpp/oh-my-markdown)
 ### Added
 
 ### Changed
+- 项目更名为 `oh-my-markdown`，主库产品及 Swift 模块更名为 `OhMyMarkdown`。这是破坏性变更：接入方需更新仓库 URL、产品依赖及 `import OhMyMarkdown`。
 
 ### Removed
 
-## [0.2.0](https://github.com/wxlpp/MarkdownKit)
+## [0.2.0](https://github.com/wxlpp/oh-my-markdown)
 破坏性发布。迁移指南见 [`docs/release/0.2.0-migration.md`](docs/release/0.2.0-migration.md)。
 
 ### Added
@@ -67,7 +68,7 @@ MarkdownKit adheres to [Semantic Versioning](http://semver.org/).
   `MarkdownSourceHighlighter`、`SyntaxHighlighter.highlight(…)`、
   `DocumentParser.parsedBlocks` 的公开可见性。
 
-## [0.1.2](https://github.com/wxlpp/MarkdownKit/releases/tag/v0.1.2)
+## [0.1.2](https://github.com/wxlpp/oh-my-markdown/releases/tag/v0.1.2)
 ### Changed
 - `swift-markdown` 依赖从 `from: "0.8.0"` 收紧为 `.upToNextMinor(from: "0.8.0")`。
   理由与 0.1.1 的 SwiftDraw 同源：`from:` 对 0.x 等价 upToNextMajor，会静默吃下未来
@@ -89,19 +90,19 @@ MarkdownKit adheres to [Semantic Versioning](http://semver.org/).
   按 `MathJaxRenderer` 注释里写的计划做细粒度取消，这就是个真 bug。修它需要「cancelled
   不得进 negative cache」的断言，不在本次范围。
 
-## [0.1.1](https://github.com/wxlpp/MarkdownKit/releases/tag/v0.1.1)
+## [0.1.1](https://github.com/wxlpp/oh-my-markdown/releases/tag/v0.1.1)
 ### Changed
 - **SwiftDraw 依赖从裸 revision pin 改为版本区间 `.upToNextMinor(from: "0.29.0")`。**
   这不是清理，是修 bug：**只要本包含有 revision 依赖，它自己就永远无法被下游按版本引用**
-  —— SwiftPM 直接拒绝解析（`package 'markdownkit' is required using a stable-version but
-  'markdownkit' depends on an unstable-version package 'swiftdraw'`）。`v0.1.0` 打了 tag
+  —— SwiftPM 直接拒绝解析（`package 'oh-my-markdown' is required using a stable-version but
+  'oh-my-markdown' depends on an unstable-version package 'swiftdraw'`）。`v0.1.0` 打了 tag
   却没人试过用它，所以这个缺陷是发布之后才暴露的。原 pin 的 commit `4d09d03` 是
   `0.29.0` 的祖先（后者领先 16 个 commit、behind_by=0），换区间不丢任何东西。
 - 验证：`swift build`、`swift test`（218 tests / 47 suites）、以及
-  `xcodebuild -destination 'generic/platform=iOS Simulator'` 对 `MarkdownKit` 与
+  `xcodebuild -destination 'generic/platform=iOS Simulator'` 对 `OhMyMarkdown` 与
   `MarkdownMath` 两个 scheme —— iOS 腿是 `v0.1.0` 漏跑的。
 
-## [0.1.0](https://github.com/wxlpp/MarkdownKit/releases/tag/v0.1.0)
+## [0.1.0](https://github.com/wxlpp/oh-my-markdown/releases/tag/v0.1.0)
 
 首个 tag。此前 110 个 commit 全在 `main` 上，下游无法按版本引用。
 
@@ -111,5 +112,5 @@ MarkdownKit adheres to [Semantic Versioning](http://semver.org/).
 - `MarkdownCore` —— 经 swift-markdown 解析出的类型化 block 树（IR），无 UI、无渲染。
 - `MarkdownRenderKit` —— block 树 → `AttributedString` / 布局片段，平台无关。
 - `MarkdownPlatformView` —— 建在 TextKit 2 上的 UIKit / AppKit 视图，处理文本选择与流式更新。
-- `MarkdownKit` —— SwiftUI 层，多数消费方 import 这个。
+- `OhMyMarkdown` —— SwiftUI 层，多数消费方 import 这个。
 - `MarkdownMath` —— `MathRendering` 协议的 MathJax + SwiftDraw 实现。

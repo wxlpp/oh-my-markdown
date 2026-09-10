@@ -281,7 +281,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             alternates: []
         )
         let menu = UIMenu(
-            title: "", identifier: UIMenu.Identifier("MarkdownKit.copyMarkdownSource"),
+            title: "", identifier: UIMenu.Identifier("OhMyMarkdown.copyMarkdownSource"),
             options: .displayInline, children: [command]
         )
         builder.insertSibling(menu, afterMenu: .standardEdit)

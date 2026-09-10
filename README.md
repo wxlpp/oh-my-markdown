@@ -1,4 +1,4 @@
-# MarkdownKit
+# oh-my-markdown
 
 A lightweight Markdown rendering and source editing library for iOS and macOS, built with **TextKit 2** and [swift-markdown](https://github.com/swiftlang/swift-markdown).
 
@@ -27,19 +27,23 @@ A lightweight Markdown rendering and source editing library for iOS and macOS, b
 
 ### Swift Package Manager
 
-Add MarkdownKit to your project using Swift Package Manager:
+通过 Swift Package Manager 将 oh-my-markdown 添加到项目：
 
 1. In Xcode: **File** → **Add Package Dependencies...**
-2. Enter the repository URL: `https://github.com/wxlpp/MarkdownKit.git`
+2. Enter the repository URL: `https://github.com/wxlpp/oh-my-markdown.git`
 3. Select the version you want to use
 
 Or add it to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/wxlpp/MarkdownKit.git", .upToNextMinor(from: "0.2.0"))
+    .package(url: "https://github.com/wxlpp/oh-my-markdown.git", branch: "main")
 ]
 ```
+
+重命名目前位于 `main` 分支，旧版本 tag 不包含本次变更。
+
+项目名称为 `oh-my-markdown`，Swift 库产品和模块名为 `OhMyMarkdown`，使用 `import OhMyMarkdown`。在其他包的 target 中引用时，使用 `.product(name: "OhMyMarkdown", package: "oh-my-markdown")`。
 
 ## 🚀 Usage
 
@@ -47,7 +51,7 @@ dependencies: [
 
 ```swift
 import SwiftUI
-import MarkdownKit
+import OhMyMarkdown
 
 struct ContentView: View {
     var body: some View {
@@ -68,7 +72,7 @@ struct ContentView: View {
 
 ```swift
 import SwiftUI
-import MarkdownKit
+import OhMyMarkdown
 
 struct EditorView: View {
     @State private var source = "# Hello\n\n- [ ] Edit me"
@@ -102,7 +106,7 @@ MarkdownText(markdownText)
 
 ```swift
 import SwiftUI
-import MarkdownKit
+import OhMyMarkdown
 
 struct ChatView: View {
     @State private var markdown = MarkdownStreamingSource()
@@ -147,7 +151,7 @@ print(document.blocks)
 LaTeX math is an opt-in feature provided by the separate **MarkdownMath** product. Attach a renderer with the `.mathRenderer(_:)` modifier:
 
 ```swift
-import MarkdownKit
+import OhMyMarkdown
 import MarkdownMath
 
 MarkdownText("Euler: $e^{i\\pi}+1=0$")
@@ -167,7 +171,7 @@ Custom renderer wrappers are unique by default; only an explicit semantic config
 - `MarkdownCore` - Markdown IR and parser output (`MarkdownDocument`, `BlockNode`, `InlineNode`)
 - `MarkdownRenderKit` - `RenderPreparer`, `RenderSnapshot`, `RenderStyle`, fenced code syntax highlighting, source editor highlighting
 - `MarkdownPlatformView` - `MarkdownLabelView`, `MarkdownEditorTextView`, editor commands and platform hosts
-- `MarkdownKit` - SwiftUI `MarkdownText`, `MarkdownEditor`, plus the lower layers via re-export
+- `OhMyMarkdown` - SwiftUI `MarkdownText`, `MarkdownEditor`, plus the lower layers via re-export
 - `MarkdownMath` - optional MathJax (JavaScriptCore) + SwiftDraw implementation of the `MathRendering` protocol for LaTeX math
 
 ## 📖 Supported Markdown Features
@@ -296,20 +300,20 @@ setting, so assign `MarkdownLabelView.contentSizeCategory` yourself.
 
 ## 🏗️ Architecture
 
-MarkdownKit consists of four layers:
+oh-my-markdown 由以下四层组成：
 
 1. `MarkdownCore`: Parses Markdown into an intermediate representation using swift-markdown.
 2. `MarkdownRenderKit`: Turns that intermediate representation into attributed text and provides shared syntax highlighting.
 3. `MarkdownPlatformView`: Hosts the read-only view and the native source editor platform views.
-4. `MarkdownKit`: Exposes SwiftUI `MarkdownText` and `MarkdownEditor`, then re-exports the lower layers.
+4. `OhMyMarkdown`: Exposes SwiftUI `MarkdownText` and `MarkdownEditor`, then re-exports the lower layers.
 
 ## 🔍 Example
 
 To run the example project:
 
 ```bash
-git clone https://github.com/wxlpp/MarkdownKit.git
-cd MarkdownKit
+git clone https://github.com/wxlpp/oh-my-markdown.git
+cd oh-my-markdown
 open Example/Example.xcodeproj
 ```
 
@@ -319,7 +323,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📄 License
 
-MarkdownKit is available under the MIT license. See [the LICENSE file](LICENSE) for more information.
+oh-my-markdown 采用 MIT 许可证，详见 [LICENSE](LICENSE)。
 
 ## 👨‍💻 Author
 

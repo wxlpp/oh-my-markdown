@@ -35,7 +35,7 @@ jq -rs '
       | select(.kind.identifier | test("^swift\\.(actor|class|struct|enum|protocol|typealias)$"))
       | .pathComponents[0]] | unique
     | if length == 0 then error("empty public type inventory") else . end
-    | "import MarkdownKit\n@MainActor func discoveredUmbrellaTypes() {\n"
+    | "import OhMyMarkdown\n@MainActor func discoveredUmbrellaTypes() {\n"
       + (map("    _ = " + . + ".self") | join("\n")) + "\n}"
 ' "$INVENTORY_DIR/MarkdownCore.symbols.json" \
   "$INVENTORY_DIR/MarkdownRenderKit.symbols.json" \

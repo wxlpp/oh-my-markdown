@@ -13,11 +13,11 @@
 **Mirror sources (read these as the canonical template for each svg counterpart):**
 - `Sources/MarkdownRenderKit/MathRendering.swift` → svg protocol/types
 - `Sources/MarkdownPlatformView/MathLoadCoordinator.swift` → svg coordinator
-- `Sources/MarkdownKit/MathRendererIdentity.swift` + `Sources/MarkdownKit/MathRendererModifier.swift` → svg identity + modifier
+- `Sources/OhMyMarkdown/MathRendererIdentity.swift` + `Sources/OhMyMarkdown/MathRendererModifier.swift` → svg identity + modifier
 - `Sources/MarkdownPlatformView/MarkdownLabelView.swift` (`_mathCache`/`_imageCache` view-owned + `cachedRenderer` getter re-seed + `triggerMathLoads` + `mathRenderer` didSet, **both** `#if canImport(UIKit)` and AppKit branches) → svg wiring
-- `Sources/MarkdownKit/MarkdownText.swift` / `MarkdownStreamingText.swift` (`@Environment` read + identity-guarded assignment) → svg representable wiring
+- `Sources/OhMyMarkdown/MarkdownText.swift` / `MarkdownStreamingText.swift` (`@Environment` read + identity-guarded assignment) → svg representable wiring
 - `Sources/MarkdownMath/SVGRasterizer.swift` (read-only reference for SwiftDraw parse/rasterize/point-size-contract idioms — **do not modify**) → SwiftDrawSVGBlockRenderer
-- Test mirror sources: `Tests/MarkdownKitTests/MathRenderingTests.swift`, `MathLoadCoordinatorTests.swift`, `MathRendererModifierOptionalTests.swift`, `Tests/MarkdownMathTests/StreamingMathCacheSurvivesRendererRecreationTests.swift`, `MarkdownRenderKitTests.swift`
+- Test mirror sources: `Tests/OhMyMarkdownTests/MathRenderingTests.swift`, `MathLoadCoordinatorTests.swift`, `MathRendererModifierOptionalTests.swift`, `Tests/MarkdownMathTests/StreamingMathCacheSurvivesRendererRecreationTests.swift`, `MarkdownRenderKitTests.swift`
 
 **Global rules every task obeys:** TDD (failing test first, run-it-fails, minimal impl, run-it-passes, commit). Swift 6 strict concurrency. Explicit `self.`. Bilingual comments matching each file's existing style. After any non-trivial Swift change run `swift build -Xswiftc -warnings-as-errors` (0/0) + `swift test`. Do **not** touch `MathLoadCoordinator`, `MathScanner`, `MathSentinel`, `DocumentParser`, the math `_mathCache`/identity/modifier, wide-table `TableMeasurement`, or any PR-#4 fix behavior. No diagnostic instrumentation. Commit per task.
 
@@ -27,11 +27,11 @@
 
 **Files:**
 - Create: `Sources/MarkdownRenderKit/SVGBlockRendering.swift`
-- Test: `Tests/MarkdownKitTests/SVGBlockRenderingTypesTests.swift`
+- Test: `Tests/OhMyMarkdownTests/SVGBlockRenderingTypesTests.swift`
 
 Mirror `Sources/MarkdownRenderKit/MathRendering.swift` structure. **Delta vs spec §4:** protocol is `: AnyObject, Sendable` (NOT bare `Sendable`) — PR#4 round-1 proved value-type renderer identity via `as AnyObject` boxing is broken; the only conformer will be a `final class`, so constrain now.
 
-- [ ] **Step 1: Write the failing test** — `Tests/MarkdownKitTests/SVGBlockRenderingTypesTests.swift`
+- [ ] **Step 1: Write the failing test** — `Tests/OhMyMarkdownTests/SVGBlockRenderingTypesTests.swift`
 
 ```swift
 import Testing
@@ -52,7 +52,7 @@ struct SVGBlockRenderingTypesTests {
 
     @Test("markdownSVGBlockSource attribute key is stable")
     func attrKey() {
-        #expect(NSAttributedString.Key.markdownSVGBlockSource.rawValue == "MarkdownKit.svgBlockSource")
+        #expect(NSAttributedString.Key.markdownSVGBlockSource.rawValue == "OhMyMarkdown.svgBlockSource")
     }
 }
 ```
@@ -75,7 +75,7 @@ import AppKit
 public extension NSAttributedString.Key {
     /// 未渲染 SVG 代码块占位标记，载荷为 SVG body 源串，对标 .markdownMathSource。
     /// Marks an un-rendered ```svg code block; payload is the SVG body source string.
-    static let markdownSVGBlockSource = NSAttributedString.Key("MarkdownKit.svgBlockSource")
+    static let markdownSVGBlockSource = NSAttributedString.Key("OhMyMarkdown.svgBlockSource")
 }
 
 /// 已渲染的 SVG 块位图。`image.size` **必须**是点单位（与 MathRenderedGlyph 同契约）。
@@ -124,7 +124,7 @@ Expected: PASS (2 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/MarkdownRenderKit/SVGBlockRendering.swift Tests/MarkdownKitTests/SVGBlockRenderingTypesTests.swift
+git add Sources/MarkdownRenderKit/SVGBlockRendering.swift Tests/OhMyMarkdownTests/SVGBlockRenderingTypesTests.swift
 git commit -m "feat(renderkit): SVGBlockRendering protocol + types + .markdownSVGBlockSource"
 ```
 
@@ -134,11 +134,11 @@ git commit -m "feat(renderkit): SVGBlockRendering protocol + types + .markdownSV
 
 **Files:**
 - Modify: `Sources/MarkdownRenderKit/AttributedStringRenderer.swift` (add 3 stored fields; branch `renderCodeBlock`; add `renderSVGBlock`)
-- Test: `Tests/MarkdownKitTests/SVGBlockRenderTests.swift`
+- Test: `Tests/OhMyMarkdownTests/SVGBlockRenderTests.swift`
 
 **Behavior (spec §4):** add `public var svgBlockCache: [SVGBlockCacheKey: SVGBlockGlyph] = [:]`, `public var svgRasterScale: CGFloat = 1`, `public var svgRendererGeneration: Int = 0` (mirror the existing `mathCache`/`mathRasterScale`/`mathRendererGeneration` declarations — read them, place the svg trio adjacently with the same access level). In `renderCodeBlock(language:body:)`, **before** existing logic: `if language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "svg" { return self.renderSVGBlock(svg: body) }`. `renderSVGBlock`: build `SVGBlockCacheKey(svg: body, availableWidth: self.availableWidth, rasterScale: self.svgRasterScale, rendererGeneration: self.svgRendererGeneration)`; **hit** → single centered `NSTextAttachment` (`attachment.image = glyph.image`; `attachment.bounds = CGRect(x: 0, y: 0, width: glyph.image.size.width, height: glyph.image.size.height)`; wrap in `NSAttributedString(attachment:)` with a paragraph style `alignment = .center` + the file's existing block paragraph spacing); **miss** → call the **existing** code-block rendering for `body`/`language` unchanged, then `addAttribute(.markdownSVGBlockSource, value: body, range: NSRange(location: 0, length: result.length))` on the produced string. No color injection. Non-`svg` languages: zero change (the early branch only triggers on exact `svg`).
 
-- [ ] **Step 1: Write the failing test** — `Tests/MarkdownKitTests/SVGBlockRenderTests.swift`
+- [ ] **Step 1: Write the failing test** — `Tests/OhMyMarkdownTests/SVGBlockRenderTests.swift`
 
 ```swift
 import Testing
@@ -279,7 +279,7 @@ Expected: all prior tests still pass (the extraction must be behavior-neutral).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/MarkdownRenderKit/AttributedStringRenderer.swift Tests/MarkdownKitTests/SVGBlockRenderTests.swift
+git add Sources/MarkdownRenderKit/AttributedStringRenderer.swift Tests/OhMyMarkdownTests/SVGBlockRenderTests.swift
 git commit -m "feat(renderkit): renderCodeBlock svg branch — cache-hit attachment / miss highlighted+marker"
 ```
 
@@ -289,13 +289,13 @@ git commit -m "feat(renderkit): renderCodeBlock svg branch — cache-hit attachm
 
 **Files:**
 - Create: `Sources/MarkdownPlatformView/SVGBlockLoadCoordinator.swift`
-- Test: `Tests/MarkdownKitTests/SVGBlockLoadCoordinatorTests.swift`
+- Test: `Tests/OhMyMarkdownTests/SVGBlockLoadCoordinatorTests.swift`
 
 **Mirror `Sources/MarkdownPlatformView/MathLoadCoordinator.swift` verbatim**, substituting types: `MathRendering`→`SVGBlockRendering`, `MathCacheKey`→`SVGBlockCacheKey`, `MathRenderedGlyph`→`SVGBlockGlyph`, `MathRenderOutcome`→`SVGBlockOutcome`, `render(latex:display:pointSize:scale:color:)`→`render(svg:availableWidth:scale:)`. **Keep the documented intentional "stale-generation entry is unreachable / LRU-bounded — do NOT 'fix'" comment** (PR#4 round-1 reasoned-reject — same design applies). Same caps (`positiveCap=256`, `negativeCap=1024`), same `setRenderer`/`invalidateForScaleChange`/`glyph(for:)`/`isNegativeCached`/`loadIfNeeded`/`finish`/`awaitGlyph`/`drain` semantics. `loadIfNeeded` signature: `loadIfNeeded(key: SVGBlockCacheKey, svg: String, availableWidth: CGFloat, scale: CGFloat) -> Bool`.
 
-- [ ] **Step 1: Write the failing test** — `Tests/MarkdownKitTests/SVGBlockLoadCoordinatorTests.swift`
+- [ ] **Step 1: Write the failing test** — `Tests/OhMyMarkdownTests/SVGBlockLoadCoordinatorTests.swift`
 
-Mirror `Tests/MarkdownKitTests/MathLoadCoordinatorTests.swift` test matrix exactly with svg types. Stub renderer must be a `final class ... @unchecked Sendable` (PR#4 round-1 lesson — protocol is AnyObject). Full code:
+Mirror `Tests/OhMyMarkdownTests/MathLoadCoordinatorTests.swift` test matrix exactly with svg types. Stub renderer must be a `final class ... @unchecked Sendable` (PR#4 round-1 lesson — protocol is AnyObject). Full code:
 
 ```swift
 import Testing
@@ -400,18 +400,18 @@ Expected: PASS (6 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/MarkdownPlatformView/SVGBlockLoadCoordinator.swift Tests/MarkdownKitTests/SVGBlockLoadCoordinatorTests.swift
+git add Sources/MarkdownPlatformView/SVGBlockLoadCoordinator.swift Tests/OhMyMarkdownTests/SVGBlockLoadCoordinatorTests.swift
 git commit -m "feat(platformview): SVGBlockLoadCoordinator mirroring MathLoadCoordinator"
 ```
 
 ---
 
-### Task 4: shared identity helper + `.svgRenderer(_:)` modifier (MarkdownKit)
+### Task 4: shared identity helper + `.svgRenderer(_:)` modifier (OhMyMarkdown)
 
 **Files:**
-- Create: `Sources/MarkdownKit/SVGBlockRendererIdentity.swift`
-- Create: `Sources/MarkdownKit/SVGBlockRendererModifier.swift`
-- Test: `Tests/MarkdownKitTests/SVGBlockRendererModifierTests.swift`
+- Create: `Sources/OhMyMarkdown/SVGBlockRendererIdentity.swift`
+- Create: `Sources/OhMyMarkdown/SVGBlockRendererModifier.swift`
+- Test: `Tests/OhMyMarkdownTests/SVGBlockRendererModifierTests.swift`
 
 **Delta vs spec §6:** identity guard is a **single shared internal helper** (PR#4 round-5 — not per-representable duplication). Modifier param is **`(any SVGBlockRendering)?`** optional (PR#4 round-5 — runtime disable without branching the view tree).
 
@@ -420,7 +420,7 @@ git commit -m "feat(platformview): SVGBlockLoadCoordinator mirroring MathLoadCoo
 ```swift
 import Testing
 import SwiftUI
-@testable import MarkdownKit
+@testable import OhMyMarkdown
 @testable import MarkdownRenderKit
 
 private final class R: SVGBlockRendering, @unchecked Sendable {
@@ -462,7 +462,7 @@ Expected: FAIL — `markdownSVGBlockRenderer`/`isSameSVGBlockRenderer`/`svgRende
 
 - [ ] **Step 3: Write minimal implementation**
 
-`Sources/MarkdownKit/SVGBlockRendererIdentity.swift` (mirror `MathRendererIdentity.swift` exactly, svg types, internal access):
+`Sources/OhMyMarkdown/SVGBlockRendererIdentity.swift` (mirror `MathRendererIdentity.swift` exactly, svg types, internal access):
 
 ```swift
 import MarkdownRenderKit
@@ -478,7 +478,7 @@ func isSameSVGBlockRenderer(_ a: (any SVGBlockRendering)?, _ b: (any SVGBlockRen
 }
 ```
 
-`Sources/MarkdownKit/SVGBlockRendererModifier.swift` (mirror `MathRendererModifier.swift`, optional param):
+`Sources/OhMyMarkdown/SVGBlockRendererModifier.swift` (mirror `MathRendererModifier.swift`, optional param):
 
 ```swift
 import SwiftUI
@@ -513,8 +513,8 @@ Expected: PASS (3 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/MarkdownKit/SVGBlockRendererIdentity.swift Sources/MarkdownKit/SVGBlockRendererModifier.swift Tests/MarkdownKitTests/SVGBlockRendererModifierTests.swift
-git commit -m "feat(markdownkit): .svgRenderer(_:) optional modifier + shared identity helper"
+git add Sources/OhMyMarkdown/SVGBlockRendererIdentity.swift Sources/OhMyMarkdown/SVGBlockRendererModifier.swift Tests/OhMyMarkdownTests/SVGBlockRendererModifierTests.swift
+git commit -m "feat(oh-my-markdown): .svgRenderer(_:) optional modifier + shared identity helper"
 ```
 
 ---
@@ -523,8 +523,8 @@ git commit -m "feat(markdownkit): .svgRenderer(_:) optional modifier + shared id
 
 **Files:**
 - Modify: `Sources/MarkdownPlatformView/MarkdownLabelView.swift` (both `#if canImport(UIKit)` and `#elseif canImport(AppKit)` class bodies, symmetric)
-- Modify: `Sources/MarkdownKit/MarkdownText.swift`, `Sources/MarkdownKit/MarkdownStreamingText.swift` (representable: read env + identity-guarded assignment)
-- Test: `Tests/MarkdownKitTests/SVGBlockViewWiringTests.swift`, `Tests/MarkdownMathTests/StreamingSVGBlockCacheSurvivesRendererRecreationTests.swift`
+- Modify: `Sources/OhMyMarkdown/MarkdownText.swift`, `Sources/OhMyMarkdown/MarkdownStreamingText.swift` (representable: read env + identity-guarded assignment)
+- Test: `Tests/OhMyMarkdownTests/SVGBlockViewWiringTests.swift`, `Tests/MarkdownMathTests/StreamingSVGBlockCacheSurvivesRendererRecreationTests.swift`
 
 **Delta vs spec §5 (CRITICAL — post-PR#4):** the svg cache/scale/generation are **view-owned** (`private var _svgBlockCache: [SVGBlockCacheKey: SVGBlockGlyph] = [:]`, `_svgRasterScale: CGFloat = 1`, `_svgBlockRendererGeneration: Int = 0`) and **re-seeded into every freshly created renderer in the `cachedRenderer` getter**, exactly mirroring `_mathCache`/`_imageCache` (post-`e364b4e`). The spec's "svgBlockCache on renderer, platform fills it" alone would reintroduce the streaming-width-churn cache-discard bug `e364b4e` fixed — do NOT do renderer-only.
 
@@ -532,7 +532,7 @@ Read in `MarkdownLabelView.swift` (both platform branches): `_mathCache`/`_image
 
 - [ ] **Step 1: Write the failing tests**
 
-`Tests/MarkdownKitTests/SVGBlockViewWiringTests.swift`:
+`Tests/OhMyMarkdownTests/SVGBlockViewWiringTests.swift`:
 
 ```swift
 import Testing
@@ -676,7 +676,7 @@ Run: `swift test 2>&1 | tail -3` (all green, math/Bug1-4 guards unaffected) and 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add Sources/MarkdownPlatformView/MarkdownLabelView.swift Sources/MarkdownKit/MarkdownText.swift Sources/MarkdownKit/MarkdownStreamingText.swift Tests/MarkdownKitTests/SVGBlockViewWiringTests.swift Tests/MarkdownMathTests/StreamingSVGBlockCacheSurvivesRendererRecreationTests.swift
+git add Sources/MarkdownPlatformView/MarkdownLabelView.swift Sources/OhMyMarkdown/MarkdownText.swift Sources/OhMyMarkdown/MarkdownStreamingText.swift Tests/OhMyMarkdownTests/SVGBlockViewWiringTests.swift Tests/MarkdownMathTests/StreamingSVGBlockCacheSurvivesRendererRecreationTests.swift
 git commit -m "feat(platformview): view-owned svg cache + triggerSVGBlockLoads wiring (iOS+AppKit, faithful churn guard)"
 ```
 
@@ -809,7 +809,7 @@ git commit -m "feat(math): SwiftDrawSVGBlockRenderer (self-contained, fit-width,
 
 **Files:**
 - Modify: `Example/Sources/ContentView.swift` (add `.svgRenderer(SwiftDrawSVGBlockRenderer())` to RenderTab & StreamTab; add a ```svg block to sample content)
-- Test: `Tests/MarkdownKitTests/SVGBlockDegradationTests.swift`
+- Test: `Tests/OhMyMarkdownTests/SVGBlockDegradationTests.swift`
 
 - [ ] **Step 1: Write the failing test** — degradation contract
 
@@ -867,7 +867,7 @@ Run, all must pass:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Example/Sources/ContentView.swift Tests/MarkdownKitTests/SVGBlockDegradationTests.swift
+git add Example/Sources/ContentView.swift Tests/OhMyMarkdownTests/SVGBlockDegradationTests.swift
 git commit -m "feat(example): wire .svgRenderer + sample ```svg; degradation contract guard"
 ```
 

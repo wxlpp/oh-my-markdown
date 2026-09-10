@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/../.." && pwd -P)"
-fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/markdownkit-unchecked.XXXXXX")"
+fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-markdown-unchecked.XXXXXX")"
 trap 'rm -r -- "$fixture_dir"' EXIT
 mkdir -p "$fixture_dir/Scripts" "$fixture_dir/Sources/MarkdownRenderKit"
 cp "$repo_root/Scripts/check-unchecked-sendable.sh" "$fixture_dir/Scripts/"

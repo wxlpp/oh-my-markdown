@@ -3,7 +3,7 @@
 set -u
 
 repo_root="$(cd "$(dirname "$0")/../.." && pwd -P)"
-fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/markdownkit-delivery-gates.XXXXXX")"
+fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-markdown-delivery-gates.XXXXXX")"
 trap 'rm -rf "$fixture_root"' EXIT
 failures=0
 
@@ -61,7 +61,7 @@ printf '%s\n' '#!/bin/bash' \
     'fi' \
     'bundle="${@: -1}"' \
     'case "$bundle" in' \
-    '  *package*) printf '\''%s\n'\'' '\''{"testNodes":[{"nodeType":"Unit test bundle","name":"MarkdownKitTests","children":[{"nodeType":"Test Case","name":"Parsed blocks include stable source fingerprints","result":"Passed"}]},{"nodeType":"Unit test bundle","name":"MarkdownMathTests","children":[{"nodeType":"Test Case","name":"合法公式 → .rendered，尺寸为正","result":"Passed"}]}]}'\'' ;;' \
+    '  *package*) printf '\''%s\n'\'' '\''{"testNodes":[{"nodeType":"Unit test bundle","name":"OhMyMarkdownTests","children":[{"nodeType":"Test Case","name":"Parsed blocks include stable source fingerprints","result":"Passed"}]},{"nodeType":"Unit test bundle","name":"MarkdownMathTests","children":[{"nodeType":"Test Case","name":"合法公式 → .rendered，尺寸为正","result":"Passed"}]}]}'\'' ;;' \
     '  *example*) printf '\''%s\n'\'' '\''{"testNodes":[{"nodeType":"Unit test bundle","name":"ExampleTests","children":[{"nodeType":"Test Case","name":"Smoke markdown parses one heading","result":"Passed"}]},{"nodeType":"UI test bundle","name":"ExampleUITests","children":[{"nodeType":"Test Case","name":"testRootDemoIsAccessible()","result":"Passed"}]}]}'\'' ;;' \
     '  *suite-failed*) printf '\''%s\n'\'' '\''{"testNodes":[{"nodeType":"Unit test bundle","name":"RequiredTarget","result":"Passed","children":[{"nodeType":"Test Suite","name":"RequiredSuite","result":"Failed","children":[{"nodeType":"Test Case","name":"requiredCase","result":"Passed"}]}]}]}'\'' ;;' \
     '  *suite-missing*) printf '\''%s\n'\'' '\''{"testNodes":[{"nodeType":"Unit test bundle","name":"RequiredTarget","result":"Passed","children":[{"nodeType":"Test Suite","name":"RequiredSuite","result":null,"children":[{"nodeType":"Test Case","name":"requiredCase","result":"Passed"}]}]}]}'\'' ;;' \
@@ -78,7 +78,7 @@ chmod +x "$fixture_root/bin/swift" "$fixture_root/bin/xcodebuild" "$fixture_root
     "$fixture_root/bin/swiftformat" "$fixture_root/bin/sw_vers"
 
 printf '%s\n' \
-    '{"ios18":{"requiredTargets":["MarkdownKitTests","MarkdownMathTests","ExampleTests","ExampleUITests"],' \
+    '{"ios18":{"requiredTargets":["OhMyMarkdownTests","MarkdownMathTests","ExampleTests","ExampleUITests"],' \
     '"requiredTests":["Parsed blocks include stable source fingerprints","合法公式 → .rendered，尺寸为正",' \
     '"Smoke markdown parses one heading","testRootDemoIsAccessible()"]},' \
     '"failureFixture":{"requiredTargets":["RequiredTarget"],"requiredTests":["requiredCase"]}}' \

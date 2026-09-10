@@ -14,7 +14,7 @@ fi
 # including prose, is confined to the audited files listed here; adding a file to
 # this list is the review control point.
 platform_image_files="
-MarkdownKit/Exports.swift
+OhMyMarkdown/Exports.swift
 MarkdownMath/SVGRasterizer.swift
 MarkdownPlatformView/ImageResidencyLedger.swift
 MarkdownPlatformView/MathLoadCoordinator.swift

@@ -4,12 +4,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "MarkdownKit",
+    name: "oh-my-markdown",
     defaultLocalization: "en",
     platforms: [.iOS(.v18), .macOS(.v15)],
     products: [
-        // Consumer-facing umbrella product — import MarkdownKit to get SwiftUI views.
-        .library(name: "MarkdownKit", targets: ["MarkdownKit"]),
+        // Consumer-facing umbrella product — import OhMyMarkdown to get SwiftUI views.
+        .library(name: "OhMyMarkdown", targets: ["OhMyMarkdown"]),
         // Individual layers, available for consumers that only need a subset.
         .library(name: "MarkdownCore", targets: ["MarkdownCore"]),
         .library(name: "MarkdownRenderKit", targets: ["MarkdownRenderKit"]),
@@ -28,8 +28,8 @@ let package = Package(
         // commit、behind_by=0），所以换成版本区间不丢任何东西。
         //
         // 必须换掉的原因不是洁癖：**只要本包含有 revision 依赖，它自己就永远无法被下游按
-        // 版本引用**。SwiftPM 会直接拒绝解析，报 "package 'markdownkit' is required using
-        // a stable-version but 'markdownkit' depends on an unstable-version package
+        // 版本引用**。SwiftPM 会直接拒绝解析，报 "package 'oh-my-markdown' is required using
+        // a stable-version but 'oh-my-markdown' depends on an unstable-version package
         // 'swiftdraw'"。打了 tag 也没用——这正是 v0.1.0 发出去之后才发现的。
         .package(url: "https://github.com/swhitty/SwiftDraw.git", .upToNextMinor(from: "0.29.0")),
     ],
@@ -65,12 +65,12 @@ let package = Package(
             resources: [.process("Resources")]
         ),
 
-        // MARK: - MarkdownKit
+        // MARK: - OhMyMarkdown
 
         // SwiftUI layer — thin wrappers around MarkdownPlatformView.
         // This is what most consumers import.
         .target(
-            name: "MarkdownKit",
+            name: "OhMyMarkdown",
             dependencies: ["MarkdownPlatformView"]
         ),
 
@@ -89,8 +89,8 @@ let package = Package(
         // MARK: - Tests
 
         .testTarget(
-            name: "MarkdownKitTests",
-            dependencies: ["MarkdownCore", "MarkdownRenderKit", "MarkdownPlatformView", "MarkdownKit"],
+            name: "OhMyMarkdownTests",
+            dependencies: ["MarkdownCore", "MarkdownRenderKit", "MarkdownPlatformView", "OhMyMarkdown"],
             resources: [.copy("Fixtures/RenderGolden")]
         ),
         .testTarget(

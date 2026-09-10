@@ -49,17 +49,17 @@ appear in a result bundle with a nonzero count and zero skips:
 ```bash
 mkdir -p .artifacts
 D="$(mktemp -d .artifacts/local-ios18.XXXXXX)"
-xcodebuild test -scheme MarkdownKit-Package \
+xcodebuild test -scheme oh-my-markdown-Package \
   -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' \
-  -resultBundlePath "$D/MarkdownKit-iOS18.xcresult"
+  -resultBundlePath "$D/OhMyMarkdown-iOS18.xcresult"
 xcodebuild test -project Example/Example.xcodeproj -scheme Example \
   -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' \
   -resultBundlePath "$D/Example-iOS18.xcresult"
 
 Scripts/assert-xcresult-tests.sh ios18 \
-  "$D/MarkdownKit-iOS18.xcresult" "$D/Example-iOS18.xcresult"
-Scripts/assert-xcresult-tests.sh ios18-accessibility "$D/MarkdownKit-iOS18.xcresult"
-Scripts/assert-xcresult-tests.sh ios18-dynamic-type  "$D/MarkdownKit-iOS18.xcresult"
+  "$D/OhMyMarkdown-iOS18.xcresult" "$D/Example-iOS18.xcresult"
+Scripts/assert-xcresult-tests.sh ios18-accessibility "$D/OhMyMarkdown-iOS18.xcresult"
+Scripts/assert-xcresult-tests.sh ios18-dynamic-type  "$D/OhMyMarkdown-iOS18.xcresult"
 ```
 
 Adding an iOS-only behaviour means adding its test to the matching manifest
@@ -100,11 +100,11 @@ late — that is deliberate, and each suite's `.timeLimit` turns it into a failu
 
 ## Release process
 
-1. Confirm the build is [passing in GitHub Actions](https://github.com/wxlpp/MarkdownKit/actions)
+1. Confirm the build is [passing in GitHub Actions](https://github.com/wxlpp/oh-my-markdown/actions)
 2. Push a release commit
    1. Create a new Main section at the top
    2. Rename the old Main section like:
-          ## [1.0.5](https://github.com/wxlpp/MarkdownKit/releases/tag/1.0.5)
+          ## [1.0.5](https://github.com/wxlpp/oh-my-markdown/releases/tag/1.0.5)
           Released on 2019-10-15.
 3. Create a GitHub release
    1. Tag the release (like `1.0.5`)

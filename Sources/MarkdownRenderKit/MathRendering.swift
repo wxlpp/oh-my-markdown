@@ -16,7 +16,7 @@ public struct MathRendererConfiguration: Sendable {
 }
 
 extension NSAttributedString.Key {
-    public static let markdownMathSource = NSAttributedString.Key("MarkdownKit.mathSource")
+    public static let markdownMathSource = NSAttributedString.Key("OhMyMarkdown.mathSource")
 }
 
 /// Immutable raster result. Negative offsets place the glyph below the baseline.

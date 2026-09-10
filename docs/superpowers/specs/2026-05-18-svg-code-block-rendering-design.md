@@ -39,7 +39,7 @@
 MarkdownCore         无改动（复用 BlockNode.codeBlock）
 MarkdownRenderKit    新增 SVGBlockRendering 协议+类型 + .markdownSVGBlockSource + renderCodeBlock 分支（零依赖，平台无关）
 MarkdownPlatformView 新增 SVGBlockLoadCoordinator（镜像 MathLoadCoordinator）+ MarkdownLabelView 并行接线（零新依赖）
-MarkdownKit          新增 .svgRenderer(_:) 修饰符 + EnvironmentValues.markdownSVGBlockRenderer（镜像 .mathRenderer）
+OhMyMarkdown          新增 .svgRenderer(_:) 修饰符 + EnvironmentValues.markdownSVGBlockRenderer（镜像 .mathRenderer）
 MarkdownMath  [现有] 新增 SwiftDrawSVGBlockRenderer: SVGBlockRendering（复用现有 SVGRasterizer 的 SwiftDraw 光栅化）
 ```
 
@@ -52,7 +52,7 @@ MarkdownMath  [现有] 新增 SwiftDrawSVGBlockRenderer: SVGBlockRendering（复
 ```swift
 extension NSAttributedString.Key {
     /// 未渲染 SVG 代码块占位标记，载荷为 SVG body 源串，对标 .markdownMathSource。
-    public static let markdownSVGBlockSource = NSAttributedString.Key("MarkdownKit.svgBlockSource")
+    public static let markdownSVGBlockSource = NSAttributedString.Key("OhMyMarkdown.svgBlockSource")
 }
 
 public struct SVGBlockGlyph: Sendable {
@@ -99,9 +99,9 @@ public protocol SVGBlockRendering: Sendable {
 - 新增 `triggerSVGBlockLoads(in:)`，紧随既有 `triggerMathLoads` 调用点（4 处：iOS/AppKit × 全量/增量），**镜像 Bug 11 修复后的 triggerMathLoads 最终形态**：同步枚举 `.markdownSVGBlockSource` 收集请求 → 单个 `Task` 读一次 `generation` 构键 → `loadIfNeeded` 全部 → `awaitGlyph` 全部 → 一次合并 `await MainActor.run { _cachedRenderer?.svgRasterScale/svgRendererGeneration/svgBlockCache[key] 回写 + updateContent() }`（仅 resolved 非空时一次 updateContent）；scale 取值与 math 同（iOS `window?.screen.scale`、AppKit `window?.backingScaleFactor`）。回写经既有 `resetLayout()`（Bug 1 修复后已含对称 layout 失效，svg 块同样剧烈改变高度，复用该已修路径即正确）。
 - 异步回写复用 `resetLayout()` 既有（Bug 1 已修）失效纪律；不另改 resetLayout。
 
-## 6. MarkdownKit：.svgRenderer(_:) 修饰符
+## 6. OhMyMarkdown：.svgRenderer(_:) 修饰符
 
-新增 `Sources/MarkdownKit/SVGBlockRendererModifier.swift`（镜像 `MathRendererModifier`）：私有 `EnvironmentKey` + `public var EnvironmentValues.markdownSVGBlockRenderer:(any SVGBlockRendering)?` + `public func View.svgRenderer(_:) -> some View`。`MarkdownText`/`MarkdownStreamingText` 的 representable（iOS+AppKit）读 `@Environment(\.markdownSVGBlockRenderer)` 并在 update 中赋 `view.svgBlockRenderer`——**带与 Bug 12 同款的 `lastSVGBlockRenderer` 身份守卫**（`isSameSVGBlockRenderer` 引用身份比较），避免每次 SwiftUI 刷新触发 `setRenderer` 清空缓存。`MarkdownEditor` 不接（编辑器不渲染）。
+新增 `Sources/OhMyMarkdown/SVGBlockRendererModifier.swift`（镜像 `MathRendererModifier`）：私有 `EnvironmentKey` + `public var EnvironmentValues.markdownSVGBlockRenderer:(any SVGBlockRendering)?` + `public func View.svgRenderer(_:) -> some View`。`MarkdownText`/`MarkdownStreamingText` 的 representable（iOS+AppKit）读 `@Environment(\.markdownSVGBlockRenderer)` 并在 update 中赋 `view.svgBlockRenderer`——**带与 Bug 12 同款的 `lastSVGBlockRenderer` 身份守卫**（`isSameSVGBlockRenderer` 引用身份比较），避免每次 SwiftUI 刷新触发 `setRenderer` 清空缓存。`MarkdownEditor` 不接（编辑器不渲染）。
 
 ## 7. MarkdownMath：SwiftDrawSVGBlockRenderer
 
@@ -113,7 +113,7 @@ public protocol SVGBlockRendering: Sendable {
 
 - **RenderKit**（macOS 可跑，零依赖）：`language=="svg"`（含大小写/空白）→ 未命中出**语法高亮代码块 + `.markdownSVGBlockSource` 属性**（非裸占位）；命中 `svgBlockCache` → 居中 `NSTextAttachment`、`bounds.size==image.size`、`origin.y==0`、独立段 `alignment=.center`；非 `svg` 语言代码块渲染**零变化**（回归既有 codeBlock 高亮）；`SVGBlockCacheKey` 任一维度（svg/availableWidth/rasterScale/generation）不同则不等。
 - **SVGBlockLoadCoordinator**（macOS）：镜像 MathLoadCoordinator 测试矩阵——nil renderer 不派发；.rendered 进正缓存+不重复派发；.failed 负缓存+不重复；.cancelled 不缓存可重试；setRenderer generation++ 且清缓存；LRU 超 cap 逐出；invalidateForScaleChange 清缓存且 generation 不变；awaitGlyph per-key（无需 drain 即得字形）。
-- **MarkdownKit env**（macOS）：`markdownSVGBlockRenderer` 默认 nil、设后可取回；representable 身份守卫——同实例不重复 setRenderer（钉 Bug-12 同款，真守卫）。
+- **OhMyMarkdown env**（macOS）：`markdownSVGBlockRenderer` 默认 nil、设后可取回；representable 身份守卫——同实例不重复 setRenderer（钉 Bug-12 同款，真守卫）。
 - **视图接线**（非 GUI）：渲染含 ` ```svg ` 文档 → `.markdownSVGBlockSource` 占位属性可枚举 → 驱动 coordinator + 回写 `svgBlockCache` → 二次渲染出 attachment（镜像 MathViewWiringTests）。
 - **MarkdownMath gated**（macOS，`MarkdownMathTests`）：真实 SVG（含 viewBox）→ `.rendered`，`image.size` 为点量级（非 pixel×scale）且宽 ≤ availableWidth、保比例、不超原生；非法 SVG → `.failed`；取消 → `.cancelled`；不注入颜色（彩色 SVG 像素保留作者颜色，非被改写）。
 - **降级**：未注入 svgRenderer → ` ```svg ` 仍是语法高亮代码块（不空不崩）；SwiftDraw 解析失败 → 降级代码块。

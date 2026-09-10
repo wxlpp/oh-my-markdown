@@ -1,4 +1,4 @@
-# MarkdownKit Release Test Kit
+# oh-my-markdown 发布测试工具包
 
 This file defines the repository commands and runtime evidence required before release work can proceed. Run every command from the repository root. Generated results belong under `.artifacts/`, which is intentionally ignored by Git.
 
@@ -25,10 +25,10 @@ Scripts/check-runtime-environment.sh ios18
 mkdir -p .artifacts
 HARDENING_RESULT_DIR="$(mktemp -d "$PWD/.artifacts/ios18.XXXXXX")"
 xcodebuild test \
-  -scheme MarkdownKit-Package \
+  -scheme oh-my-markdown-Package \
   -destination 'platform=iOS Simulator,OS=18.0,name=iPhone 16 Pro' \
-  -resultBundlePath "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.xcresult" \
-  | tee "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.log"
+  -resultBundlePath "$HARDENING_RESULT_DIR/OhMyMarkdown-iOS18.xcresult" \
+  | tee "$HARDENING_RESULT_DIR/OhMyMarkdown-iOS18.log"
 xcodebuild test \
   -project Example/Example.xcodeproj \
   -scheme Example \
@@ -36,7 +36,7 @@ xcodebuild test \
   -resultBundlePath "$HARDENING_RESULT_DIR/Example-iOS18.xcresult" \
   | tee "$HARDENING_RESULT_DIR/Example-iOS18.log"
 HARDENING_ARTIFACTS_DIR="$HARDENING_RESULT_DIR" Scripts/assert-xcresult-tests.sh ios18 \
-  "$HARDENING_RESULT_DIR/MarkdownKit-iOS18.xcresult" \
+  "$HARDENING_RESULT_DIR/OhMyMarkdown-iOS18.xcresult" \
   "$HARDENING_RESULT_DIR/Example-iOS18.xcresult"
 Scripts/write-runtime-metadata.sh ios18 success "$HARDENING_RESULT_DIR/runtime-metadata.txt"
 ```
@@ -52,12 +52,12 @@ mkdir -p .artifacts
 HARDENING_RESULT_DIR="$(mktemp -d "$PWD/.artifacts/macos15.XXXXXX")"
 Scripts/run-static-gates.sh "$HARDENING_RESULT_DIR"
 xcodebuild test \
-  -scheme MarkdownKit-Package \
+  -scheme oh-my-markdown-Package \
   -destination 'platform=macOS' \
-  -resultBundlePath "$HARDENING_RESULT_DIR/MarkdownKit-macOS15.xcresult" \
-  | tee "$HARDENING_RESULT_DIR/MarkdownKit-macOS15.log"
+  -resultBundlePath "$HARDENING_RESULT_DIR/OhMyMarkdown-macOS15.xcresult" \
+  | tee "$HARDENING_RESULT_DIR/OhMyMarkdown-macOS15.log"
 HARDENING_ARTIFACTS_DIR="$HARDENING_RESULT_DIR" Scripts/assert-xcresult-tests.sh macos15 \
-  "$HARDENING_RESULT_DIR/MarkdownKit-macOS15.xcresult"
+  "$HARDENING_RESULT_DIR/OhMyMarkdown-macOS15.xcresult"
 Scripts/write-runtime-metadata.sh macos15 success "$HARDENING_RESULT_DIR/runtime-metadata.txt"
 ```
 

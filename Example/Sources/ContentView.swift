@@ -1,5 +1,5 @@
-import MarkdownKit
 import MarkdownMath
+import OhMyMarkdown
 import SwiftUI
 
 // MARK: - ContentView
@@ -16,7 +16,7 @@ struct ContentView: View {
             CapabilitiesTab()
                 .tabItem { Label("能力", systemImage: "lock.shield") }
         }
-        .accessibilityIdentifier("markdownkit.example.root")
+        .accessibilityIdentifier("oh-my-markdown.example.root")
     }
 }
 
@@ -82,7 +82,7 @@ private struct RenderTab: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
             }
-            .navigationTitle("MarkdownKit")
+            .navigationTitle("oh-my-markdown")
             .inlineNavigationTitleDisplayMode()
             .toolbar {
                 ToolbarItem(placement: .principal) {
@@ -332,7 +332,7 @@ private struct CapabilitiesTab: View {
 
     @ViewBuilder private var controls: some View {
         Toggle("远程图片（.defaultHTTPS）", isOn: self.$remoteImages)
-        Toggle("放行 markdownkit: scheme", isOn: self.$allowCustomScheme)
+        Toggle("放行 oh-my-markdown: scheme", isOn: self.$allowCustomScheme)
         LabeledContent("字号") {
             Picker("字号", selection: self.$size) {
                 Text("默认").tag(DynamicTypeSize.large)
@@ -352,7 +352,7 @@ private struct CapabilitiesTab: View {
             )
             .onMarkdownResourceError { self.failures.append($0) }
             .dynamicTypeSize(self.size)
-            .accessibilityIdentifier("markdownkit.example.capabilities.document")
+            .accessibilityIdentifier("oh-my-markdown.example.capabilities.document")
     }
 
     private func evidence(_ proxy: MarkdownSelectionProxy) -> some View {
@@ -428,12 +428,12 @@ private let capabilitiesMarkdown = """
 
 关闭时下面是占位符，**没有任何请求离开进程**；打开后走 `.defaultHTTPS`。
 
-![一张远程图片](https://example.invalid/markdownkit-demo.png)
+![一张远程图片](https://example.invalid/oh-my-markdown-demo.png)
 
 ## 链接
 
 - [https 链接](https://swift.org) —— 默认策略即放行
-- [markdownkit: 自定义 scheme](markdownkit://demo/open) —— 需要策略与 handler 同时放行
+- [oh-my-markdown: 自定义 scheme](oh-my-markdown://demo/open) —— 需要策略与 handler 同时放行
 
 ## 大字号
 
@@ -452,7 +452,7 @@ private let capabilitiesMarkdown = """
 // MARK: - Sample content
 
 private let sampleMarkdown = """
-# MarkdownKit
+# oh-my-markdown
 
 基于 **TextKit 2** 构建的高性能 Markdown 渲染引擎，支持文字选择与流式输出。
 
@@ -468,7 +468,7 @@ private let sampleMarkdown = """
 
 ```swift
 // 静态渲染
-MarkdownText("**Hello** _MarkdownKit_")
+MarkdownText("**Hello** _oh-my-markdown_")
 
 // 流式输出
 @State var source = ""
@@ -515,10 +515,10 @@ MarkdownText(source)
 
 ## 图片（随 app 打包）
 
-`markdownkit-banner.png` 是 app 自己的资源，由内置的 bundle loader 提供——不联网，
+`oh-my-markdown-banner.png` 是 app 自己的资源，由内置的 bundle loader 提供——不联网，
 也不需要开任何开关。远程图片才需要 `.markdownImages(.defaultHTTPS)`。
 
-![MarkdownKit bundle banner](markdownkit-banner.png)
+![oh-my-markdown bundle banner](oh-my-markdown-banner.png)
 
 ## 表格（窄表）
 
@@ -543,7 +543,7 @@ MarkdownText(source)
 
 | 框架 | Stars | 语言 | TextKit 版本 | SwiftUI | 流式 | 表格 | 代码高亮 | 最后更新 |
 |------|------:|:----:|:------------:|:-------:|:----:|:----:|:--------:|----------|
-| MarkdownKit | — | Swift | TextKit 2 | ✅ | ✅ | ✅ | ✅ | 2026 |
+| oh-my-markdown | — | Swift | TextKit 2 | ✅ | ✅ | ✅ | ✅ | 2026 |
 | Down | ~1.2k | Swift | TextKit 1 | ❌ | ❌ | ✅ | ✅ | 2024 |
 | Ink | ~2.8k | Swift | — | ❌ | ❌ | ✅ | ❌ | 2023 |
 | MarkdownUI | ~2.5k | Swift | — | ✅ | ❌ | ✅ | ✅ | 2025 |
@@ -615,7 +615,7 @@ $$\\begin{matrix} a & b \\\\ c & d \\end{matrix}$$
 
 完美支持**中文**与 English 混排。TextKit 2 原生支持 Unicode 全字符集，行内断字规则与系统文本视图保持一致。
 
-*Enjoy MarkdownKit!* ✨
+*Enjoy oh-my-markdown!* ✨
 """
 
 /// Simulate token-by-token streaming: split on every ~2 characters
@@ -623,7 +623,7 @@ private let streamTokens: [String] = {
     let text = """
     # 流式输出演示
 
-    这段文字模拟了大语言模型 **逐 token** 输出的场景，覆盖了 MarkdownKit 支持的各类语法元素。
+    这段文字模拟了大语言模型 **逐 token** 输出的场景，覆盖了 oh-my-markdown 支持的各类语法元素。
 
     ## 工作原理
 
@@ -760,7 +760,7 @@ private let streamTokens: [String] = {
 
     ---
 
-    **流式输出完成！** 🎉 感谢体验 MarkdownKit。
+    **流式输出完成！** 🎉 感谢体验 oh-my-markdown。
     """
     var tokens: [String] = []
     var idx = text.startIndex
