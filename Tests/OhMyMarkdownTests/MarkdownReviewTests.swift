@@ -137,7 +137,8 @@ struct MarkdownReviewTests {
         let copy = UIAction(title: "Copy") { _ in }
         let menu = try #require(view.editMenu(for: range, suggestedActions: [copy]))
         #expect(menu.children.count == 2)
-        #expect((menu.children.last as? UIAction)?.title == "评论")
+        #expect((menu.children.first as? UIAction)?.title == "评论")
+        #expect(menu.children.last?.title == "Copy")
         view.reviewConfiguration?.isCommentingEnabled = false
         #expect(view.editMenu(for: range, suggestedActions: [copy]) == nil)
         view.reviewConfiguration?.copyActionTitle = "复制"

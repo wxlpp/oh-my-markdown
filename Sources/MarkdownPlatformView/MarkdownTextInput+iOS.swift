@@ -86,9 +86,9 @@ extension MarkdownLabelView: UITextInput {
         var actions = suggestedActions.map(localized)
         if configuration.isCommentingEnabled, let snapshot = self.reviewSelection(in: range.nsRange) {
             let snapshotID = self.currentSnapshot?.id
-            actions.append(UIAction(title: configuration.commentActionTitle) { [weak self] _ in
+            actions.insert(UIAction(title: configuration.commentActionTitle) { [weak self] _ in
                 self?.performReviewComment(snapshot, snapshotID: snapshotID)
-            })
+            }, at: 0)
         } else if configuration.copyActionTitle == nil, configuration.copyMarkdownSourceActionTitle == nil {
             return nil
         }
