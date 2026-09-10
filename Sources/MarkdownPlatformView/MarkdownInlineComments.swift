@@ -55,6 +55,7 @@ extension MarkdownLabelView {
         let string = storage.string as NSString
         var frames: [String: CGRect] = [:]
         for slot in self.inlineCommentSlots {
+            guard slot.paragraph.location >= 0, slot.paragraph.location <= string.length, slot.paragraph.length > 0, slot.paragraph.length <= string.length - slot.paragraph.location else { continue }
             var end = NSMaxRange(slot.paragraph)
             while end > slot.paragraph.location && [10, 13].contains(string.character(at: end - 1)) {
                 end -= 1

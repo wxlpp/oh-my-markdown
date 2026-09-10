@@ -35,7 +35,14 @@ struct MarkdownReviewTests {
         view.reviewConfiguration?.inlineCommentHeights = [:]
         #expect(view.inlineCommentFrames().isEmpty)
         #expect(try #require(view.reviewRects(for: nextRange).first).minY < next.minY - 150)
+        view.reviewConfiguration?.inlineCommentHeights = ["a": 100]
+        view.reviewConfiguration = .init(documentID: "c", revision: "2", annotations: [.init(id: "a", selection: selection), .init(id: "b", selection: selection)], inlineCommentHeights: ["a": 100], onComment: { _ in })
+        #expect(view.inlineCommentFrames().isEmpty)
+        #expect(try #require(view.reviewRects(for: nextRange).first).minY < next.minY - 150)
+        view.reviewConfiguration = .init(documentID: "c", revision: "1", annotations: [.init(id: "a", selection: selection)], inlineCommentHeights: ["a": 100], onComment: { _ in })
         view.dismantleRenderSession()
+        #expect(view.inlineCommentFrames().isEmpty)
+        #expect(view.intrinsicContentSize.height >= 0)
     }
 
     @Test func snapshotRejectsStaleDocumentAndInvalidUTF16Ranges() throws {

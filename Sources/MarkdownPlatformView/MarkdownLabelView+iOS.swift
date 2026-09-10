@@ -31,7 +31,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
 
     public var reviewConfiguration: MarkdownReviewConfiguration? {
         didSet {
-            if oldValue?.annotations != self.reviewConfiguration?.annotations || oldValue?.inlineCommentHeights != self.reviewConfiguration?.inlineCommentHeights {
+            if oldValue?.documentID != self.reviewConfiguration?.documentID || oldValue?.revision != self.reviewConfiguration?.revision || oldValue?.annotations != self.reviewConfiguration?.annotations || oldValue?.inlineCommentHeights != self.reviewConfiguration?.inlineCommentHeights {
                 self.applyInlineCommentSpacing()
                 self.resetLayout()
             }
@@ -228,6 +228,8 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     package func dismantleRenderSession() {
         guard !self.isDismantled else { return }
         self.isDismantled = true
+        self.inlineCommentSlots = []
+        self.inlineCommentOriginalStyles = [:]
         let previousSnapshot = self.currentSnapshot
         self.contentStorage.performEditingTransaction {
             self.contentStorage.textStorage?.setAttributedString(NSAttributedString(string: ""))
