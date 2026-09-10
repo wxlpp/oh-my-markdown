@@ -48,6 +48,8 @@ public struct MarkdownReviewConfiguration {
     public let documentID: String
     public let revision: String
     public var annotations: [MarkdownAnnotation]
+    public var inlineCommentHeights: [String: CGFloat]
+    public var onInlineCommentLayout: @MainActor ([String: CGRect]) -> Void
     public var commentActionTitle: String
     public var isCommentingEnabled: Bool
     public var copyActionTitle: String?
@@ -55,10 +57,12 @@ public struct MarkdownReviewConfiguration {
     public var onComment: @MainActor (MarkdownSelectionSnapshot) -> Void
     public var onAnnotationTap: @MainActor (String) -> Void
 
-    public init(documentID: String, revision: String, annotations: [MarkdownAnnotation] = [], commentActionTitle: String = "Comment", isCommentingEnabled: Bool = true, copyActionTitle: String? = nil, copyMarkdownSourceActionTitle: String? = nil, onComment: @escaping @MainActor (MarkdownSelectionSnapshot) -> Void, onAnnotationTap: @escaping @MainActor (String) -> Void = { _ in }) {
+    public init(documentID: String, revision: String, annotations: [MarkdownAnnotation] = [], inlineCommentHeights: [String: CGFloat] = [:], onInlineCommentLayout: @escaping @MainActor ([String: CGRect]) -> Void = { _ in }, commentActionTitle: String = "Comment", isCommentingEnabled: Bool = true, copyActionTitle: String? = nil, copyMarkdownSourceActionTitle: String? = nil, onComment: @escaping @MainActor (MarkdownSelectionSnapshot) -> Void, onAnnotationTap: @escaping @MainActor (String) -> Void = { _ in }) {
         self.documentID = documentID
         self.revision = revision
         self.annotations = annotations
+        self.inlineCommentHeights = inlineCommentHeights
+        self.onInlineCommentLayout = onInlineCommentLayout
         self.commentActionTitle = commentActionTitle
         self.isCommentingEnabled = isCommentingEnabled
         self.copyActionTitle = copyActionTitle

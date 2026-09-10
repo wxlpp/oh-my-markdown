@@ -88,3 +88,13 @@ MarkdownSelectionReader { selection in
 - macOS 定向运行 `MarkdownReviewTests`、`IncrementalMaterializationTests`、`MarkdownCopyTests`、`PlatformSessionWiringTests`：58项 / 4组通过。
 - 同组测试在 iOS 18.0 / iPhone 16 Pro：57项 / 4组通过；结果为 `.artifacts/review-ios18-review-fixes.xcresult`。macOS 独有菜单测试不计入 iOS 数量。
 - Release warnings-as-errors 构建、图片 owner 审计、链接激活审计、SwiftFormat 和 `git diff --check` 通过。本次修复未更改公共 API。
+
+### 段落下方内联评论（2026-09-11）
+
+`MarkdownReviewText` 新增 `inlineCommentHeights`（批注 ID 对应宿主评论卡高度）和 `onInlineCommentLayout`（返回本地坐标中的卡片矩形）。宿主在矩形处绘制自己的评论 UI；库为选区末尾所在段落增加间距，同段多条评论按 annotations 顺序排列，卡间留 12 点。无有效锚点或无高度时不插入空间。
+
+此布局只修改 TextKit 段落属性，不向正文插入字符；复制、选区 UTF-16 偏移和 `renderedContentID` 不变。安装资源/内容快照前恢复原段落间距，随后重新验证锚点并应用间距。布局回调在主线程触发，SwiftUI 宿主应在后续主线程任务中同步几何状态，避免布局期间同步改状态。
+
+- macOS `swift test --filter MarkdownReviewTests`：7 项通过，日志 `/tmp/markdown-inline-tests.log`。
+- iOS 18.0 同组：7 项通过，结果 `/tmp/markdown-inline-ios-verified.xcresult`。
+- 新增覆盖同段多评论不重叠、后续正文下移、移除恢复、复制/选区不变且不触发重物化。

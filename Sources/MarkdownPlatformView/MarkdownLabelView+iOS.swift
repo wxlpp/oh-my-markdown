@@ -30,10 +30,19 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     }
 
     public var reviewConfiguration: MarkdownReviewConfiguration? {
-        didSet { self.setNeedsDisplay() }
+        didSet {
+            if oldValue?.annotations != self.reviewConfiguration?.annotations || oldValue?.inlineCommentHeights != self.reviewConfiguration?.inlineCommentHeights {
+                self.applyInlineCommentSpacing()
+                self.resetLayout()
+            }
+            self.publishInlineCommentLayout()
+            self.setNeedsDisplay()
+        }
     }
 
     package var reviewSnapshotReady = true
+    var inlineCommentOriginalStyles: [NSRange: NSParagraphStyle] = [:]
+    var inlineCommentSlots: [InlineCommentSlot] = []
 
     package private(set) var lastStorageEditRange: NSRange?
     package private(set) var currentCommitToken: RenderCommitToken?
@@ -125,6 +134,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     package func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken) {
         precondition(self.currentCommitToken.map { token.sequence >= $0.sequence } ?? true)
         self.currentCommitToken = token
+        self.restoreInlineCommentSpacing()
         self.reviewSnapshotReady = false
         self.imageRequests = self.imageRequests.filter { $0.key.token == token }
         self.lastRenderError = nil
@@ -156,6 +166,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.renderedDocument = snapshot.displayModel.preparedDocument
         if self.reviewConfiguration != nil { _ = snapshot.renderedContentID }
         self.reviewSnapshotReady = true
+        self.applyInlineCommentSpacing()
         self.trailingDecorationInset = 0
         if let blocks = self.renderedDocument?.blockStorage, blocks.count > 0 {
             switch blocks[blocks.count - 1].block {
@@ -537,6 +548,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             self._pendingTableOverlaySyncStart = nil
             self._syncTableOverlays(from: startIndex)
         }
+        self.publishInlineCommentLayout()
     }
 
     override public func sizeThatFits(_ size: CGSize) -> CGSize {
@@ -656,7 +668,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// Last measured intrinsic height — gates invalidateIntrinsicContentSize() calls.
     private var trailingDecorationInset: CGFloat = 0
     private var contentHeight: CGFloat {
-        ceil(self.layoutManager.usageBoundsForTextContainer.height) + self.trailingDecorationInset
+        max(ceil(self.layoutManager.usageBoundsForTextContainer.height) + self.trailingDecorationInset, self.inlineCommentFrames().values.map(\.maxY).max() ?? 0)
     }
 
     private var _lastHeight: CGFloat = 0
@@ -834,6 +846,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.scheduleDeferredHeightUpdate()
         self._pendingTableOverlaySyncStart = nil
         self._syncTableOverlays(from: 0)
+        self.publishInlineCommentLayout()
     }
 
     private func scheduleDeferredHeightUpdate() {

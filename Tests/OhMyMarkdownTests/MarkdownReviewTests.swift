@@ -11,6 +11,33 @@ import AppKit
 
 @MainActor
 struct MarkdownReviewTests {
+    @Test func inlineCommentsReserveSpaceWithoutChangingSelectionOrParsing() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 600))
+        view.reviewConfiguration = .init(documentID: "c", revision: "1", onComment: { _ in })
+        view.setMarkdown("First paragraph.\n\nSecond paragraph.")
+        await view.settled { view.currentSnapshot != nil }
+        let selection = try #require(view.reviewSelection(in: NSRange(location: 0, length: 5)))
+        let original = try #require(view.contentStorage.textStorage?.string)
+        let count = view._materializationCount
+        view.reviewConfiguration?.annotations = [.init(id: "a", selection: selection), .init(id: "b", selection: selection)]
+        view.reviewConfiguration?.inlineCommentHeights = ["a": 100, "b": 80]
+        let frames = view.inlineCommentFrames()
+        let first = try #require(frames["a"])
+        let second = try #require(frames["b"])
+        #expect(first.height == 100)
+        #expect(second.minY >= first.maxY + 12)
+        let nextRange = (original as NSString).range(of: "Second")
+        let next = try #require(view.reviewRects(for: nextRange).first)
+        #expect(next.minY >= second.maxY)
+        #expect(view.contentStorage.textStorage?.string == original)
+        #expect(view.reviewSelection(in: selection.renderedRange) == selection)
+        #expect(view._materializationCount == count)
+        view.reviewConfiguration?.inlineCommentHeights = [:]
+        #expect(view.inlineCommentFrames().isEmpty)
+        #expect(try #require(view.reviewRects(for: nextRange).first).minY < next.minY - 150)
+        view.dismantleRenderSession()
+    }
+
     @Test func snapshotRejectsStaleDocumentAndInvalidUTF16Ranges() throws {
         let text = NSAttributedString(string: "中文😀 **text**")
         let selection = MarkdownSelectionSnapshot(documentID: "chapter", revision: "v1", renderedRange: NSRange(location: 0, length: 4), quote: "中文😀", renderedContentID: "rendered")
