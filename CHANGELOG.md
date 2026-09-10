@@ -4,8 +4,10 @@ OhMyMarkdown adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Main](https://github.com/wxlpp/oh-my-markdown)
 ### Added
+- 新增可选 `markdownTheme` / `MarkdownLabelView.theme`：默认跟随系统，支持固定浅色、深色与清除覆盖。
 
 ### Changed
+- 修复运行中系统外观切换后 Markdown 正文颜色不刷新，以及连续表格、代码、引用背景重叠和末尾裁切。
 - 项目更名为 `oh-my-markdown`，主库产品及 Swift 模块更名为 `OhMyMarkdown`。这是破坏性变更：接入方需更新仓库 URL、产品依赖及 `import OhMyMarkdown`。
 
 ### Removed

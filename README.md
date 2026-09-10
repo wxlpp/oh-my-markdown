@@ -333,3 +333,17 @@ Evan Wang
 
 - [swift-markdown](https://github.com/swiftlang/swift-markdown) - The excellent Markdown parser
 - Apple's TextKit 2 framework
+
+### 主题与系统外观
+
+默认无需配置：`MarkdownText` 与 `MarkdownStreamingText` 使用默认样式并跟随宿主的系统外观，运行中切换深浅色也会刷新已有正文、代码高亮与表格。
+
+```swift
+MarkdownText(source) // 默认跟随系统
+MarkdownText(source).markdownTheme(.dark) // 固定深色
+MarkdownStreamingText(stream).markdownTheme(.light) // 固定浅色
+MarkdownText(source).markdownTheme(.system) // 显式恢复跟随系统
+MarkdownText(source).markdownTheme(nil) // 清除父级主题覆盖，恢复跟随系统
+```
+
+UIKit/AppKit 直接使用时，设置 `MarkdownLabelView.theme`，同样支持 `nil`、`.system`、`.light`、`.dark`。主题只决定动态颜色的解析外观；`markdownStyle` 中显式指定的固定颜色不会被覆盖。宿主负责提供与固定主题匹配的页面背景。

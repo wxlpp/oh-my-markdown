@@ -33,6 +33,7 @@ public struct MarkdownText: View {
         _MarkdownTextRepresentable(
             source: self.source,
             style: self.style,
+            theme: self.theme,
             mathRenderer: self.mathRenderer,
             svgBlockRenderer: self.svgBlockRenderer,
             remoteImages: self.remoteImages,
@@ -43,6 +44,7 @@ public struct MarkdownText: View {
         .accessibilityElement(children: .contain)
     }
 
+    @Environment(\.markdownTheme) private var theme
     @Environment(\.markdownStyle) private var style
     @Environment(\.markdownMathRenderer) private var mathRenderer
     @Environment(\.markdownSVGBlockRenderer) private var svgBlockRenderer
@@ -74,6 +76,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
 
     let source: String
     let style: RenderStyle
+    let theme: MarkdownTheme?
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
     let remoteImages: MarkdownImageConfiguration
@@ -95,6 +98,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
+        uiView.theme = self.theme
         uiView.onResourceError = self.resourceErrorHandler
         // Always forwarded, like the view's own didSet: identity is derived from
         // the policy's type, so a host that tightens a stateful policy produces an
@@ -175,6 +179,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
 
     let source: String
     let style: RenderStyle
+    let theme: MarkdownTheme?
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
     let remoteImages: MarkdownImageConfiguration
@@ -191,6 +196,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
+        nsView.theme = self.theme
         nsView.onResourceError = self.resourceErrorHandler
         // Always forwarded, like the view's own didSet: identity is derived from
         // the policy's type, so a host that tightens a stateful policy produces an
@@ -261,12 +267,20 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
 #endif
 
 extension EnvironmentValues {
-    /// The ``RenderStyle`` applied to ``MarkdownText`` views in this environment.
+    /// Nil inherits the host appearance for static and streaming Markdown.
+    @Entry public var markdownTheme: MarkdownTheme? = nil
+    /// The style applied to Markdown views in this environment.
     @Entry public var markdownStyle: RenderStyle = .default
 }
 
 extension View {
-    /// Applies a custom ``RenderStyle`` to all ``MarkdownText`` views in this subtree.
+    /// Fixes the appearance of static and streaming Markdown. Nil or `.system`
+    /// follows the host; custom fixed colors in a RenderStyle remain unchanged.
+    public func markdownTheme(_ theme: MarkdownTheme?) -> some View {
+        environment(\.markdownTheme, theme)
+    }
+
+    /// Applies a custom RenderStyle to Markdown views in this subtree.
     public func markdownStyle(_ style: RenderStyle) -> some View {
         environment(\.markdownStyle, style)
     }

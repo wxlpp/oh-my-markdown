@@ -76,6 +76,7 @@ public struct MarkdownStreamingText: View {
         _MarkdownStreamingTextRepresentable(
             source: self.source,
             style: self.style,
+            theme: self.theme,
             mathRenderer: self.mathRenderer,
             svgBlockRenderer: self.svgBlockRenderer,
             remoteImages: self.remoteImages,
@@ -86,6 +87,7 @@ public struct MarkdownStreamingText: View {
         .accessibilityElement(children: .contain)
     }
 
+    @Environment(\.markdownTheme) private var theme
     @Environment(\.markdownStyle) private var style
     @Environment(\.markdownMathRenderer) private var mathRenderer
     @Environment(\.markdownSVGBlockRenderer) private var svgBlockRenderer
@@ -111,6 +113,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
 
     let source: MarkdownStreamingSource
     let style: RenderStyle
+    let theme: MarkdownTheme?
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
     let remoteImages: MarkdownImageConfiguration
@@ -140,6 +143,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
+        uiView.theme = self.theme
         uiView.onResourceError = self.resourceErrorHandler
         // Always forwarded, like the view's own didSet: identity is derived from
         // the policy's type, so a host that tightens a stateful policy produces an
@@ -224,6 +228,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
 
     let source: MarkdownStreamingSource
     let style: RenderStyle
+    let theme: MarkdownTheme?
     let mathRenderer: MathRendererConfiguration?
     let svgBlockRenderer: SVGRendererConfiguration?
     let remoteImages: MarkdownImageConfiguration
@@ -249,6 +254,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
+        nsView.theme = self.theme
         nsView.onResourceError = self.resourceErrorHandler
         // Always forwarded, like the view's own didSet: identity is derived from
         // the policy's type, so a host that tightens a stateful policy produces an
