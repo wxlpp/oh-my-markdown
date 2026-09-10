@@ -124,6 +124,7 @@ package struct RenderMaterializer {
         var starts: [Int] = []
         var owners: [any ResourceResidencyOwner] = []
         var overlays: [Int: RenderTableOverlay] = [:]
+        let blocks = model.preparedDocument?.blockStorage ?? PersistentValues([])
         for (index, bundle) in model.bundles.enumerated() {
             var prepared = self
             // Recipes have the same traversal order as their prepared runs.
@@ -140,8 +141,14 @@ package struct RenderMaterializer {
                     text: "\n", attributes: PreparedAttributes(color: nil, paragraph: PreparedParagraph(lineSpacing: 0)),
                     accessibilityOrdinal: -1
                 )
-                result.append(prepared.materializeRun(separator, resources: resources, owners: &owners))
+                let join = NSMutableAttributedString(attributedString: prepared.materializeRun(separator, resources: resources, owners: &owners))
+                if index - 1 < blocks.count, self.chromeInset(for: blocks[index - 1].block) > 0, result.length > 0,
+                   let paragraph = result.attribute(.paragraphStyle, at: result.length - 1, effectiveRange: nil) {
+                    join.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: join.length))
+                }
+                result.append(join)
             }
+            let blockStart = result.length
             for piece in bundle.content {
                 switch piece {
                 case .blockStart: starts.append(result.length)
@@ -149,8 +156,33 @@ package struct RenderMaterializer {
                 case .table(let table): result.append(prepared.materializeTable(table, resources: resources, owners: &owners, overlays: &overlays))
                 }
             }
+            if index < blocks.count {
+                let inset = self.chromeInset(for: blocks[index].block)
+                if inset > 0, result.length > blockStart {
+                    let string = result.mutableString
+                    let first = string.paragraphRange(for: NSRange(location: blockStart, length: 0))
+                    let last = string.paragraphRange(for: NSRange(location: result.length - 1, length: 0))
+                    for (range, leading) in [(first, true), (last, false)] {
+                        let style = ((result.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle) ?? .default).mutableCopy() as! NSMutableParagraphStyle
+                        if leading { style.paragraphSpacingBefore = max(style.paragraphSpacingBefore, inset + 4) }
+                        else { style.paragraphSpacing = max(style.paragraphSpacing, inset + 4) }
+                        result.addAttribute(.paragraphStyle, value: style, range: range)
+                    }
+                }
+            }
         }
         return RenderSnapshot(id: snapshotID, attributedString: result, displayModel: model, resourceOwners: owners, blockStarts: starts, tableOverlays: overlays)
+    }
+
+    private func chromeInset(for block: BlockNode) -> CGFloat {
+        switch block {
+        case .codeBlock(let language, _):
+            // SVG has its own placeholder/attachment reservation contract.
+            language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "svg" ? 0 : 8
+        case .table: 8
+        case .blockquote: 4
+        default: 0
+        }
     }
 
     private func paragraph(_ value: PreparedParagraph) -> NSParagraphStyle {

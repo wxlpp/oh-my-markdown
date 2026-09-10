@@ -50,11 +50,27 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self.sessionDriver = driver
     }
 
+    /// Nil and `.system` inherit the host appearance; explicit themes stay fixed.
+    public var theme: MarkdownTheme? {
+        didSet {
+            guard oldValue != self.theme else { return }
+            switch self.theme {
+            case .light: self.appearance = NSAppearance(named: .aqua)
+            case .dark: self.appearance = NSAppearance(named: .darkAqua)
+            case .system, nil: self.appearance = nil
+            }
+        }
+    }
+
     private func configurationSnapshot() -> RenderConfigurationSnapshot {
-        MarkdownRenderConfiguration(
-            style: self.renderStyle, configurationID: self.configurationID,
-            contentSizeCategory: self.contentSizeCategory
-        ).snapshot(generation: 0)
+        var snapshot: RenderConfigurationSnapshot!
+        self.effectiveAppearance.performAsCurrentDrawingAppearance {
+            snapshot = MarkdownRenderConfiguration(
+                style: self.renderStyle, configurationID: self.configurationID,
+                contentSizeCategory: self.contentSizeCategory
+            ).snapshot(generation: 0)
+        }
+        return snapshot
     }
 
     /// macOS has no system text-size trait to mirror, so this stays where the
@@ -107,6 +123,17 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self._liveString = NSMutableAttributedString(attributedString: snapshot.attributedString)
         self.blockStarts = snapshot.blockStarts
         self.renderedDocument = snapshot.displayModel.preparedDocument
+        self.trailingDecorationInset = 0
+        if let blocks = self.renderedDocument?.blockStorage, blocks.count > 0 {
+            switch blocks[blocks.count - 1].block {
+            case .codeBlock(let language, _):
+                if language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "svg" { self.trailingDecorationInset = 8 }
+            case .table:
+                if snapshot.tableOverlays[blocks.count - 1] == nil { self.trailingDecorationInset = 8 }
+            case .blockquote: self.trailingDecorationInset = 4
+            default: break
+            }
+        }
         // Rebuilds the accessibility elements on the way out, once: the frames
         // come from laid-out text segments, and `_syncTableOverlays` is the last
         // step that can move them.
@@ -164,6 +191,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         }
         self._liveString = NSMutableAttributedString(string: "")
         self.blockStarts = []
+        self.trailingDecorationInset = 0
         self.renderedDocument = nil
         self._tableOverlays.values.forEach { self.stopObservingTableOverlayScroll($0.scroll); $0.scroll.removeFromSuperview() }
         self._tableOverlays.removeAll()
@@ -179,6 +207,14 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self.requestedWidth = max(frame.width, 1)
         self.displayScale = NSScreen.main?.backingScaleFactor ?? 1
         self.buildStack()
+    }
+
+    override public func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        guard self.sessionDriver != nil else { return }
+        self.discardStyleDependentChrome()
+        self.updateContent()
+        self.needsDisplay = true
     }
 
     @available(*, unavailable)
@@ -198,7 +234,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         return NSSize(
             width: NSView.noIntrinsicMetric,
-            height: ceil(self.layoutManager.usageBoundsForTextContainer.height)
+            height: self.contentHeight
         )
     }
 
@@ -565,6 +601,11 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     /// Platform drawing mirror. The immutable current snapshot owns attachments.
     private var _liveString = NSMutableAttributedString()
     /// Last measured intrinsic height — gates invalidateIntrinsicContentSize() calls.
+    private var trailingDecorationInset: CGFloat = 0
+    private var contentHeight: CGFloat {
+        ceil(self.layoutManager.usageBoundsForTextContainer.height) + self.trailingDecorationInset
+    }
+
     private var _lastHeight: CGFloat = 0
     /// Coalesces expensive TextKit height queries during streaming updates.
     /// Test-only monotonic counter incremented as the *first line* of
@@ -705,7 +746,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
             self.sessionDriver?.send(.replaceWidth(w))
         }
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-        self._lastHeight = ceil(self.layoutManager.usageBoundsForTextContainer.height)
+        self._lastHeight = self.contentHeight
         invalidateIntrinsicContentSize()
         needsDisplay = true
         // Preserve host-relayout discipline: asynchronous resource snapshots
@@ -730,7 +771,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
 
     private func updateMeasuredHeightIfNeeded() {
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
-        let newHeight = ceil(layoutManager.usageBoundsForTextContainer.height)
+        let newHeight = self.contentHeight
         if abs(newHeight - self._lastHeight) > 0.5 {
             self._lastHeight = newHeight
             invalidateIntrinsicContentSize()

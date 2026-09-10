@@ -8,6 +8,13 @@ import AppKit
 
 // MARK: - RenderStyle
 
+/// Resolves dynamic Markdown colors using the host appearance or a fixed override.
+public enum MarkdownTheme: Sendable, Equatable {
+    case system
+    case light
+    case dark
+}
+
 /// Visual style applied when rendering Markdown to ``NSAttributedString``.
 ///
 /// Construct a custom value or use ``RenderStyle/default`` to get a system-
