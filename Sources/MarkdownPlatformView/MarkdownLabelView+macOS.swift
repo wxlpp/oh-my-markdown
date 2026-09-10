@@ -118,8 +118,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     package func replaceSnapshot(_ snapshot: RenderSnapshot, token: RenderCommitToken) {
         precondition(self.currentCommitToken.map { token.sequence >= $0.sequence } ?? true)
         self.currentCommitToken = token
-        self.reviewSnapshotReady = true
-        if self.reviewConfiguration != nil { _ = snapshot.renderedContentID }
+        self.reviewSnapshotReady = false
         self.imageRequests = self.imageRequests.filter { $0.key.token == token }
         self.lastRenderError = nil
         let previousSnapshot = self.currentSnapshot
@@ -144,6 +143,8 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         self.restoreSelection(previousSelection, after: edit)
         self.blockStarts = snapshot.blockStarts
         self.renderedDocument = snapshot.displayModel.preparedDocument
+        if self.reviewConfiguration != nil { _ = snapshot.renderedContentID }
+        self.reviewSnapshotReady = true
         self.trailingDecorationInset = 0
         if let blocks = self.renderedDocument?.blockStorage, blocks.count > 0 {
             switch blocks[blocks.count - 1].block {

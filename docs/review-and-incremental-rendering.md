@@ -70,3 +70,13 @@ MarkdownSelectionReader { selection in
 新增测试先确认旧实现缺少对应API与增量能力，再验证真实平台行为：61块流式文档编辑时，观察 `NSTextStorageDelegate` 的字符变更范围位于尾部，确认 backing 实例保留、未组装快照全文、原选区保留，并与全量平台安装比较富文本。中间替换、代码/引用间距、基线失配、配置变化、资源坐标变化、过期动作、重叠批注与只读状态均有定向覆盖。
 
 平台 API 根据 Apple 文档确认：[UITextInput 编辑菜单](https://developer.apple.com/documentation/uikit/uitextinput/editmenu(for:suggestedactions:))、[CryptoKit SHA256](https://developer.apple.com/documentation/cryptokit/sha256)。TextKit backing 的关联语义同时依据 Xcode 26.4 SDK 的 `NSTextContentManager.h` / `NSTextStorage.h` 核验。
+
+### 本次验证记录（2026-09-10）
+
+- `Scripts/Tests/delivery-gates-tests.sh`：通过。
+- `Scripts/run-static-gates.sh .artifacts/review-static-final`：全部通过；529项测试 / 77组，125.6秒；Release 构建启用 warnings-as-errors；平台版本、图片 owner 审计、链接激活审计及 SwiftFormat 均通过。
+- iOS 18.0 / iPhone 16 Pro：审阅、增量物化、平台事务25项通过；独立资源对抗14项通过，包含物化失败回滚、替换期间旧 backing 保留与回收。结果在 `.artifacts/review-ios18-transaction.xcresult` 和 `.artifacts/review-ios18-resource.xcresult`。
+- iOS Simulator 通用构建通过（iOS 18 deployment target）。原生菜单文案、只读模式、重叠批注几何及代码/引用/溢出表格增量等价均在 iOS 18 运行验证。
+- 本机 Xcode 26.4 / Swift 6.3 / macOS 26.3.1。最低 macOS 15 运行环境检查不满足；没有把本机测试充当 macOS 15 证据。尚未执行 Example iOS 18 的完整发布测试矩阵；本记录为本次库改动验证，不是完整版本发布声明。
+
+首次完整静态运行发现两个问题后进行了修复和复跑：新增绘制代码需归入现有审计文件；普通渲染路径不应支付审阅摘要计算成本。后者在三种 1 MiB 生产 session 与1000次生命周期压力测试中定向复跑通过，再通过完整门禁。未修改测试时限或放宽审计清单。
