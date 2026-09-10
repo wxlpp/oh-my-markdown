@@ -43,7 +43,15 @@ public final class RenderSnapshot {
     package let chunks: [MaterializedBlock]
     package let configuration: RenderConfigurationSnapshot?
     package let edit: MaterializedEdit?
-    public let renderedContentID: String
+    private var renderedIdentity: String?
+    public var renderedContentID: String {
+        if let renderedIdentity { return renderedIdentity }
+        let digests = self.chunks.isEmpty ? [renderedTextDigest(self.flattened?.string ?? "")] : self.chunks.map(\.textDigest)
+        let value = renderedDigest(digests)
+        self.renderedIdentity = value
+        return value
+    }
+
     public let materializationWork: MarkdownMaterializationWork
     package let renderedLength: Int
     public let displayModel: RenderDisplayModel
@@ -61,7 +69,6 @@ public final class RenderSnapshot {
         self.configuration = nil
         self.edit = nil
         self.materializationWork = MarkdownMaterializationWork(materializedBlocks: 0, reusedBlocks: 0, materializedUTF16: attributedString.length, fallbackReason: .unprepared)
-        self.renderedContentID = renderedDigest([renderedTextDigest(attributedString.string)])
         self.renderedLength = attributedString.length
         self.displayModel = displayModel
         self.resourceOwners = resourceOwners
@@ -77,7 +84,6 @@ public final class RenderSnapshot {
         self.edit = edit
         self.materializationWork = work
         self.flattened = nil
-        self.renderedContentID = renderedDigest(chunks.map(\.textDigest))
         var offset = 0
         var starts: [Int] = []
         var owners: [any ResourceResidencyOwner] = []
@@ -112,13 +118,19 @@ public enum MarkdownMaterializationFallback: String, Sendable {
 @MainActor
 package final class MaterializedBlock {
     package let text: NSAttributedString
-    package let textDigest: Data
+    private var digestStorage: Data?
+    package var textDigest: Data {
+        if let digestStorage { return digestStorage }
+        let digest = renderedTextDigest(self.text.string)
+        self.digestStorage = digest
+        return digest
+    }
+
     package let contentStart: Int
     package let owners: [any ResourceResidencyOwner]
     package let overlay: RenderTableOverlay?
     package init(text: NSAttributedString, contentStart: Int, owners: [any ResourceResidencyOwner], overlay: RenderTableOverlay?) {
         self.text = NSAttributedString(attributedString: text)
-        self.textDigest = renderedTextDigest(text.string)
         self.contentStart = contentStart
         self.owners = owners
         self.overlay = overlay
@@ -135,11 +147,9 @@ package struct MaterializedEdit {
 /// Stable block-composed identity. Hash each changed UTF-16 block once; combine
 /// fixed-size digests without flattening the unchanged rendered document.
 private func renderedTextDigest(_ text: String) -> Data {
-    var bytes = Data(capacity: text.utf16.count * 2)
-    for unit in text.utf16 {
-        bytes.append(UInt8(truncatingIfNeeded: unit))
-        bytes.append(UInt8(truncatingIfNeeded: unit >> 8))
-    }
+    // Every Swift String has a lossless UTF-16 representation. Foundation's
+    // bulk conversion avoids per-code-unit append overhead in debug builds.
+    let bytes = text.data(using: .utf16LittleEndian)!
     return Data(SHA256.hash(data: bytes))
 }
 

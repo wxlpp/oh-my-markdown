@@ -126,6 +126,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         precondition(self.currentCommitToken.map { token.sequence >= $0.sequence } ?? true)
         self.currentCommitToken = token
         self.reviewSnapshotReady = true
+        if self.reviewConfiguration != nil { _ = snapshot.renderedContentID }
         self.imageRequests = self.imageRequests.filter { $0.key.token == token }
         self.lastRenderError = nil
         let previousSnapshot = self.currentSnapshot
@@ -290,6 +291,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         get { self.renderedDocument?.blocks ?? [] }
         set {
             guard !self.isDismantled else { return }
+            self.reviewSnapshotReady = false
             self.driver().send(.setDocument(MarkdownDocument(parsedBlocks: newValue.map { ParsedBlockNode(block: $0) }), self.configurationSnapshot()))
         }
     }
@@ -333,7 +335,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         // chain, so anonymous ones would append a duplicate item per Markdown
         // view rather than replace.
         let command = UICommand(
-            title: MarkdownCopyCommandTitle.markdownSource,
+            title: self.reviewConfiguration?.copyMarkdownSourceActionTitle ?? MarkdownCopyCommandTitle.markdownSource,
             action: #selector(self.copyMarkdownSource(_:)),
             propertyList: nil,
             alternates: []
@@ -671,7 +673,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     package var sessionOverrides = RenderSessionOverrides()
     /// Test seam: forces the snapshot-replacement install closure to throw.
     package var _materializationFailureForTesting: (any Error)?
-    /// Every full re-materialization of the display model, including the ones each
+    /// Every materialization transaction, including incremental updates and ones each
     /// coalesced batch of resolved resources triggers. Bounds the cost that
     /// per-arrival resource completion imposes on a long document.
     package private(set) var _materializationCount = 0 {
@@ -928,9 +930,8 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
 
     /// The new owners are admitted, the snapshot is materialized and the sink is
     /// installed inside one synchronous MainActor turn. The outgoing snapshot's
-    /// own leases are never touched here: `replaceSnapshot` clears TextKit and
-    /// installs the replacement first, so the old backing stays charged until the
-    /// old snapshot itself is released.
+    /// own leases remain charged until `replaceSnapshot` finishes editing TextKit,
+    /// the drawing mirror and overlays; only then may the old snapshot be released.
     package func installSnapshot(model: RenderDisplayModel, configuration: RenderConfigurationSnapshot, token: RenderCommitToken) {
         guard !self.isDismantled else { return }
         self._materializationCount += 1

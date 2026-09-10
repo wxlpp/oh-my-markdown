@@ -289,3 +289,18 @@ struct MarkdownLabelDecorations {
         ctx.restoreGState()
     }
 }
+
+@MainActor
+extension MarkdownLabelView {
+    func drawReviewAnnotations(in context: CGContext) {
+        context.saveGState()
+        context.setFillColor(PlatformColor.systemYellow.withAlphaComponent(0.24).cgColor)
+        for annotation in self.validReviewAnnotations {
+            for rect in self.reviewRects(for: annotation.selection.renderedRange) {
+                context.fill(rect)
+                context.fill(CGRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2))
+            }
+        }
+        context.restoreGState()
+    }
+}

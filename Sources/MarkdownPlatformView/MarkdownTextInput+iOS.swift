@@ -74,13 +74,25 @@ final class MarkdownSelectionRect: UITextSelectionRect {
 extension MarkdownLabelView: UITextInput {
     public func editMenu(for textRange: UITextRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
         guard let range = textRange as? MarkdownTextRange,
-              let snapshot = self.reviewSelection(in: range.nsRange),
-              let configuration = self.reviewConfiguration, configuration.isCommentingEnabled else { return nil }
-        let snapshotID = self.currentSnapshot?.id
-        let action = UIAction(title: configuration.commentActionTitle, image: UIImage(systemName: "text.bubble")) { [weak self] _ in
-            self?.performReviewComment(snapshot, snapshotID: snapshotID)
+              let configuration = self.reviewConfiguration else { return nil }
+        func localized(_ element: UIMenuElement) -> UIMenuElement {
+            if let menu = element as? UIMenu { return menu.replacingChildren(menu.children.map(localized)) }
+            guard let command = element as? UICommand,
+                  let copy = command.copy() as? UICommand else { return element }
+            if command.action == #selector(self.copy(_:)), let title = configuration.copyActionTitle { copy.title = title }
+            if command.action == #selector(self.copyMarkdownSource(_:)), let title = configuration.copyMarkdownSourceActionTitle { copy.title = title }
+            return copy
         }
-        return UIMenu(children: suggestedActions + [action])
+        var actions = suggestedActions.map(localized)
+        if configuration.isCommentingEnabled, let snapshot = self.reviewSelection(in: range.nsRange) {
+            let snapshotID = self.currentSnapshot?.id
+            actions.append(UIAction(title: configuration.commentActionTitle) { [weak self] _ in
+                self?.performReviewComment(snapshot, snapshotID: snapshotID)
+            })
+        } else if configuration.copyActionTitle == nil, configuration.copyMarkdownSourceActionTitle == nil {
+            return nil
+        }
+        return UIMenu(children: actions)
     }
 
     // MARK: UIKeyInput (required by UITextInput)

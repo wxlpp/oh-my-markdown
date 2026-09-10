@@ -50,15 +50,19 @@ public struct MarkdownReviewConfiguration {
     public var annotations: [MarkdownAnnotation]
     public var commentActionTitle: String
     public var isCommentingEnabled: Bool
+    public var copyActionTitle: String?
+    public var copyMarkdownSourceActionTitle: String?
     public var onComment: @MainActor (MarkdownSelectionSnapshot) -> Void
     public var onAnnotationTap: @MainActor (String) -> Void
 
-    public init(documentID: String, revision: String, annotations: [MarkdownAnnotation] = [], commentActionTitle: String = "Comment", isCommentingEnabled: Bool = true, onComment: @escaping @MainActor (MarkdownSelectionSnapshot) -> Void, onAnnotationTap: @escaping @MainActor (String) -> Void = { _ in }) {
+    public init(documentID: String, revision: String, annotations: [MarkdownAnnotation] = [], commentActionTitle: String = "Comment", isCommentingEnabled: Bool = true, copyActionTitle: String? = nil, copyMarkdownSourceActionTitle: String? = nil, onComment: @escaping @MainActor (MarkdownSelectionSnapshot) -> Void, onAnnotationTap: @escaping @MainActor (String) -> Void = { _ in }) {
         self.documentID = documentID
         self.revision = revision
         self.annotations = annotations
         self.commentActionTitle = commentActionTitle
         self.isCommentingEnabled = isCommentingEnabled
+        self.copyActionTitle = copyActionTitle
+        self.copyMarkdownSourceActionTitle = copyMarkdownSourceActionTitle
         self.onComment = onComment
         self.onAnnotationTap = onAnnotationTap
     }
@@ -126,18 +130,6 @@ extension MarkdownLabelView {
             return true
         }
         return rects
-    }
-
-    func drawReviewAnnotations(in context: CGContext) {
-        context.saveGState()
-        context.setFillColor(PlatformColor.systemYellow.withAlphaComponent(0.24).cgColor)
-        for annotation in self.validReviewAnnotations {
-            for rect in self.reviewRects(for: annotation.selection.renderedRange) {
-                context.fill(rect)
-                context.fill(CGRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2))
-            }
-        }
-        context.restoreGState()
     }
 
     @discardableResult

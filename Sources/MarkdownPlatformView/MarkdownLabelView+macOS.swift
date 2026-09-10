@@ -119,6 +119,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         precondition(self.currentCommitToken.map { token.sequence >= $0.sequence } ?? true)
         self.currentCommitToken = token
         self.reviewSnapshotReady = true
+        if self.reviewConfiguration != nil { _ = snapshot.renderedContentID }
         self.imageRequests = self.imageRequests.filter { $0.key.token == token }
         self.lastRenderError = nil
         let previousSnapshot = self.currentSnapshot
@@ -272,6 +273,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         get { self.renderedDocument?.blocks ?? [] }
         set {
             guard !self.isDismantled else { return }
+            self.reviewSnapshotReady = false
             self.driver().send(.setDocument(MarkdownDocument(parsedBlocks: newValue.map { ParsedBlockNode(block: $0) }), self.configurationSnapshot()))
         }
     }
@@ -411,13 +413,18 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         let hostMenu = super.menu(for: event) ?? self.menu
         guard self.currentRenderedSelectionRange() != nil else { return hostMenu }
         let menu = (hostMenu?.copy() as? NSMenu) ?? NSMenu()
+        if let title = self.reviewConfiguration?.copyActionTitle {
+            for item in menu.items where item.action == #selector(self.copy(_:)) {
+                item.title = title
+            }
+        }
         if !menu.items.isEmpty { menu.addItem(.separator()) }
         // Only the items added here get retargeted: retargeting the host's would
         // point them at a view that does not respond to their action, which
         // AppKit then disables.
-        var added: [(String, Selector)] = [(MarkdownCopyCommandTitle.markdownSource, #selector(self.copyMarkdownSource(_:)))]
+        var added: [(String, Selector)] = [(self.reviewConfiguration?.copyMarkdownSourceActionTitle ?? MarkdownCopyCommandTitle.markdownSource, #selector(self.copyMarkdownSource(_:)))]
         if !menu.items.contains(where: { $0.action == #selector(self.copy(_:)) }) {
-            added.insert((MarkdownCopyCommandTitle.copy, #selector(self.copy(_:))), at: 0)
+            added.insert((self.reviewConfiguration?.copyActionTitle ?? MarkdownCopyCommandTitle.copy, #selector(self.copy(_:))), at: 0)
         }
         if let configuration = self.reviewConfiguration, configuration.isCommentingEnabled, self.selectionSnapshot != nil {
             added.append((configuration.commentActionTitle, #selector(self.commentOnSelection(_:))))
@@ -655,7 +662,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     package var sessionOverrides = RenderSessionOverrides()
     /// Test seam: forces the snapshot-replacement install closure to throw.
     package var _materializationFailureForTesting: (any Error)?
-    /// Every full re-materialization of the display model, including the ones each
+    /// Every materialization transaction, including incremental updates and ones each
     /// coalesced batch of resolved resources triggers. Bounds the cost that
     /// per-arrival resource completion imposes on a long document.
     package private(set) var _materializationCount = 0 {
@@ -861,9 +868,8 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
 
     /// The new owners are admitted, the snapshot is materialized and the sink is
     /// installed inside one synchronous MainActor turn. The outgoing snapshot's
-    /// own leases are never touched here: `replaceSnapshot` clears TextKit and
-    /// installs the replacement first, so the old backing stays charged until the
-    /// old snapshot itself is released.
+    /// own leases remain charged until `replaceSnapshot` finishes editing TextKit,
+    /// the drawing mirror and overlays; only then may the old snapshot be released.
     package func installSnapshot(model: RenderDisplayModel, configuration: RenderConfigurationSnapshot, token: RenderCommitToken) {
         guard !self.isDismantled else { return }
         self._materializationCount += 1

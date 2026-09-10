@@ -41,7 +41,11 @@ struct IncrementalMaterializationTests {
         #expect(next.chunks.first === old.chunks.first)
     }
 
-    @Test(arguments: [BlockNode.codeBlock(language: "swift", body: "let value = 12"), BlockNode.blockquote([.paragraph([.text("引用修改😀")])])])
+    @Test(arguments: [
+        BlockNode.codeBlock(language: "swift", body: "let value = 12"),
+        BlockNode.blockquote([.paragraph([.text("引用修改😀")])]),
+        BlockNode.table(columns: [.left], head: [TableCell(content: [.text("列")])], rows: [[TableCell(content: [.text(String(repeating: "wide", count: 60))])]]),
+    ])
     func decoratedMiddleReplacementKeepsTheRestEquivalent(changed: BlockNode) throws {
         let initial: [BlockNode] = [.paragraph([.text("prefix")]), .paragraph([.text("old")]), .paragraph([.text("next")]), .paragraph([.text("suffix")])]
         var edited = initial
@@ -55,6 +59,10 @@ struct IncrementalMaterializationTests {
         #expect(next.chunks.first === old.chunks.first)
         #expect(next.chunks.last === old.chunks.last)
         #expect(next.materializationWork.materializedBlocks == 2)
+        if let overlay = full.tableOverlays[1] {
+            #expect(next.tableOverlays[1]?.attributedString.isEqual(to: overlay.attributedString) == true)
+            #expect(next.tableOverlays[1]?.height == overlay.height)
+        }
     }
 
     @Test func staleBaselineAndConfigurationFallBack() throws {

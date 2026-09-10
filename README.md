@@ -17,6 +17,8 @@ A lightweight Markdown rendering and source editing library for iOS and macOS, b
 - 🌐 Perfect Chinese/CJK text support
 - ⚡️ Incremental streaming updates for chat-like output
 
+审阅接入、坐标身份及增量边界见[Markdown 审阅与增量上屏](docs/review-and-incremental-rendering.md)。
+
 ## 📋 Requirements
 
 - iOS 18.0+ / macOS 15.0+

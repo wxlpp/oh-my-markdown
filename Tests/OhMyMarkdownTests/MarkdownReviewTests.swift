@@ -44,6 +44,10 @@ struct MarkdownReviewTests {
         let snapshotID = view.currentSnapshot?.id
         view.performReviewComment(selection, snapshotID: snapshotID)
         #expect(comments == [selection])
+        view.reviewConfiguration?.isCommentingEnabled = false
+        view.performReviewComment(selection, snapshotID: snapshotID)
+        #expect(comments.count == 1)
+        view.reviewConfiguration?.isCommentingEnabled = true
         view.setMarkdown("first😀 changed")
         view.performReviewComment(selection, snapshotID: snapshotID)
         #expect(comments.count == 1)
@@ -71,4 +75,45 @@ struct MarkdownReviewTests {
         #expect(selection.status(documentID: "c", revision: "1", text: resolved.attributedString, renderedContentID: resolved.renderedContentID) == .renderedContentChanged)
         #expect(selection.matches(documentID: "c", revision: "1", text: rebuilt.attributedString, renderedContentID: rebuilt.renderedContentID))
     }
+
+    @Test func overlappingAnnotationsUseInputOrderAndExposeGeometryStatus() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        var tapped: [String] = []
+        view.reviewConfiguration = MarkdownReviewConfiguration(documentID: "c", revision: "1", onComment: { _ in }, onAnnotationTap: { tapped.append($0) })
+        view.setMarkdown("中文😀 **加粗**\n\n第二段")
+        await view.settled { view.currentSnapshot != nil }
+        let selection = try #require(view.reviewSelection(in: NSRange(location: 0, length: 4)))
+        view.reviewConfiguration?.annotations = [MarkdownAnnotation(id: "first", selection: selection), MarkdownAnnotation(id: "second", selection: selection)]
+        #expect(view.annotationStatus(id: "first") == .located)
+        let rect = try #require(view.annotationRect(id: "first"))
+        #expect(rect.width > 0 && rect.height > 0)
+        #expect(view.activateReviewAnnotation(at: CGPoint(x: rect.midX, y: rect.midY)))
+        #expect(tapped == ["first"])
+        view.dismantleRenderSession()
+    }
+
+    #if canImport(UIKit)
+    @Test func nativeSelectionMenuAddsCommentAndHonorsReadOnlyState() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        view.reviewConfiguration = MarkdownReviewConfiguration(documentID: "c", revision: "1", commentActionTitle: "评论", onComment: { _ in })
+        view.setMarkdown("中文😀")
+        await view.settled { view.currentSnapshot != nil }
+        let range = MarkdownTextRange(from: 0, to: 4)
+        let copy = UIAction(title: "Copy") { _ in }
+        let menu = try #require(view.editMenu(for: range, suggestedActions: [copy]))
+        #expect(menu.children.count == 2)
+        #expect((menu.children.last as? UIAction)?.title == "评论")
+        view.reviewConfiguration?.isCommentingEnabled = false
+        #expect(view.editMenu(for: range, suggestedActions: [copy]) == nil)
+        view.reviewConfiguration?.copyActionTitle = "复制"
+        view.reviewConfiguration?.copyMarkdownSourceActionTitle = "复制 Markdown 源码"
+        let rendered = UICommand(title: "Copy", action: #selector(MarkdownLabelView.copy(_:)), propertyList: nil, alternates: [])
+        let source = UICommand(title: "Copy Markdown Source", action: #selector(MarkdownLabelView.copyMarkdownSource(_:)), propertyList: nil, alternates: [])
+        let localized = try #require(view.editMenu(for: range, suggestedActions: [UIMenu(children: [rendered, source])]))
+        let group = try #require(localized.children.first as? UIMenu)
+        #expect(group.children.map(\.title) == ["复制", "复制 Markdown 源码"])
+        #expect(rendered.title == "Copy")
+        view.dismantleRenderSession()
+    }
+    #endif
 }
