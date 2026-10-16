@@ -22,9 +22,9 @@ struct AdaptiveLayoutTests {
         view.setMarkdown(Self.source)
         #expect(view.currentSnapshot == nil)
         #expect(view.intrinsicContentSize.height == 0)
-        #expect(view.sizeThatFits(CGSize(width: 320, height: .greatestFiniteMagnitude)).height == 0)
+        #expect(view.sizeThatFits(CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)).height == 0)
         await view.settled { view.currentSnapshot != nil }
-        #expect(view.sizeThatFits(CGSize(width: 320, height: .greatestFiniteMagnitude)).height > 100)
+        #expect(view.sizeThatFits(CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)).height > 100)
         #expect(view.intrinsicContentSize.height > 100)
     }
     #endif
