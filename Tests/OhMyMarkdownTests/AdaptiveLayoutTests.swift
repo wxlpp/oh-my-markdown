@@ -26,6 +26,11 @@ struct AdaptiveLayoutTests {
         await view.settled { view.currentSnapshot != nil }
         #expect(view.sizeThatFits(CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)).height > 100)
         #expect(view.intrinsicContentSize.height > 100)
+        let previousHeight = view.intrinsicContentSize.height
+        view.setMarkdown("短句")
+        await view.settled { view.currentSnapshot?.displayModel.source == "短句" }
+        #expect(view.intrinsicContentSize.height > 0)
+        #expect(view.intrinsicContentSize.height < previousHeight)
     }
     #endif
 
