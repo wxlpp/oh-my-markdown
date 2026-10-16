@@ -15,6 +15,20 @@ import AppKit
 @MainActor
 @Suite(.serialized, .timeLimit(.minutes(5)))
 struct AdaptiveLayoutTests {
+    #if canImport(UIKit)
+    @Test func pendingFirstSnapshotDoesNotMeasureTextKitEmptyLine() async {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 500))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown(Self.source)
+        #expect(view.currentSnapshot == nil)
+        #expect(view.intrinsicContentSize.height == 0)
+        #expect(view.sizeThatFits(CGSize(width: 320, height: .greatestFiniteMagnitude)).height == 0)
+        await view.settled { view.currentSnapshot != nil }
+        #expect(view.sizeThatFits(CGSize(width: 320, height: .greatestFiniteMagnitude)).height > 100)
+        #expect(view.intrinsicContentSize.height > 100)
+    }
+    #endif
+
     /// Every shape whose height comes from a different code path: wrapped body
     /// text, a heading, an indented code block, a quote, a list, a wide table,
     /// and an unresolved math attachment.
