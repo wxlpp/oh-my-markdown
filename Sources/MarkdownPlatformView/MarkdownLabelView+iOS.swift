@@ -679,7 +679,10 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     /// Last measured intrinsic height — gates invalidateIntrinsicContentSize() calls.
     private var trailingDecorationInset: CGFloat = 0
     private var contentHeight: CGFloat {
-        max(ceil(self.layoutManager.usageBoundsForTextContainer.height) + self.trailingDecorationInset, self.inlineCommentFrames().values.map(\.maxY).max() ?? 0)
+        // 尚未收到首个渲染快照时，TextKit 的空行高度不是文档的实测高度。
+        // 返回零，让虚拟列表保留已有估计，直到异步快照提交并使尺寸失效。
+        guard self.currentSnapshot != nil else { return 0 }
+        return max(ceil(self.layoutManager.usageBoundsForTextContainer.height) + self.trailingDecorationInset, self.inlineCommentFrames().values.map(\.maxY).max() ?? 0)
     }
 
     private var _lastHeight: CGFloat = 0
