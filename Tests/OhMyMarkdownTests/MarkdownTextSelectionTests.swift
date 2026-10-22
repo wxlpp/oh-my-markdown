@@ -26,6 +26,19 @@ struct MarkdownTextSelectionTests {
         }
     }
 
+    @Test @MainActor func lineEndBlankHitResolvesToInsertionBoundary() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("甲乙丙")
+        await view.settled { view.currentSnapshot != nil }
+        let end = view.caretRect(for: view.endOfDocument)
+        let position = try #require(view.closestPosition(to: CGPoint(x: end.maxX + 30, y: end.midY)))
+        #expect(view.offset(from: view.beginningOfDocument, to: position) == view.documentLength)
+        let start = view.caretRect(for: view.beginningOfDocument)
+        let before = try #require(view.closestPosition(to: CGPoint(x: start.minX - 30, y: start.midY)))
+        #expect(view.offset(from: view.beginningOfDocument, to: before) == 0)
+    }
+
     @Test(arguments: ["", "> "]) @MainActor func repeatedVerticalMovementRetainsHorizontalIntent(prefix: String) async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         defer { view.dismantleRenderSession() }

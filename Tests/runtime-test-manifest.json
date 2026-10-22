@@ -31,7 +31,8 @@
       "ruleChangeReplacesBusyRetry()",
       "platformSameSourceAndDocumentAuthority()",
       "unchangedSourceReparsesWhenEnvironmentChanges(streaming:)",
-      "cancelledSessionCannotOverwriteRestoredRules()"
+      "cancelledSessionCannotOverwriteRestoredRules()",
+      "lineEndBlankHitResolvesToInsertionBoundary()"
     ]
   },
   "macos15": {

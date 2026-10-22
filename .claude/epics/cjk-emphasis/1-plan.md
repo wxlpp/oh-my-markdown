@@ -81,3 +81,9 @@
 - SwiftUI 静态/流式统一 markdownParseOptions 环境 modifier。配置在 source 相等早退前转发；幂等比较由平台属性负责，避免 coordinator 重复持有同一状态。流式 listener 注册前先安装配置。
 - 会话专项39项通过；完整 macOS 测试539项通过（/tmp/cjk-markdown-full.log）。随后增加取消/恢复专项并格式化，CJK UI与会话5项通过（/tmp/cjk-ui-checkpoint.log，包含静态/流式及双向参数）。全量539不包含最后新增的取消恢复一项。
 - 尚未通过 iOS18/macOS15 发布门禁；尚未发布 fork、接 App、最终 Claude 评审或安装。此次为执行阶段 checkpoint。
+
+### 选择边界与发布环境续查
+
+- 新增 lineEndBlankHitResolvesToInsertionBoundary：行首外侧命中起点、行尾空白命中文档插入终点。iOS26.4选择专项16项通过（/tmp/selection-line-end.log），未复现需要改生产逻辑的问题。
+- 已创建 iOS18.0 的 iPhone16Pro，环境门禁通过，正在执行旧系统完整包测试。
+- 当前宿主macOS26.3.1；GitHub仓库actions/runners返回空列表，macOS15门禁目前无可执行runner，不能用当前macOS全量替代。仍有其他独立工作可推进。
