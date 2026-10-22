@@ -34,3 +34,10 @@
 - M4 的文档首尾上下左右非空返回用例全部通过，当前未复现 nil，未加入推测性 fallback。
 - 格式化后 iOS 26.4 的选择 suite 14 项通过（`/tmp/selection-edges.log`）；新增用例已登记运行时清单。
 - 仍待：M3 RTL/连字及行尾验证、M5 连续上下移动目标 x、完整库与 App 回归、最终外部复审。
+
+## 垂直导航与字形命中剩余验证
+
+- M3 扩展用例：中文、Arabic、office、emoji 与组合音标的字形左右半区均正确命中；未复现评审假设，保留现有字符 hit-test。行尾空白的产品语义仍需单独验证。
+- M5 已复现：连续经过短行后，回到长行时横向偏移约 60 点。TextKit 返回选区的 anchorPositionOffset 为 0，不能假定其自动保留（探针 `/tmp/selection-anchor-probe.log`，探针代码已删除）。
+- MarkdownTextPosition 在垂直导航链上传递起始 caret x，每步交给 TextKit anchorPositionOffset；水平导航及逻辑偏移产生的新位置不继承垂直锚点。不保存 NSTextLocation / NSTextSelection 跨内容编辑。
+- 格式化后选择 suite 15 项通过，包括四种字形样本、普通与引用缩进的连续两步/一次两行（`/tmp/selection-navigation-final.log`）。更新运行时清单；完整库/平台门禁及 App 验证仍待执行。

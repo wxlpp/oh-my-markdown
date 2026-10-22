@@ -6,14 +6,17 @@ import UIKit
 
 @Suite(.serialized)
 struct MarkdownTextSelectionTests {
-    @Test @MainActor func characterHitIncludesBothHalvesOfGlyph() async throws {
+    @Test(arguments: ["甲乙丙丁", "مرحبا", "office", "👩‍💻e\u{301}后"]) @MainActor func characterHitIncludesBothHalvesOfGlyph(sample: String) async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         defer { view.dismantleRenderSession() }
-        view.setMarkdown("甲乙丙丁")
+        view.setMarkdown(sample)
         await view.settled { view.currentSnapshot != nil }
-        for index in 0 ..< 4 {
+        var index = 0
+        for character in sample {
+            let length = String(character).utf16.count
             let start = try #require(view.position(from: view.beginningOfDocument, offset: index))
-            let end = try #require(view.position(from: start, offset: 1))
+            let end = try #require(view.position(from: start, offset: length))
+            index += length
             let range = try #require(view.textRange(from: start, to: end))
             let rect = view.firstRect(for: range)
             for fraction in [0.25, 0.75] {
@@ -21,6 +24,19 @@ struct MarkdownTextSelectionTests {
                 #expect(view.text(in: hit) == view.text(in: range))
             }
         }
+    }
+
+    @Test(arguments: ["", "> "]) @MainActor func repeatedVerticalMovementRetainsHorizontalIntent(prefix: String) async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("\(prefix)abcdefghij  \n\(prefix)x  \n\(prefix)abcdefghij")
+        await view.settled { view.currentSnapshot != nil }
+        let start = try #require(view.position(from: view.beginningOfDocument, offset: 8))
+        let short = try #require(view.position(from: start, in: .down, offset: 1))
+        let last = try #require(view.position(from: short, in: .down, offset: 1))
+        #expect(abs(view.caretRect(for: last).midX - view.caretRect(for: start).midX) < 1)
+        let twoLines = try #require(view.position(from: start, in: .down, offset: 2))
+        #expect(view.offset(from: last, to: twoLines) == 0)
     }
 
     @Test @MainActor func mixedDirectionCharacterExtensionSelectsOneGrapheme() async throws {

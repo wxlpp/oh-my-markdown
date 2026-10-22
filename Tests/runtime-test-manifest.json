@@ -18,11 +18,12 @@
       "verticalMovementFollowsRenderedLines()",
       "rightToLeftSelectionReportsItsDirectionAndVisualEdge()",
       "logicalOffsetsRejectPositionsOutsideDocument()",
-      "characterHitIncludesBothHalvesOfGlyph()",
+      "characterHitIncludesBothHalvesOfGlyph(sample:)",
       "mixedDirectionCharacterExtensionSelectsOneGrapheme()",
       "mixedDirectionRectsFollowSelectedRun()",
       "paragraphBoundaryRespectsStorageDirection()",
-      "farthestPositionExistsAtDocumentEdges()"
+      "farthestPositionExistsAtDocumentEdges()",
+      "repeatedVerticalMovementRetainsHorizontalIntent(prefix:)"
     ]
   },
   "macos15": {

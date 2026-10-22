@@ -8,11 +8,13 @@ import UIKit
 // MARK: - Helper types for UITextInput
 
 final class MarkdownTextPosition: UITextPosition {
-    init(_ offset: Int) {
+    init(_ offset: Int, verticalAnchor: CGFloat? = nil) {
         self.offset = offset
+        self.verticalAnchor = verticalAnchor
     }
 
     let offset: Int
+    let verticalAnchor: CGFloat?
 }
 
 final class MarkdownTextRange: UITextRange {
@@ -218,16 +220,22 @@ extension MarkdownLabelView: UITextInput {
               let range = makeTextRange(from: position.offset, to: position.offset) else { return nil }
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         var selection = NSTextSelection(range: range, affinity: .downstream, granularity: .character)
+        let vertical = direction == .up || direction == .down
+        let verticalAnchor = vertical ? (position.verticalAnchor ?? self.caretRect(for: position).minX) : nil
         let navigation = self.layoutManager.textSelectionNavigation
         let movement = Self.navigationDirection(direction, reversed: offset < 0)
         for _ in 0 ..< min(offset.magnitude, UInt(self.documentLength + 1)) {
+            if let verticalAnchor { selection.anchorPositionOffset = verticalAnchor }
             guard let next = navigation.destinationSelection(
                 for: selection, direction: movement, destination: .character, extending: false, confined: false
             ), next.textRanges.first != selection.textRanges.first else { break }
             selection = next
         }
         guard let destination = selection.textRanges.first else { return nil }
-        return MarkdownTextPosition(self.offsetOf(destination.location))
+        return MarkdownTextPosition(
+            self.offsetOf(destination.location),
+            verticalAnchor: verticalAnchor
+        )
     }
 
     public func compare(
