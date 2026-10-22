@@ -284,8 +284,14 @@ extension MarkdownLabelView: UITextInput {
         guard let p = position as? MarkdownTextPosition else {
             return nil
         }
-        guard let destination = self.position(from: p, in: direction, offset: 1) else { return nil }
-        return self.textRange(from: p, to: destination)
+        guard let range = makeTextRange(from: p.offset, to: p.offset) else { return nil }
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        let selection = NSTextSelection(range: range, affinity: .downstream, granularity: .character)
+        guard let result = self.layoutManager.textSelectionNavigation.destinationSelection(
+            for: selection, direction: Self.navigationDirection(direction, reversed: false),
+            destination: .character, extending: true, confined: false
+        )?.textRanges.first else { return nil }
+        return MarkdownTextRange(from: self.offsetOf(result.location), to: self.offsetOf(result.endLocation))
     }
 
     public func baseWritingDirection(

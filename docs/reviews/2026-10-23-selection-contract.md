@@ -17,3 +17,11 @@
 - 已补入 iOS 18 runtime manifest。尚未运行 iOS 18 门禁、未完成外部评审，未更新 App 固定 revision 或安装。
 
 官方 API 已经 Context7 与当前 Xcode SDK 头文件核实。该记录只覆盖本次增量，不能作为其余跨库整改完成证明。
+
+## Claude 反馈复现：混排扩展
+
+- M1 已复现：英文 / 阿拉伯文交界在 4 个方向边界上，扩展一个字符却选中 4 个字符。红灯证据 `/tmp/selection-mixed-red.log`。
+- 改用 NSTextSelectionNavigation 的 `extending: true`，由排版引擎给出选区，避免对两个视觉插入点做逻辑 min/max 后跨越整个 run。
+- iOS 26.4 的 MarkdownTextSelectionTests 共 11 项通过（`/tmp/selection-mixed-green.log`），包括组合字符、上下移动、引用命中和新增混排测试。
+- M3 的普通中文左右半区命中未复现：首尾字形两侧均命中正确字符。该证据仅覆盖普通中文，尚不能排除连字、RTL 或行尾空白问题。
+- 新测试加入运行时清单。其余 Claude 反馈、完整运行时门禁与 App 最终固定版本仍待完成。

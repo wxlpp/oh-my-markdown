@@ -6,6 +6,39 @@ import UIKit
 
 @Suite(.serialized)
 struct MarkdownTextSelectionTests {
+    @Test @MainActor func characterHitIncludesBothHalvesOfGlyph() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("甲乙丙丁")
+        await view.settled { view.currentSnapshot != nil }
+        for index in 0 ..< 4 {
+            let start = try #require(view.position(from: view.beginningOfDocument, offset: index))
+            let end = try #require(view.position(from: start, offset: 1))
+            let range = try #require(view.textRange(from: start, to: end))
+            let rect = view.firstRect(for: range)
+            for fraction in [0.25, 0.75] {
+                let hit = try #require(view.characterRange(at: CGPoint(x: rect.minX + rect.width * fraction, y: rect.midY)))
+                #expect(view.text(in: hit) == view.text(in: range))
+            }
+        }
+    }
+
+    @Test @MainActor func mixedDirectionCharacterExtensionSelectsOneGrapheme() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("abc مرحبا xyz")
+        await view.settled { view.currentSnapshot != nil }
+        let text = try #require(view.currentSnapshot).attributedString.string as NSString
+        for index in 1 ..< text.length {
+            let position = try #require(view.position(from: view.beginningOfDocument, offset: index))
+            for direction: UITextLayoutDirection in [.left, .right] {
+                let range = try #require(view.characterRange(byExtending: position, in: direction))
+                let selected = try #require(view.text(in: range))
+                #expect(selected.count <= 1, "index \(index), direction \(direction): \(selected)")
+            }
+        }
+    }
+
     @Test @MainActor func extendingSelectionKeepsComposedCharactersWhole() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         defer { view.dismantleRenderSession() }
