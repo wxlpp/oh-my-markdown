@@ -764,6 +764,29 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         return true
     }
 
+    /// Links are hit-tested against rendered glyph rectangles, not caret positions.
+    /// TextKit insertion-point navigation can return the document end for a tap
+    /// inside a later paragraph, and the right half of a final glyph is after its link.
+    @discardableResult
+    package func activateLink(at point: CGPoint) -> Bool {
+        guard !self.isDismantled, let string = contentStorage.textStorage,
+              bounds.contains(point) else { return false }
+        var destination: URL?
+        string.enumerateAttribute(.link, in: NSRange(location: 0, length: string.length)) { value, range, stop in
+            guard let value,
+                  let start = position(from: beginningOfDocument, offset: range.location),
+                  let end = position(from: beginningOfDocument, offset: NSMaxRange(range)),
+                  let textRange = textRange(from: start, to: end),
+                  selectionRects(for: textRange).contains(where: { $0.rect.contains(point) })
+            else { return }
+            destination = (value as? URL) ?? (value as? String).flatMap(URL.init(string:))
+            stop.pointee = destination != nil
+        }
+        guard let destination else { return false }
+        self.driver().activateLink(destination, sourceRange: nil)
+        return true
+    }
+
     /// Install a stable wrapper to preserve its completed-cache identity.
     public var mathRenderer: MathRendererConfiguration? {
         didSet {
@@ -887,18 +910,12 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     @objc
     private func handleTap(_ gesture: UITapGestureRecognizer) {
         guard
-            gesture.state == .ended,
-            let str = contentStorage.textStorage else {
+            gesture.state == .ended else {
             return
         }
         let point = gesture.location(in: self)
         if self.activateReviewAnnotation(at: point) { return }
-        guard
-            let pos = closestPosition(to: point) as? MarkdownTextPosition,
-            pos.offset < documentLength else {
-            return
-        }
-        let activated = self.activateLink(at: pos.offset)
+        let activated = self.activateLink(at: point)
         // Tap on non-link text clears any active selection.
         if !activated, !self.layoutManager.textSelections.isEmpty {
             self._inputDelegate?.selectionWillChange(self)
