@@ -65,3 +65,11 @@
 - cmark 08ddb528 是上游 0.9.0，首个维护版本更正为 0.9.1；Swift 桥接仍为基于 0.8.0 的 0.8.1。库旧 resolved 为 cmark 0.8.0；基线升级差异只含 src/html.c 两处相同 UTF8 字节的字面量转换。增加脚注 HTML 与 AST/source-range 兼容验证，不将前述 670 项错误记作 0.8.0 证据。
 - 空白表生成改为 GC=Zs 加 TAB/LF/FF/CR。PropList 不用于生成该表；增加 VT/NEL/Zl/Zp 负例。
 - Exports.swift 增加显式公共 typealias，consumer fixture 只 import OhMyMarkdown，显式声明 MarkdownParseOptions 并调用 modifier。
+
+
+## 实施 checkpoint（2026-10-23）
+
+- cmark 102ac97c + 17ad3e9b：显式选项和生成 Unicode 分类已实现；严格规范670、API815、社区golden5份、25项明确语义以及长delimiter通过。第一轮代码评审REVISE的生成门禁/覆盖问题已修，定向复核已 PASS。尚未发布。
+- Swift 桥接92f5d9c：明确选项桥接、严格模式与源范围验证；完整XCTest301通过。当前用临时bare Git精确版本fixture联调，未冒充公共远端发布。
+- MarkdownCore第一段：同步/plain/math解析统一options；document/equality/append保留配置；incremental本层拒绝不一致previous，从0重解析。新增3项测试（包含3组scalar分段输入），与增量现有专项共33项通过。会话submission/active/pending/retry以及SwiftUI/UIKit/AppKit传播尚未实现，不是端到端完成。
+- 临时fixture必须保留原identity（swift-cmark.git、swift-markdown.git），不能将实验目录名写入最终resolved。正在更新并检查；最终公共依赖发布前还有干净缓存完整图门禁。

@@ -23,7 +23,10 @@
       "mixedDirectionRectsFollowSelectedRun()",
       "paragraphBoundaryRespectsStorageDirection()",
       "farthestPositionExistsAtDocumentEdges()",
-      "repeatedVerticalMovementRetainsHorizontalIntent(prefix:)"
+      "repeatedVerticalMovementRetainsHorizontalIntent(prefix:)",
+      "explicitModeAndAppendKeepSource()",
+      "configurationChangeRejectsPreviousIncrementalState()",
+      "scalarSplitsMatchFullParse(source:)"
     ]
   },
   "macos15": {
@@ -33,7 +36,10 @@
     ],
     "requiredTests": [
       "Parsed blocks include stable source fingerprints",
-      "合法公式 → .rendered，尺寸为正"
+      "合法公式 → .rendered，尺寸为正",
+      "explicitModeAndAppendKeepSource()",
+      "configurationChangeRejectsPreviousIncrementalState()",
+      "scalarSplitsMatchFullParse(source:)"
     ]
   },
   "ios18-dynamic-type": {

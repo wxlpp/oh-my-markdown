@@ -238,7 +238,7 @@ package actor MarkdownRenderSession: ParseResultSink {
             // Each input's explicit facades follow its attempt, including discarded
             // preparation. The parent observer keeps session-wide facade diagnostics.
             let facadeRecorder = ParseWorkRecorder(parent: self.workRecorder, attempt: self.attempts[received])
-            let observedDocument = MarkdownDocument(blockStorage: document.blockStorage, recorder: facadeRecorder)
+            let observedDocument = MarkdownDocument(blockStorage: document.blockStorage, options: document.parseOptions, recorder: facadeRecorder)
             let input = RenderInput(
                 document: observedDocument, source: nil, availableWidth: self.availableWidth,
                 configuration: configuration, placeholderMode: self.placeholderMode,
