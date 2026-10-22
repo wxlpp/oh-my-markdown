@@ -780,7 +780,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
                   selectionRects(for: textRange).contains(where: { $0.rect.contains(point) })
             else { return }
             destination = (value as? URL) ?? (value as? String).flatMap(URL.init(string:))
-            stop.pointee = destination != nil
+            stop.pointee = ObjCBool(destination != nil)
         }
         guard let destination else { return false }
         self.driver().activateLink(destination, sourceRange: nil)
