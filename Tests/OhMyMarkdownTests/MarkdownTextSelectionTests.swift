@@ -54,6 +54,21 @@ struct MarkdownTextSelectionTests {
             #expect((range.location...NSMaxRange(range)).contains(view.offset(from: view.beginningOfDocument, to: position)))
         }
     }
+    @Test @MainActor func enlargedCitationDoesNotStealOrdinaryText() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("来源参考[1](https://example.com/one)紧邻文字。")
+        await view.settled { view.currentSnapshot != nil }
+        let string = try #require(view.currentSnapshot).attributedString.string as NSString
+        for word in ["考", "紧"] {
+            let range = string.range(of: word)
+            let start = try #require(view.position(from: view.beginningOfDocument, offset: range.location))
+            let end = try #require(view.position(from: start, offset: 1))
+            let textRange = try #require(view.textRange(from: start, to: end))
+            let rect = try #require(view.selectionRects(for: textRange).first).rect
+            #expect(!view.activateLink(at: CGPoint(x: rect.midX, y: rect.midY)))
+        }
+    }
     @Test @MainActor func smallCitationAcceptsNearMissWithoutOpeningDistantText() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }

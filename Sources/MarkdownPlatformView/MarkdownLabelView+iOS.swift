@@ -772,6 +772,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     package func activateLink(at point: CGPoint) -> Bool {
         guard !self.isDismantled, let string = contentStorage.textStorage,
               bounds.contains(point) else { return false }
+        guard !self.hitsOrdinaryText(at: point, string: string) else { return false }
         var destination: URL?
         var nearestDistance = CGFloat.greatestFiniteMagnitude
         string.enumerateAttribute(.link, in: NSRange(location: 0, length: string.length)) { value, range, _ in
@@ -779,10 +780,9 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
                   let url = (value as? URL) ?? (value as? String).flatMap(URL.init(string:)),
                   let start = position(from: beginningOfDocument, offset: range.location),
                   let end = position(from: beginningOfDocument, offset: NSMaxRange(range)),
-                  let textRange = textRange(from: start, to: end)
+                  textRange(from: start, to: end) != nil
             else { return }
-            for selection in selectionRects(for: textRange) {
-                let rect = selection.rect
+            for rect in self.linkGlyphRects(for: range) {
                 // Keep small citations visually compact, but give taps a finger-sized target.
                 let target = rect.insetBy(dx: -max(0, (44 - rect.width) / 2),
                                           dy: -max(0, (44 - rect.height) / 2))
@@ -800,6 +800,31 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         guard let destination else { return false }
         self.driver().activateLink(destination, sourceRange: nil)
         return true
+    }
+
+    private func linkGlyphRects(for range: NSRange) -> [CGRect] {
+        guard let textRange = makeTextRange(from: range.location, to: NSMaxRange(range)) else { return [] }
+        var rects: [CGRect] = []
+        self.layoutManager.enumerateTextSegments(in: textRange, type: .highlight, options: []) { _, rect, _, _ in
+            rects.append(rect)
+            return true
+        }
+        return rects
+    }
+
+    private func hitsOrdinaryText(at point: CGPoint, string: NSAttributedString) -> Bool {
+        guard let position = closestPosition(to: point) else { return false }
+        let offset = self.offset(from: beginningOfDocument, to: position)
+        let text = string.string as NSString
+        // A caret can lie on either side of the glyph under the finger.
+        for index in [offset - 1, offset] where index >= 0 && index < string.length {
+            let range = text.rangeOfComposedCharacterSequence(at: index)
+            guard string.attribute(.link, at: index, effectiveRange: nil) == nil,
+                  !text.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { continue }
+            if self.linkGlyphRects(for: range).contains(where: { $0.contains(point) }) { return true }
+        }
+        return false
     }
 
     /// Install a stable wrapper to preserve its completed-cache identity.
@@ -931,14 +956,9 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         }
         let point = gesture.location(in: self)
         if self.activateReviewAnnotation(at: point) { return }
-        let activated = self.activateLink(at: point)
-        // Tap on non-link text clears any active selection.
-        if !activated, !self.layoutManager.textSelections.isEmpty {
-            self._inputDelegate?.selectionWillChange(self)
-            self.layoutManager.textSelections = []
-            self._inputDelegate?.selectionDidChange(self)
-            setNeedsDisplay()
-        }
+        // UITextInteraction owns selection and dismissal. Clearing here races
+        // its selection gestures when recognizers receive the same touch.
+        self.activateLink(at: point)
     }
 
     // MARK: Image loading
