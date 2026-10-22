@@ -12,7 +12,8 @@
       "Smoke markdown parses one heading",
       "testRootDemoIsAccessible()",
       "testRenderedMarkdownIsTraversedElementByElement()",
-      "testTheRenderedDocumentGrowsWithTheTextSize()"
+      "testTheRenderedDocumentGrowsWithTheTextSize()",
+      "linkHitTestingUsesGlyphsAcrossParagraphs()"
     ]
   },
   "macos15": {

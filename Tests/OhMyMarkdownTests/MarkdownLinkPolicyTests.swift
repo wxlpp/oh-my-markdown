@@ -59,6 +59,31 @@ struct AllowEverythingPolicy: MarkdownLinkPolicy {
 
 @Suite(.timeLimit(.minutes(5)), .serialized)
 struct MarkdownLinkPolicyTests {
+    #if canImport(UIKit)
+    @Test @MainActor func linkHitTestingUsesGlyphsAcrossParagraphs() async throws {
+        let handler = RecordingLinkHandler()
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 362, height: 500))
+        defer { view.dismantleRenderSession() }
+        view.linkConfiguration = .webOnly(handler: handler)
+        view.setMarkdown("第一段说明文字。[1](https://example.com/one)\n\n第二段引用在这里。[2](https://example.com/two#part)\n\n最后一段普通文字。")
+        await view.settled { view.currentSnapshot != nil }
+        let rendered = try #require(view.currentSnapshot).attributedString.string as NSString
+        let range = rendered.range(of: "2")
+        let start = try #require(view.position(from: view.beginningOfDocument, offset: range.location))
+        let end = try #require(view.position(from: start, offset: 1))
+        let textRange = try #require(view.textRange(from: start, to: end))
+        let rect = try #require(view.selectionRects(for: textRange).first).rect
+        for fraction in [0.2, 0.5, 0.8] {
+            let count = handler.opened.count
+            #expect(view.activateLink(at: CGPoint(x: rect.minX + rect.width * fraction, y: rect.midY)))
+            await handler.events.settled { handler.opened.count > count }
+            #expect(handler.opened.last?.absoluteString == "https://example.com/two#part")
+        }
+        #expect(!view.activateLink(at: CGPoint(x: rect.maxX + 30, y: rect.midY)))
+        #expect(!view.activateLink(at: CGPoint(x: -1, y: -1)))
+    }
+    #endif
+
     private func request(_ string: String, generation: UInt64 = 0) throws -> MarkdownLinkRequest {
         try MarkdownLinkRequest(url: #require(URL(string: string)), configurationGeneration: generation)
     }
