@@ -87,3 +87,10 @@
 - 新增 lineEndBlankHitResolvesToInsertionBoundary：行首外侧命中起点、行尾空白命中文档插入终点。iOS26.4选择专项16项通过（/tmp/selection-line-end.log），未复现需要改生产逻辑的问题。
 - 已创建 iOS18.0 的 iPhone16Pro，环境门禁通过，正在执行旧系统完整包测试。
 - 当前宿主macOS26.3.1；GitHub仓库actions/runners返回空列表，macOS15门禁目前无可执行runner，不能用当前macOS全量替代。仍有其他独立工作可推进。
+
+### 阶段评审 BLOCK 处置
+
+- 评审发现 setDocument 后 append 会清空权威AST。先扩展平台共用回归，真实红灯显示原文档被替换成追加片段（/tmp/cjk-document-append-red.log）。
+- session 的 append 在 suppliedDocument 存在时不修改来源或退出模式，仍按当前commit发布权威文档；setSource才清除document。setDocument明确恢复static占位模式。
+- 修复后CJK会话/SwiftUI与既有渲染会话共17项通过（/tmp/cjk-document-append-green.log）。等待同一评审者定向复核。
+- 静态门禁的格式、540测试、Release warnings-as-errors均通过；总体失败项是platform-floors内Example解析尚未发布fork，非floor数值错误，需真实发布后重跑该项。

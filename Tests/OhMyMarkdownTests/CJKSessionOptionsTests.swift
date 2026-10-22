@@ -110,6 +110,10 @@ struct CJKSessionOptionsTests {
         view.parseOptions = []
         await view.settled { view.currentCommitToken != token }
         #expect(view.currentSnapshot?.attributedString.string == "文“档”原文")
+        let beforeAppend = view.currentCommitToken
+        view.appendMarkdown("不应替换文档")
+        await view.settled { view.currentCommitToken != beforeAppend }
+        #expect(view.currentSnapshot?.attributedString.string == "文“档”原文")
         view.setMarkdown(self.source)
         await view.settled { view.currentSnapshot?.attributedString.string == self.source }
     }

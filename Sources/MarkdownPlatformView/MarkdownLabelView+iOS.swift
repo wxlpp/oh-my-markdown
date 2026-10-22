@@ -628,6 +628,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.driver().send(.setSource(source, self.configurationSnapshot()))
     }
 
+    /// Appends in source mode. After setDocument, ignored until setMarkdown establishes a source.
     public func appendMarkdown(_ chunk: String) {
         self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }

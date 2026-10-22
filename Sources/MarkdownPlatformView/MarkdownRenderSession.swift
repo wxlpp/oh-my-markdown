@@ -135,8 +135,11 @@ package actor MarkdownRenderSession: ParseResultSink {
             self.latestParse = nil
             self.suppliedDocument = document
             self.parseOptions = document.parseOptions
+            self.placeholderMode = .static
             self.configuration = configuration
         case .append(let delta):
+            // An AST has no source buffer to append to. Only setSource exits document mode.
+            guard self.suppliedDocument == nil else { break }
             do { try self.sourceBuffer.append(delta, metrics: &self.pendingWorkMetrics) }
             catch { self.publish(error: .preparationFailed, token: event.commitToken); return }
             self.suppliedDocument = nil
