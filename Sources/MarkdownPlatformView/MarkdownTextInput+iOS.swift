@@ -42,7 +42,9 @@ final class MarkdownTextRange: UITextRange {
 }
 
 final class MarkdownSelectionRect: UITextSelectionRect {
-    init(_ rect: CGRect) {
+    init(_ rect: CGRect, containsStart: Bool, containsEnd: Bool) {
+        self._containsStart = containsStart
+        self._containsEnd = containsEnd
         self._rect = rect
     }
 
@@ -55,11 +57,11 @@ final class MarkdownSelectionRect: UITextSelectionRect {
     }
 
     override var containsStart: Bool {
-        false
+        self._containsStart
     }
 
     override var containsEnd: Bool {
-        false
+        self._containsEnd
     }
 
     override var isVertical: Bool {
@@ -67,6 +69,8 @@ final class MarkdownSelectionRect: UITextSelectionRect {
     }
 
     private let _rect: CGRect
+    private let _containsStart: Bool
+    private let _containsEnd: Bool
 }
 
 // MARK: - UITextInput
@@ -291,7 +295,7 @@ extension MarkdownLabelView: UITextInput {
             result = frame
             return false
         }
-        return result == .null ? .null : convert(result, to: nil)
+        return result
     }
 
     public func caretRect(for position: UITextPosition) -> CGRect {
@@ -319,8 +323,12 @@ extension MarkdownLabelView: UITextInput {
             return []
         }
         var rects: [MarkdownSelectionRect] = []
-        self.layoutManager.enumerateTextSegments(in: tr, type: .highlight, options: []) { _, frame, _, _ in
-            rects.append(MarkdownSelectionRect(frame))
+        self.layoutManager.enumerateTextSegments(in: tr, type: .selection, options: []) { segment, frame, _, _ in
+            rects.append(MarkdownSelectionRect(
+                frame,
+                containsStart: segment?.location.compare(tr.location) == .orderedSame,
+                containsEnd: segment?.endLocation.compare(tr.endLocation) == .orderedSame
+            ))
             return true
         }
         return rects
@@ -334,7 +342,7 @@ extension MarkdownLabelView: UITextInput {
             anchors: [],
             modifiers: [],
             selecting: false,
-            bounds: CGRect(origin: .zero, size: self.textContainer.size)
+            bounds: self.bounds
         )
         guard let loc = sels.first?.textRanges.first?.location else {
             return self.beginningOfDocument
@@ -347,7 +355,9 @@ extension MarkdownLabelView: UITextInput {
         within range: UITextRange
     )
         -> UITextPosition? {
-        self.closestPosition(to: point)
+        guard let range = range as? MarkdownTextRange,
+              let position = self.closestPosition(to: point) as? MarkdownTextPosition else { return nil }
+        return MarkdownTextPosition(min(max(position.offset, range.nsRange.location), NSMaxRange(range.nsRange)))
     }
 
     public func characterRange(at point: CGPoint) -> UITextRange? {

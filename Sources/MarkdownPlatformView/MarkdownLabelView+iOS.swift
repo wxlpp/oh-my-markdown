@@ -773,15 +773,29 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         guard !self.isDismantled, let string = contentStorage.textStorage,
               bounds.contains(point) else { return false }
         var destination: URL?
-        string.enumerateAttribute(.link, in: NSRange(location: 0, length: string.length)) { value, range, stop in
+        var nearestDistance = CGFloat.greatestFiniteMagnitude
+        string.enumerateAttribute(.link, in: NSRange(location: 0, length: string.length)) { value, range, _ in
             guard let value,
+                  let url = (value as? URL) ?? (value as? String).flatMap(URL.init(string:)),
                   let start = position(from: beginningOfDocument, offset: range.location),
                   let end = position(from: beginningOfDocument, offset: NSMaxRange(range)),
-                  let textRange = textRange(from: start, to: end),
-                  selectionRects(for: textRange).contains(where: { $0.rect.contains(point) })
+                  let textRange = textRange(from: start, to: end)
             else { return }
-            destination = (value as? URL) ?? (value as? String).flatMap(URL.init(string:))
-            stop.pointee = ObjCBool(destination != nil)
+            for selection in selectionRects(for: textRange) {
+                let rect = selection.rect
+                // Keep small citations visually compact, but give taps a finger-sized target.
+                let target = rect.insetBy(dx: -max(0, (44 - rect.width) / 2),
+                                          dy: -max(0, (44 - rect.height) / 2))
+                guard target.contains(point) else { continue }
+                let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
+                let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
+                let distance = dx * dx + dy * dy
+                // Exact glyph hits win; overlapping targets choose the nearest link.
+                if distance < nearestDistance {
+                    nearestDistance = distance
+                    destination = url
+                }
+            }
         }
         guard let destination else { return false }
         self.driver().activateLink(destination, sourceRange: nil)
