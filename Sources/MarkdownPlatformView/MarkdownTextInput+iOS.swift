@@ -348,7 +348,7 @@ extension MarkdownLabelView: UITextInput {
         guard let loc = sels.first?.textRanges.first?.location else {
             return self.beginningOfDocument
         }
-        NSLog("MDSEL point %@ bounds %@ offset %d", NSStringFromCGPoint(point), NSStringFromCGRect(self.bounds), self.offsetOf(loc))
+        NSLog("MDSEL point %@ bounds %@ offset %d", String(describing: point), String(describing: self.bounds), self.offsetOf(loc))
         return MarkdownTextPosition(self.offsetOf(loc))
     }
 
