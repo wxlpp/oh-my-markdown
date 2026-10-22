@@ -126,6 +126,7 @@ extension MarkdownLabelView: UITextInput {
             )
         }
         set {
+            NSLog("MDSEL set range %@", String(describing: (newValue as? MarkdownTextRange)?.nsRange))
             self._inputDelegate?.selectionWillChange(self)
             guard
                 let r = newValue as? MarkdownTextRange,
@@ -347,6 +348,7 @@ extension MarkdownLabelView: UITextInput {
         guard let loc = sels.first?.textRanges.first?.location else {
             return self.beginningOfDocument
         }
+        NSLog("MDSEL point %@ bounds %@ offset %d", NSStringFromCGPoint(point), NSStringFromCGRect(self.bounds), self.offsetOf(loc))
         return MarkdownTextPosition(self.offsetOf(loc))
     }
 
