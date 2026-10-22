@@ -37,6 +37,24 @@ struct MarkdownTextSelectionTests {
             #expect((range.location...NSMaxRange(range)).contains(view.offset(from: view.beginningOfDocument, to: restricted)))
         }
     }
+    @Test @MainActor func nativeTokenizerSelectsWordInLaterParagraph() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 360, height: 500))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("第一段内容。\n\nApple 平台的具体 API 可以查阅开发者文档。\n\n> 最后一个引用段落。")
+        await view.settled { view.currentSnapshot != nil }
+        let string = try #require(view.currentSnapshot).attributedString.string as NSString
+        let word = string.range(of: "Apple")
+        let wordStart = try #require(view.position(from: view.beginningOfDocument, offset: word.location))
+        let wordEnd = try #require(view.position(from: wordStart, offset: word.length))
+        let wordRange = try #require(view.textRange(from: wordStart, to: wordEnd))
+        let rect = try #require(view.selectionRects(for: wordRange).first).rect
+        let hit = try #require(view.closestPosition(to: CGPoint(x: rect.midX, y: rect.midY)))
+        #expect((word.location...NSMaxRange(word)).contains(view.offset(from: view.beginningOfDocument, to: hit)))
+        let offset = string.range(of: "Apple").location + 2
+        let position = try #require(view.position(from: view.beginningOfDocument, offset: offset))
+        let range = try #require(view.tokenizer.rangeEnclosingPosition(position, with: .word, inDirection: UITextDirection(rawValue: UITextStorageDirection.forward.rawValue)))
+        #expect(view.text(in: range) == "Apple")
+    }
     @Test @MainActor func hitTestingTracksWrappedTextAndEmoji() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 220, height: 3000))
         defer { view.dismantleRenderSession() }

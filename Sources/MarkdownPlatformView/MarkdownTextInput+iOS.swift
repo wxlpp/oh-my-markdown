@@ -126,7 +126,6 @@ extension MarkdownLabelView: UITextInput {
             )
         }
         set {
-            NSLog("MDSEL set range %@", String(describing: (newValue as? MarkdownTextRange)?.nsRange))
             self._inputDelegate?.selectionWillChange(self)
             guard
                 let r = newValue as? MarkdownTextRange,
@@ -337,19 +336,32 @@ extension MarkdownLabelView: UITextInput {
 
     /// Hit testing
     public func closestPosition(to point: CGPoint) -> UITextPosition? {
-        let sels = self.layoutManager.textSelectionNavigation.textSelections(
-            interactingAt: point,
-            inContainerAt: self.contentStorage.documentRange.location,
-            anchors: [],
-            modifiers: [],
-            selecting: false,
-            bounds: self.bounds
-        )
-        guard let loc = sels.first?.textRanges.first?.location else {
-            return self.beginningOfDocument
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        var nearestOffset = 0
+        var nearestDistance = CGFloat.greatestFiniteMagnitude
+        var nearestHorizontalDistance = CGFloat.greatestFiniteMagnitude
+        // Resolve against rendered lines. Selection navigation can return the
+        // document end on its first hit after a hosting/layout update.
+        self.layoutManager.enumerateTextLayoutFragments(
+            from: self.contentStorage.documentRange.location, options: [.ensuresLayout]
+        ) { fragment in
+            let origin = fragment.layoutFragmentFrame.origin
+            let base = self.offsetOf(fragment.textElement?.elementRange?.location ?? fragment.rangeInElement.location)
+            for line in fragment.textLineFragments {
+                let rect = line.typographicBounds.offsetBy(dx: origin.x, dy: origin.y)
+                let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
+                let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
+                if dy < nearestDistance || (dy == nearestDistance && dx < nearestHorizontalDistance) {
+                    nearestDistance = dy
+                    nearestHorizontalDistance = dx
+                    let local = CGPoint(x: point.x - rect.minX, y: point.y - rect.minY)
+                    let index = line.characterIndex(for: local)
+                    nearestOffset = base + min(max(index, line.characterRange.location), NSMaxRange(line.characterRange))
+                }
+            }
+            return fragment.layoutFragmentFrame.maxY < point.y
         }
-        NSLog("MDSEL point %@ bounds %@ offset %d", String(describing: point), String(describing: self.bounds), self.offsetOf(loc))
-        return MarkdownTextPosition(self.offsetOf(loc))
+        return MarkdownTextPosition(min(max(nearestOffset, 0), self.documentLength))
     }
 
     public func closestPosition(

@@ -777,10 +777,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         var nearestDistance = CGFloat.greatestFiniteMagnitude
         string.enumerateAttribute(.link, in: NSRange(location: 0, length: string.length)) { value, range, _ in
             guard let value,
-                  let url = (value as? URL) ?? (value as? String).flatMap(URL.init(string:)),
-                  let start = position(from: beginningOfDocument, offset: range.location),
-                  let end = position(from: beginningOfDocument, offset: NSMaxRange(range)),
-                  textRange(from: start, to: end) != nil
+                  let url = (value as? URL) ?? (value as? String).flatMap(URL.init(string:))
             else { return }
             for rect in self.linkGlyphRects(for: range) {
                 // Keep small citations visually compact, but give taps a finger-sized target.
@@ -896,7 +893,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.textInteraction = UITextInteraction(for: .nonEditable)
         self.textInteraction.textInput = self
         addInteraction(self.textInteraction)
-        // Tap recognizer for link activation / selection dismissal.
+        // Tap recognizer for link activation. UITextInteraction owns selection.
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tap.cancelsTouchesInView = false
         tap.delegate = self.linkTapDelegate
