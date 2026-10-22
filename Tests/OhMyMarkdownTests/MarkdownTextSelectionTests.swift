@@ -6,6 +6,62 @@ import UIKit
 
 @Suite(.serialized)
 struct MarkdownTextSelectionTests {
+    @Test @MainActor func extendingSelectionKeepsComposedCharactersWhole() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("前👩‍💻e\u{301}后")
+        await view.settled { view.currentSnapshot != nil }
+        let text = try #require(view.currentSnapshot).attributedString.string as NSString
+        for character in ["👩‍💻", "e\u{301}"] {
+            let range = text.range(of: character)
+            let start = try #require(view.position(from: view.beginningOfDocument, offset: range.location))
+            let end = try #require(view.position(from: start, offset: range.length))
+            let forward = try #require(view.characterRange(byExtending: start, in: .right))
+            let backward = try #require(view.characterRange(byExtending: end, in: .left))
+            #expect(view.text(in: forward) == character)
+            #expect(view.text(in: backward) == character)
+            let next = try #require(view.position(from: start, in: .right, offset: 1))
+            #expect(view.offset(from: start, to: next) == range.length)
+        }
+    }
+
+    @Test @MainActor func verticalMovementFollowsRenderedLines() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 180, height: 800))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown(String(repeating: "一二三四五六七八九十", count: 8))
+        await view.settled { view.currentSnapshot != nil }
+        let start = try #require(view.position(from: view.beginningOfDocument, offset: 2))
+        let down = try #require(view.position(from: start, in: .down, offset: 1))
+        #expect(view.caretRect(for: down).midY > view.caretRect(for: start).midY + 5)
+        let up = try #require(view.position(from: down, in: .up, offset: 1))
+        #expect(abs(view.caretRect(for: up).midY - view.caretRect(for: start).midY) < 1)
+    }
+
+    @Test @MainActor func rightToLeftSelectionReportsItsDirectionAndVisualEdge() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("مرحبا بالعالم")
+        await view.settled { view.currentSnapshot != nil }
+        let start = try #require(view.position(from: view.beginningOfDocument, offset: 1))
+        let end = try #require(view.position(from: start, offset: 3))
+        let range = try #require(view.textRange(from: start, to: end))
+        #expect(view.baseWritingDirection(for: start, in: .forward) == .rightToLeft)
+        #expect(view.selectionRects(for: range).allSatisfy { $0.writingDirection == .rightToLeft })
+        let right = try #require(view.position(within: range, farthestIn: .right))
+        let left = try #require(view.position(within: range, farthestIn: .left))
+        #expect(view.offset(from: start, to: right) == 0)
+        #expect(view.offset(from: end, to: left) == 0)
+    }
+
+    @Test @MainActor func logicalOffsetsRejectPositionsOutsideDocument() async {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("正文")
+        await view.settled { view.currentSnapshot != nil }
+        #expect(view.position(from: view.beginningOfDocument, offset: -1) == nil)
+        #expect(view.position(from: view.endOfDocument, offset: 1) == nil)
+    }
+
     @Test @MainActor func positionsAndHandlesFollowRenderedParagraphs() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 40, y: 150, width: 320, height: 700))
         let parent = UIView(frame: CGRect(x: 0, y: 0, width: 400, height: 900))

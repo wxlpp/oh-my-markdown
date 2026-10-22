@@ -42,7 +42,8 @@ final class MarkdownTextRange: UITextRange {
 }
 
 final class MarkdownSelectionRect: UITextSelectionRect {
-    init(_ rect: CGRect, containsStart: Bool, containsEnd: Bool) {
+    init(_ rect: CGRect, containsStart: Bool, containsEnd: Bool, writingDirection: NSWritingDirection) {
+        self._writingDirection = writingDirection
         self._containsStart = containsStart
         self._containsEnd = containsEnd
         self._rect = rect
@@ -53,7 +54,7 @@ final class MarkdownSelectionRect: UITextSelectionRect {
     }
 
     override var writingDirection: NSWritingDirection {
-        .leftToRight
+        self._writingDirection
     }
 
     override var containsStart: Bool {
@@ -68,6 +69,7 @@ final class MarkdownSelectionRect: UITextSelectionRect {
         false
     }
 
+    private let _writingDirection: NSWritingDirection
     private let _rect: CGRect
     private let _containsStart: Bool
     private let _containsEnd: Bool
@@ -201,7 +203,9 @@ extension MarkdownLabelView: UITextInput {
         guard let p = position as? MarkdownTextPosition else {
             return nil
         }
-        return MarkdownTextPosition(max(0, min(p.offset + offset, self.documentLength)))
+        let (destination, overflow) = p.offset.addingReportingOverflow(offset)
+        guard !overflow, (0 ... self.documentLength).contains(destination) else { return nil }
+        return MarkdownTextPosition(destination)
     }
 
     public func position(
@@ -210,8 +214,20 @@ extension MarkdownLabelView: UITextInput {
         offset: Int
     )
         -> UITextPosition? {
-        let d = (direction == .right || direction == .down) ? offset : -offset
-        return self.position(from: position, offset: d)
+        guard let position = position as? MarkdownTextPosition,
+              let range = makeTextRange(from: position.offset, to: position.offset) else { return nil }
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        var selection = NSTextSelection(range: range, affinity: .downstream, granularity: .character)
+        let navigation = self.layoutManager.textSelectionNavigation
+        let movement = Self.navigationDirection(direction, reversed: offset < 0)
+        for _ in 0 ..< min(offset.magnitude, UInt(self.documentLength + 1)) {
+            guard let next = navigation.destinationSelection(
+                for: selection, direction: movement, destination: .character, extending: false, confined: false
+            ), next.textRanges.first != selection.textRanges.first else { break }
+            selection = next
+        }
+        guard let destination = selection.textRanges.first else { return nil }
+        return MarkdownTextPosition(self.offsetOf(destination.location))
     }
 
     public func compare(
@@ -250,7 +266,14 @@ extension MarkdownLabelView: UITextInput {
         guard let r = range as? MarkdownTextRange else {
             return nil
         }
-        return (direction == .left || direction == .up) ? r.start : r.end
+        guard let range = makeTextRange(from: r.nsRange.location, to: NSMaxRange(r.nsRange)) else { return nil }
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        let selection = NSTextSelection(range: range, affinity: .downstream, granularity: .character)
+        guard let result = self.layoutManager.textSelectionNavigation.destinationSelection(
+            for: selection, direction: Self.navigationDirection(direction, reversed: false),
+            destination: .character, extending: false, confined: false
+        )?.textRanges.first else { return nil }
+        return MarkdownTextPosition(min(max(self.offsetOf(result.location), r.nsRange.location), NSMaxRange(r.nsRange)))
     }
 
     public func characterRange(
@@ -261,10 +284,8 @@ extension MarkdownLabelView: UITextInput {
         guard let p = position as? MarkdownTextPosition else {
             return nil
         }
-        switch direction {
-        case .left, .up: return MarkdownTextRange(from: max(0, p.offset - 1), to: p.offset)
-        default: return MarkdownTextRange(from: p.offset, to: min(self.documentLength, p.offset + 1))
-        }
+        guard let destination = self.position(from: p, in: direction, offset: 1) else { return nil }
+        return self.textRange(from: p, to: destination)
     }
 
     public func baseWritingDirection(
@@ -272,7 +293,21 @@ extension MarkdownLabelView: UITextInput {
         in direction: UITextStorageDirection
     )
         -> NSWritingDirection {
-        .natural
+        guard let position = position as? MarkdownTextPosition,
+              let location = locationAt(position.offset),
+              let source = self.layoutManager.textSelectionNavigation.textSelectionDataSource else { return .natural }
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+        return source.baseWritingDirection(at: location) == .rightToLeft ? .rightToLeft : .leftToRight
+    }
+
+    private static func navigationDirection(_ direction: UITextLayoutDirection, reversed: Bool) -> NSTextSelectionNavigation.Direction {
+        switch direction {
+        case .left: return reversed ? .right : .left
+        case .right: return reversed ? .left : .right
+        case .up: return reversed ? .down : .up
+        case .down: return reversed ? .up : .down
+        @unknown default: return reversed ? .backward : .forward
+        }
     }
 
     public func setBaseWritingDirection(
@@ -327,7 +362,10 @@ extension MarkdownLabelView: UITextInput {
             rects.append(MarkdownSelectionRect(
                 frame,
                 containsStart: segment?.location.compare(tr.location) == .orderedSame,
-                containsEnd: segment?.endLocation.compare(tr.endLocation) == .orderedSame
+                containsEnd: segment?.endLocation.compare(tr.endLocation) == .orderedSame,
+                writingDirection: self.baseWritingDirection(
+                    for: MarkdownTextPosition(self.offsetOf(segment?.location ?? tr.location)), in: .forward
+                )
             ))
             return true
         }
@@ -380,7 +418,9 @@ extension MarkdownLabelView: UITextInput {
             pos.offset < documentLength else {
             return nil
         }
-        return MarkdownTextRange(from: pos.offset, to: pos.offset + 1)
+        guard let text = self.contentStorage.textStorage?.string as NSString? else { return nil }
+        let range = text.rangeOfComposedCharacterSequence(at: pos.offset)
+        return MarkdownTextRange(from: range.location, to: NSMaxRange(range))
     }
 }
 #endif
