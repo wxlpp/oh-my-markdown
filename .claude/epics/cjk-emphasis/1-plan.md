@@ -73,3 +73,11 @@
 - Swift 桥接92f5d9c：明确选项桥接、严格模式与源范围验证；完整XCTest301通过。当前用临时bare Git精确版本fixture联调，未冒充公共远端发布。
 - MarkdownCore第一段：同步/plain/math解析统一options；document/equality/append保留配置；incremental本层拒绝不一致previous，从0重解析。新增3项测试（包含3组scalar分段输入），与增量现有专项共33项通过。会话submission/active/pending/retry以及SwiftUI/UIKit/AppKit传播尚未实现，不是端到端完成。
 - 临时fixture必须保留原identity（swift-cmark.git、swift-markdown.git），不能将实验目录名写入最终resolved。正在更新并检查；最终公共依赖发布前还有干净缓存完整图门禁。
+
+### 会话与 UI 配置 checkpoint
+
+- ParseSubmission 捕获解析配置，ParseExecutor 使用捕获值；会话规则切换失效旧解析/渲染缓存，异步结果与重试必须匹配当前配置。
+- UIKit/AppKit 暴露 parseOptions 与 setDocument；文档 AST 保持权威，后续源码输入才使用调用者新规则。
+- SwiftUI 静态/流式统一 markdownParseOptions 环境 modifier。配置在 source 相等早退前转发；幂等比较由平台属性负责，避免 coordinator 重复持有同一状态。流式 listener 注册前先安装配置。
+- 会话专项39项通过；完整 macOS 测试539项通过（/tmp/cjk-markdown-full.log）。随后增加取消/恢复专项并格式化，CJK UI与会话5项通过（/tmp/cjk-ui-checkpoint.log，包含静态/流式及双向参数）。全量539不包含最后新增的取消恢复一项。
+- 尚未通过 iOS18/macOS15 发布门禁；尚未发布 fork、接 App、最终 Claude 评审或安装。此次为执行阶段 checkpoint。

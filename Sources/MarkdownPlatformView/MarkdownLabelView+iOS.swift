@@ -310,12 +310,31 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         }
     }
 
+    private var storedParseOptions: MarkdownParseOptions = []
+
+    /// Changing rules reparses source-backed content; an explicit document stays authoritative.
+    public var parseOptions: MarkdownParseOptions {
+        get { self.storedParseOptions }
+        set {
+            guard !self.isDismantled, newValue != self.storedParseOptions else { return }
+            self.storedParseOptions = newValue
+            self.reviewSnapshotReady = false
+            self.driver().send(.replaceParseOptions(newValue))
+        }
+    }
+
+    public func setDocument(_ document: MarkdownDocument) {
+        guard !self.isDismantled else { return }
+        self.storedParseOptions = document.parseOptions
+        self.reviewSnapshotReady = false
+        self.renderMode = .static
+        self.driver().send(.setDocument(document, self.configurationSnapshot()))
+    }
+
     public var blocks: [BlockNode] {
         get { self.renderedDocument?.blocks ?? [] }
         set {
-            guard !self.isDismantled else { return }
-            self.reviewSnapshotReady = false
-            self.driver().send(.setDocument(MarkdownDocument(parsedBlocks: newValue.map { ParsedBlockNode(block: $0) }), self.configurationSnapshot()))
+            self.setDocument(MarkdownDocument(parsedBlocks: newValue.map { ParsedBlockNode(block: $0) }, options: self.parseOptions))
         }
     }
 

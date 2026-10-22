@@ -26,7 +26,12 @@
       "repeatedVerticalMovementRetainsHorizontalIntent(prefix:)",
       "explicitModeAndAppendKeepSource()",
       "configurationChangeRejectsPreviousIncrementalState()",
-      "scalarSplitsMatchFullParse(source:)"
+      "scalarSplitsMatchFullParse(source:)",
+      "activeAndPendingConfigurationCannotPublishOldResults(initialCJK:)",
+      "ruleChangeReplacesBusyRetry()",
+      "platformSameSourceAndDocumentAuthority()",
+      "unchangedSourceReparsesWhenEnvironmentChanges(streaming:)",
+      "cancelledSessionCannotOverwriteRestoredRules()"
     ]
   },
   "macos15": {
@@ -39,7 +44,12 @@
       "合法公式 → .rendered，尺寸为正",
       "explicitModeAndAppendKeepSource()",
       "configurationChangeRejectsPreviousIncrementalState()",
-      "scalarSplitsMatchFullParse(source:)"
+      "scalarSplitsMatchFullParse(source:)",
+      "activeAndPendingConfigurationCannotPublishOldResults(initialCJK:)",
+      "ruleChangeReplacesBusyRetry()",
+      "platformSameSourceAndDocumentAuthority()",
+      "unchangedSourceReparsesWhenEnvironmentChanges(streaming:)",
+      "cancelledSessionCannotOverwriteRestoredRules()"
     ]
   },
   "ios18-dynamic-type": {

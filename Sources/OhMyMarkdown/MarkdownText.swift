@@ -32,6 +32,7 @@ public struct MarkdownText: View {
         // whole document in one breath, which is what a reader actually got.
         _MarkdownTextRepresentable(
             source: self.source,
+            parseOptions: self.parseOptions,
             style: self.style,
             theme: self.theme,
             mathRenderer: self.mathRenderer,
@@ -46,6 +47,7 @@ public struct MarkdownText: View {
     }
 
     @Environment(\.markdownReviewConfiguration) private var reviewConfiguration
+    @Environment(\.markdownParseOptions) private var parseOptions
     @Environment(\.markdownTheme) private var theme
     @Environment(\.markdownStyle) private var style
     @Environment(\.markdownMathRenderer) private var mathRenderer
@@ -77,6 +79,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     }
 
     let source: String
+    let parseOptions: MarkdownParseOptions
     let style: RenderStyle
     let theme: MarkdownTheme?
     let mathRenderer: MathRendererConfiguration?
@@ -101,6 +104,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
+        uiView.parseOptions = self.parseOptions
         uiView.reviewConfiguration = self.reviewConfiguration
         uiView.theme = self.theme
         uiView.onResourceError = self.resourceErrorHandler
@@ -182,6 +186,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     }
 
     let source: String
+    let parseOptions: MarkdownParseOptions
     let style: RenderStyle
     let theme: MarkdownTheme?
     let mathRenderer: MathRendererConfiguration?
@@ -201,6 +206,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
+        nsView.parseOptions = self.parseOptions
         nsView.reviewConfiguration = self.reviewConfiguration
         nsView.theme = self.theme
         nsView.onResourceError = self.resourceErrorHandler
@@ -273,6 +279,8 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
 #endif
 
 extension EnvironmentValues {
+    /// Parsing rules shared by static and streaming Markdown. Defaults to strict CommonMark.
+    @Entry public var markdownParseOptions: MarkdownParseOptions = []
     /// Nil inherits the host appearance for static and streaming Markdown.
     @Entry public var markdownTheme: MarkdownTheme? = nil
     /// The style applied to Markdown views in this environment.
@@ -280,6 +288,11 @@ extension EnvironmentValues {
 }
 
 extension View {
+    /// Selects parsing rules without rewriting the source. Changing rules reparses existing text.
+    public func markdownParseOptions(_ options: MarkdownParseOptions) -> some View {
+        environment(\.markdownParseOptions, options)
+    }
+
     /// Fixes the appearance of static and streaming Markdown. Nil or `.system`
     /// follows the host; custom fixed colors in a RenderStyle remain unchanged.
     public func markdownTheme(_ theme: MarkdownTheme?) -> some View {

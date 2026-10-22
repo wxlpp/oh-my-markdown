@@ -35,6 +35,11 @@ package actor MarkdownRenderSession: ParseResultSink {
     package private(set) var lastWorkMetrics: ParseWorkMetrics?
     private var configuration: RenderConfigurationSnapshot?
     private var suppliedDocument: MarkdownDocument?
+    private var parseOptions: MarkdownParseOptions = []
+    private var effectiveParseOptions: MarkdownParseOptions {
+        self.suppliedDocument?.parseOptions ?? self.parseOptions
+    }
+
     /// Bumped only when the document is replaced, never by an append and never
     /// by a width or style change. Accessibility identity is anchored to it, so
     /// a rotation must not renumber every element.
@@ -129,12 +134,20 @@ package actor MarkdownRenderSession: ParseResultSink {
             self.sourceBuffer = IncrementalSourceBuffer(recorder: self.workRecorder)
             self.latestParse = nil
             self.suppliedDocument = document
+            self.parseOptions = document.parseOptions
             self.configuration = configuration
         case .append(let delta):
             do { try self.sourceBuffer.append(delta, metrics: &self.pendingWorkMetrics) }
             catch { self.publish(error: .preparationFailed, token: event.commitToken); return }
             self.suppliedDocument = nil
             self.placeholderMode = .streaming
+        case .replaceParseOptions(let options):
+            self.parseOptions = options
+            self.latestParse = nil
+            self.incomingParse = nil
+            self.previousModel = nil
+            self.previousModelWitness = nil
+            self.previousModelConfiguration = nil
         case .replaceConfiguration(let configuration): self.configuration = configuration
         case .replaceImageConfiguration, .replaceLinkConfiguration: break
         case .replaceWidth(let width): self.availableWidth = max(1, width)
@@ -152,7 +165,7 @@ package actor MarkdownRenderSession: ParseResultSink {
         )
         self.deadline = self.clock.now() + .seconds(2)
         if let document = self.suppliedDocument {
-            let submission = ParseSubmission(id: UUID(), sessionToken: token, commitToken: event.commitToken, attempt: 1)
+            let submission = ParseSubmission(id: UUID(), sessionToken: token, commitToken: event.commitToken, attempt: 1, parseOptions: self.effectiveParseOptions)
             self.submission = submission
             self.attempts[submission] = ParseAttemptRecorder()
             self.receive(.parsed(submission: submission, document: document))
@@ -187,7 +200,7 @@ package actor MarkdownRenderSession: ParseResultSink {
 
     private func submit(commitToken: RenderCommitToken, attempt: UInt8) async {
         guard !self.dismantled, !self.token.isRevoked, self.currentToken == commitToken else { return }
-        let next = ParseSubmission(id: UUID(), sessionToken: token, commitToken: commitToken, attempt: attempt)
+        let next = ParseSubmission(id: UUID(), sessionToken: token, commitToken: commitToken, attempt: attempt, parseOptions: self.effectiveParseOptions)
         self.submission = next
         let job = ParseJob(submission: next, buffer: self.sourceBuffer, previous: self.latestParse, metrics: self.pendingWorkMetrics)
         self.pendingWorkMetrics = ParseWorkMetrics()
@@ -204,7 +217,7 @@ package actor MarkdownRenderSession: ParseResultSink {
     package func receive(_ result: ParseExecutorResult) {
         defer { self.observation.signal() }
         let received = result.submission
-        guard !self.dismantled, !self.token.isRevoked, self.submission == received, self.currentToken == received.commitToken else {
+        guard !self.dismantled, !self.token.isRevoked, self.submission == received, self.currentToken == received.commitToken, received.parseOptions == self.effectiveParseOptions else {
             self.finishAttempt(received, disposition: .discarded)
             return
         }
@@ -227,7 +240,7 @@ package actor MarkdownRenderSession: ParseResultSink {
                 }
             }
         case .parsed(_, let document):
-            guard let configuration else { self.finishAttempt(received, disposition: .discarded); return }
+            guard document.parseOptions == received.parseOptions, let configuration else { self.finishAttempt(received, disposition: .discarded); return }
             let incremental = self.incomingParse
             self.incomingParse = nil
             let base = self.previousModelWitness == self.latestParse?.state.sourceWitness
@@ -305,7 +318,7 @@ package actor MarkdownRenderSession: ParseResultSink {
 
     package func receive(_ result: ParseExecutorResult, incremental: IncrementalParseResult) {
         guard !self.dismantled, !self.token.isRevoked, self.submission == result.submission,
-              self.currentToken == result.submission.commitToken else {
+              self.currentToken == result.submission.commitToken, result.submission.parseOptions == self.effectiveParseOptions else {
             self.finishAttempt(result.submission, disposition: .discarded)
             return
         }
@@ -323,7 +336,7 @@ package actor MarkdownRenderSession: ParseResultSink {
         submission received: ParseSubmission, witness: IncrementalSourceBuffer.Witness?, metrics: ParseWorkMetrics, usedDelta: Bool
     ) async {
         guard !self.dismantled, !self.token.isRevoked, self.submission == received,
-              self.currentToken == received.commitToken else {
+              self.currentToken == received.commitToken, received.parseOptions == self.effectiveParseOptions else {
             self.finishAttempt(received, disposition: .discarded)
             return
         }
@@ -336,7 +349,7 @@ package actor MarkdownRenderSession: ParseResultSink {
         self.lastWorkMetrics = metrics.withoutRecording
         if usedDelta { self.deltaPreparationCount += 1 }
         await self.diagnostics?(received, metrics)
-        guard !self.dismantled, !self.token.isRevoked, self.currentToken == received.commitToken else {
+        guard !self.dismantled, !self.token.isRevoked, self.currentToken == received.commitToken, received.parseOptions == self.effectiveParseOptions else {
             self.finishAttempt(received, disposition: .discarded)
             return
         }
@@ -353,14 +366,14 @@ package actor MarkdownRenderSession: ParseResultSink {
 
     private func preparationFailed(_ received: ParseSubmission) {
         guard !self.dismantled, !self.token.isRevoked, self.submission == received,
-              self.currentToken == received.commitToken else { return }
+              self.currentToken == received.commitToken, received.parseOptions == self.effectiveParseOptions else { return }
         self.submission = nil
         self.preparationTask = nil
         self.publish(error: .preparationFailed, token: received.commitToken)
     }
 
     private func retry(_ previous: ParseSubmission) async {
-        guard !self.dismantled, !self.token.isRevoked, self.submission == previous, self.currentToken == previous.commitToken else { return }
+        guard !self.dismantled, !self.token.isRevoked, self.submission == previous, self.currentToken == previous.commitToken, previous.parseOptions == self.effectiveParseOptions else { return }
         self.retryTask = nil
         if self.clock.now() >= self.deadline {
             self.submission = nil
@@ -510,7 +523,7 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
     package func send(_ mutation: RenderSessionMutation) {
         guard !self.dismantled else { return }
         switch mutation {
-        case .append, .replaceConfiguration, .replaceWidth, .replaceLinkConfiguration:
+        case .append, .replaceConfiguration, .replaceParseOptions, .replaceWidth, .replaceLinkConfiguration:
             self.resourceTaskOwner.cancelAll(preservingResolvedImages: true)
         case .setSource, .setDocument, .replaceImageConfiguration, .dismantle:
             self.resourceTaskOwner.cancelAll()
@@ -521,7 +534,7 @@ package final class MarkdownRenderSessionDriver: RenderSessionDriving {
             self.sourceRevision += 1
             self.configurationGeneration += 1
         case .append: self.sourceRevision += 1
-        case .replaceConfiguration, .replaceImageConfiguration, .replaceLinkConfiguration, .replaceWidth:
+        case .replaceConfiguration, .replaceParseOptions, .replaceImageConfiguration, .replaceLinkConfiguration, .replaceWidth:
             self.configurationGeneration += 1
         case .dismantle:
             self.dismantled = true
