@@ -29,14 +29,15 @@ struct MarkdownTextSelectionTests {
             let rect = try #require(rects.first).rect
             let position = try #require(view.closestPosition(to: CGPoint(x: rect.midX, y: rect.midY)))
             let offset = view.offset(from: view.beginningOfDocument, to: position)
-            #expect((range.location...NSMaxRange(range)).contains(offset))
+            #expect((range.location ... NSMaxRange(range)).contains(offset))
             #expect(rects.contains { $0.containsStart })
             #expect(rects.contains { $0.containsEnd })
             #expect(abs(view.firstRect(for: textRange).minY - rect.minY) < 1)
             let restricted = try #require(view.closestPosition(to: CGPoint(x: 310, y: 650), within: textRange))
-            #expect((range.location...NSMaxRange(range)).contains(view.offset(from: view.beginningOfDocument, to: restricted)))
+            #expect((range.location ... NSMaxRange(range)).contains(view.offset(from: view.beginningOfDocument, to: restricted)))
         }
     }
+
     @Test @MainActor func nativeTokenizerSelectsWordInLaterParagraph() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 360, height: 500))
         defer { view.dismantleRenderSession() }
@@ -49,12 +50,13 @@ struct MarkdownTextSelectionTests {
         let wordRange = try #require(view.textRange(from: wordStart, to: wordEnd))
         let rect = try #require(view.selectionRects(for: wordRange).first).rect
         let hit = try #require(view.closestPosition(to: CGPoint(x: rect.midX, y: rect.midY)))
-        #expect((word.location...NSMaxRange(word)).contains(view.offset(from: view.beginningOfDocument, to: hit)))
+        #expect((word.location ... NSMaxRange(word)).contains(view.offset(from: view.beginningOfDocument, to: hit)))
         let offset = string.range(of: "Apple").location + 2
         let position = try #require(view.position(from: view.beginningOfDocument, offset: offset))
         let range = try #require(view.tokenizer.rangeEnclosingPosition(position, with: .word, inDirection: UITextDirection(rawValue: UITextStorageDirection.forward.rawValue)))
         #expect(view.text(in: range) == "Apple")
     }
+
     @Test @MainActor func hitTestingTracksWrappedTextAndEmoji() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 220, height: 3000))
         defer { view.dismantleRenderSession() }
@@ -69,9 +71,10 @@ struct MarkdownTextSelectionTests {
             let textRange = try #require(view.textRange(from: start, to: end))
             let rect = try #require(view.selectionRects(for: textRange).first).rect
             let position = try #require(view.closestPosition(to: CGPoint(x: rect.midX, y: rect.midY)))
-            #expect((range.location...NSMaxRange(range)).contains(view.offset(from: view.beginningOfDocument, to: position)))
+            #expect((range.location ... NSMaxRange(range)).contains(view.offset(from: view.beginningOfDocument, to: position)))
         }
     }
+
     @Test @MainActor func enlargedCitationDoesNotStealOrdinaryText() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }
@@ -87,6 +90,7 @@ struct MarkdownTextSelectionTests {
             #expect(!view.activateLink(at: CGPoint(x: rect.midX, y: rect.midY)))
         }
     }
+
     @Test @MainActor func smallCitationAcceptsNearMissWithoutOpeningDistantText() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }

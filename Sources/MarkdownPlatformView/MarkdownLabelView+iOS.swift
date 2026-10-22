@@ -781,8 +781,10 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
             else { return }
             for rect in self.linkGlyphRects(for: range) {
                 // Keep small citations visually compact, but give taps a finger-sized target.
-                let target = rect.insetBy(dx: -max(0, (44 - rect.width) / 2),
-                                          dy: -max(0, (44 - rect.height) / 2))
+                let target = rect.insetBy(
+                    dx: -max(0, (44 - rect.width) / 2),
+                    dy: -max(0, (44 - rect.height) / 2)
+                )
                 guard target.contains(point) else { continue }
                 let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
                 let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
