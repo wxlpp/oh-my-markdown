@@ -35,3 +35,39 @@
 - 每个切分点的流式追加与一次性解析一致；取消/恢复、切换规则、源码 byte ranges、复制和选区回归。
 - 下游稳定版本解析验证；Markdown iOS18/macOS15 仓库门禁；App 的真实冻结依赖构建、聊天渲染截图/交互验证。不能用 iOS26 的绿色结果替代平台门禁。
 - 独立设计评审、实施后 Claude Code 评审、问题处置及 PR 留痕。未验证项保持开放，不以单个截图代替完整验收。
+
+## 设计评审修订：交付与 API 合约（优先于前述概述）
+
+### 唯一依赖路线
+
+fork 是官方包的互斥替代品，不支持同一依赖图中与官方实现并存。保持 package/module/C symbol identity，避免维护两套重命名符号。
+
+| 层 | URL / identity | 基线 | 首个维护版本及要求 |
+|---|---|---|---|
+| cmark | https://github.com/wxlpp/swift-cmark.git / swift-cmark | 08ddb528923cc1a6527e02b7a1aee9e516ca749a | 0.8.1，精确版本 |
+| Swift 桥接 | https://github.com/wxlpp/swift-markdown.git / swift-markdown | 3c6f9523da3a1ec2fd829673e472d95b8097a3b8 | 0.8.1，精确依赖上述 cmark |
+| oh-my-markdown | 现有仓库 | 本次修复分支 | 精确依赖上述 Swift 桥接 0.8.1 |
+
+这些 fork/tag 尚未发布；创建前再次检查 URL/tag 占用，若冲突则更新本设计，不能覆盖现有 tag。发布顺序 cmark → Swift 桥接 → Markdown 库 → App。门禁拒绝任何相同 identity 指向其他 URL 的 resolved 条目。兼容文档明确此互斥限制，不能声称适用于任意第三方依赖图。
+
+保留上游许可证和 base SHA。允许 fork 修改：cmark 的 inlines.c、option 头文件、独立 Unicode 分类辅助文件/生成器/冻结数据、CLI 测试选项、测试和维护说明；Swift 桥接仅 Package.swift、ParseOptions、CommonMarkConverter 和相应用例/维护说明。其他文件修改必须说明必要性。后续跟进上游安全更新，重跑严格模式与扩展测试；上游支持并发布等价选项后，通过下一次明确版本迁移退回官方 URL，不自动切换。
+
+### API 与数据流
+
+- `public struct MarkdownParseOptions: OptionSet, Sendable, Hashable`；`rawValue: UInt`，`.cjkFriendlyEmphasis`；默认 `[]`。
+- `MarkdownDocument.init(parsing: String, options: MarkdownParseOptions = [])`；`public let parseOptions`；equality 比较配置和 blocks。内部由 blocks 构造的 initializer 也显式接收配置。`parsingAppend` 使用原 document 的配置。
+- `IncrementalParseState.parseOptions`、`IncrementalParseResult.document.parseOptions` 一致；`IncrementalSourceBuffer.parse(options:previous:metrics:afterCmark:)` 自身验证配置，失配以 `FullParseReason.configurationChanged` 从 byte 0 全量解析，不依赖 UI 清缓存。
+- `parsePipeline`、`parsePlainTail`、`parseMathTail` 都接受同一不可变 options；所有 swift-markdown 入口由单一映射函数构造 ParseOptions。
+- `ParseSubmission.parseOptions` 参与 Hashable identity，`ParseJob.parseOptions` 读取 submission；active/pending/retry 不能被新的配置误认领。结果提交时除了 commit/session token，还检查当前 options。
+- 平台 `MarkdownLabelView.parseOptions: MarkdownParseOptions`（UIKit/AppKit 同名同义，默认 []）。源模式下改变 options 触发新 generation，取消 pending/retry、使 active 结果失效、清空 latestParse/previousModel/parse cache，并按当前完整 source 重解析；不是普通样式重绘。
+- `setDocument` 渲染已解析文档：采用 document.parseOptions，文档是权威事实。因无原文，之后改变 view.parseOptions 只设置下一次 setMarkdown 的规则，不重解释现有 AST；文档模式不得保留旧 source 用来意外覆盖该文档。下一次 setMarkdown 才退出文档模式。
+- SwiftUI 使用 `.markdownParseOptions(_:)` 环境 modifier，静态 MarkdownText 与 MarkdownStreamingText 都消费它。coordinator 同时比较 source/source identity 与 options，source 相同但 options 改变也触发重解析。流式 source 本身只负责文本，不保存全局解析配置。
+- App 在聊天 Markdown 根部应用 `.markdownParseOptions(.cjkFriendlyEmphasis)`，其他消费者默认 strict。
+
+### Unicode 输入与明确范围
+
+冻结 Unicode 18.0.0。输入包括 EastAsianWidth、Scripts、Blocks、UnicodeData、PropList（空白）、StandardizedVariants、emoji-data、emoji-variation-sequences、emoji-sequences 和 emoji-test；全部保存 URL、SHA256、许可证。生成器输出 CJK、P/S 标点、Unicode 空白和 fullwidth ambiguous punctuation sequence 表，扩展模式不混用旧 cmark 标点数据；严格模式继续原逻辑。码点/VS 分类按固定提案，不把不同参考实现的不同版本混为同一规范。
+
+伪 emoji、FE00–FE0E、FE0F、IVS、non-BMP、未分配宽字符都进入分类测试。畸形 UTF8 使用现有 cmark validate 行为，新增分类函数不得越界读取。生成器与输入校验和进入仓库；生成结果必须可重现。
+
+流式穷举集合是每个 Unicode scalar 边界对应的 UTF8 offset；另在 cmark byte feed 测试覆盖多字节字符中间切分。并非向 Swift String 传递无效片段。

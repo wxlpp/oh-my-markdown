@@ -45,3 +45,17 @@
 - `python3 test/spec_tests.py --program .build/debug/cmark-gfm-bin --spec test/spec.txt`：670 passed，0 failed/errored/skipped。日志 `/tmp/cmark-baseline-spec.log`。
 - 原截图句子直接输入 cmark CLI，输出仍含字面量 `**`，确认严格模式基线。尚无 CJK 生产实现。
 - CJK 设计独立评审仍在进行；此准备不代表设计已 PASS。
+
+## 评审后具体实施约束
+
+- [ ] 依 spec 修订的 API 签名执行，不再把 API 设计推迟到写代码阶段。新增 `Sources/MarkdownCore/MarkdownParseOptions.swift`，在 DocumentParser/IncrementalParseState 中传播；RenderSessionTypes/ParseExecutor/MarkdownRenderSession 中建立 submission 配置隔离；MarkdownLabelView+iOS/+macOS 和 OhMyMarkdown 的环境 modifier、两个 representable 接入。
+- [ ] 新增配置切换矩阵：strict→CJK / CJK→strict，静态同 source、append、active、queued、retry、取消恢复；底层 parse 直接传错误 previous 也必须从0开始。文档模式验证 changing options 不隐式重新解释 AST，后续 setMarkdown 才采用新规则。
+- [ ] 将 Unicode 输入清单补全，校验 manifest 后生成；测试生成区间分类与参考数据一致，不能只测原截图。
+- [ ] fork base SHA 和允许文件按 spec 表格校验。fork URL 未存在时创建；0.8.1 tag 占用时停止该发布步骤并更新版本设计，绝不覆盖 tag。
+- [ ] 每一级先构建验证再 tag；使用 `exact: "0.8.1"` 指向上述 URL。最后用本地临时 bare Git remote 的 version-tag consumer fixture 证明稳定版本解析，再发布真实库版本，避免仅在 path override 下成功。
+- [ ] 干净缓存 fixture：单独版本消费 Markdown 库成功；App 完整依赖图成功；加入官方同 identity URL 的负例被明确拒绝。脚本断言所有 resolved 的 identity/URL/version/revision，禁止 branch/revision/path 依赖进入稳定库 manifest。
+- [ ] 维护文档记录上游安全修复更新步骤及退回官方的迁移要求；最终 PR 明示 fork 互斥兼容限制。
+
+## 设计评审状态
+
+首次独立评审 BLOCK：依赖拓扑、配置失效、API、Unicode数据和发布验收不够具体。以上修订与 spec 对应章节逐项补齐，待同一评审者定向复核；未宣称 PASS。
