@@ -284,6 +284,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     }
 
     private var storedParseOptions: MarkdownParseOptions = []
+    private var hasAuthoritativeDocument = false
 
     /// Changing rules reparses source-backed content; an explicit document stays authoritative.
     public var parseOptions: MarkdownParseOptions {
@@ -298,6 +299,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
 
     public func setDocument(_ document: MarkdownDocument) {
         guard !self.isDismantled else { return }
+        self.hasAuthoritativeDocument = true
         self.storedParseOptions = document.parseOptions
         self.reviewSnapshotReady = false
         self.renderMode = .static
@@ -649,6 +651,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     public func setMarkdown(_ source: String) {
         self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
+        self.hasAuthoritativeDocument = false
         self.renderMode = .static
         self.driver().send(.setSource(source, self.configurationSnapshot()))
     }
@@ -657,7 +660,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     public func appendMarkdown(_ chunk: String) {
         self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
-        self.renderMode = .streaming
+        if !self.hasAuthoritativeDocument { self.renderMode = .streaming }
         self.driver().send(.append(chunk))
     }
 

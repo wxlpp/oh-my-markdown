@@ -114,7 +114,11 @@ struct CJKSessionOptionsTests {
         view.appendMarkdown("不应替换文档")
         await view.settled { view.currentCommitToken != beforeAppend }
         #expect(view.currentSnapshot?.attributedString.string == "文“档”原文")
+        #expect(view.renderMode == .static)
         view.setMarkdown(self.source)
         await view.settled { view.currentSnapshot?.attributedString.string == self.source }
+        view.appendMarkdown("续")
+        #expect(view.renderMode == .streaming)
+        await view.settled { view.currentSnapshot?.attributedString.string == self.source + "续" }
     }
 }

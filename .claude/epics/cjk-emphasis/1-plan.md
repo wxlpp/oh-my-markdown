@@ -94,3 +94,10 @@
 - session 的 append 在 suppliedDocument 存在时不修改来源或退出模式，仍按当前commit发布权威文档；setSource才清除document。setDocument明确恢复static占位模式。
 - 修复后CJK会话/SwiftUI与既有渲染会话共17项通过（/tmp/cjk-document-append-green.log）。等待同一评审者定向复核。
 - 静态门禁的格式、540测试、Release warnings-as-errors均通过；总体失败项是platform-floors内Example解析尚未发布fork，非floor数值错误，需真实发布后重跑该项。
+
+### 公开模式复核处置与真实版本
+
+- 定向复审REVISE指出facade.renderMode仍切到streaming。新增断言复现红灯（/tmp/cjk-document-mode-red.log）；两平台记录当前document/source输入模式，文档append仍发送推进token但不改变公开模式。setMarkdown退出document后append正常streaming。
+- 10项CJK会话、环境和公开模式测试通过（/tmp/cjk-document-mode-green.log）。
+- 已建立wxlpp/swift-cmark与wxlpp/swift-markdown fork，推送feat/cjk-emphasis。检查标签不存在后发布0.9.1=17ad3e9b、0.8.1=92f5d9c，未覆盖标签。
+- 移除本地临时mirror到忽略的.artifacts/cjk-temporary-mirrors.json；独立scratch/cache从GitHub解析成功，resolved URL/version/revision逐项断言通过。日志.artifacts/public-resolution.log。Example真实依赖测试仍在执行；尚未宣称整个App依赖图或稳定Markdown消费fixture通过。
