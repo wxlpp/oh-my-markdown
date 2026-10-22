@@ -37,3 +37,11 @@
 ## 未完成的其他整改
 
 本计划不关闭网页/选区剩余边界、并行测试同步问题、App 固定依赖及整体验收；继续在 App 的 parser-and-contracts 总账追踪。
+
+## 实施准备证据（2026-10-23）
+
+- 独立 checkout：`/Users/evan/Repositories/work-spec/swift-cmark-cjk`，分支 `feat/cjk-emphasis`，基线 `08ddb528923cc1a6527e02b7a1aee9e516ca749a`。仅从现有冻结缓存复制 Git 仓库，缓存本身未修改；upstream 指向 swiftlang/swift-cmark，尚未创建远端 fork 或发布版本。
+- `swift build --product cmark-gfm-bin` 通过。
+- `python3 test/spec_tests.py --program .build/debug/cmark-gfm-bin --spec test/spec.txt`：670 passed，0 failed/errored/skipped。日志 `/tmp/cmark-baseline-spec.log`。
+- 原截图句子直接输入 cmark CLI，输出仍含字面量 `**`，确认严格模式基线。尚无 CJK 生产实现。
+- CJK 设计独立评审仍在进行；此准备不代表设计已 PASS。
