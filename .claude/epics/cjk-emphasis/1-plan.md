@@ -51,11 +51,17 @@
 - [ ] 依 spec 修订的 API 签名执行，不再把 API 设计推迟到写代码阶段。新增 `Sources/MarkdownCore/MarkdownParseOptions.swift`，在 DocumentParser/IncrementalParseState 中传播；RenderSessionTypes/ParseExecutor/MarkdownRenderSession 中建立 submission 配置隔离；MarkdownLabelView+iOS/+macOS 和 OhMyMarkdown 的环境 modifier、两个 representable 接入。
 - [ ] 新增配置切换矩阵：strict→CJK / CJK→strict，静态同 source、append、active、queued、retry、取消恢复；底层 parse 直接传错误 previous 也必须从0开始。文档模式验证 changing options 不隐式重新解释 AST，后续 setMarkdown 才采用新规则。
 - [ ] 将 Unicode 输入清单补全，校验 manifest 后生成；测试生成区间分类与参考数据一致，不能只测原截图。
-- [ ] fork base SHA 和允许文件按 spec 表格校验。fork URL 未存在时创建；0.8.1 tag 占用时停止该发布步骤并更新版本设计，绝不覆盖 tag。
-- [ ] 每一级先构建验证再 tag；使用 `exact: "0.8.1"` 指向上述 URL。最后用本地临时 bare Git remote 的 version-tag consumer fixture 证明稳定版本解析，再发布真实库版本，避免仅在 path override 下成功。
+- [ ] fork base SHA 和允许文件按 spec 表格校验。fork URL 未存在时创建；cmark 0.9.1 / Swift 桥接 0.8.1 tag 占用时停止该发布步骤并更新版本设计，绝不覆盖 tag。
+- [ ] 每一级先构建验证再 tag；Swift 桥接精确依赖 cmark `0.9.1`，Markdown 库精确依赖 Swift 桥接 `0.8.1`。最后用本地临时 bare Git remote 的 version-tag consumer fixture 证明稳定版本解析，再发布真实库版本，避免仅在 path override 下成功。
 - [ ] 干净缓存 fixture：单独版本消费 Markdown 库成功；App 完整依赖图成功；加入官方同 identity URL 的负例被明确拒绝。脚本断言所有 resolved 的 identity/URL/version/revision，禁止 branch/revision/path 依赖进入稳定库 manifest。
 - [ ] 维护文档记录上游安全修复更新步骤及退回官方的迁移要求；最终 PR 明示 fork 互斥兼容限制。
 
 ## 设计评审状态
 
 首次独立评审 BLOCK：依赖拓扑、配置失效、API、Unicode数据和发布验收不够具体。以上修订与 spec 对应章节逐项补齐，待同一评审者定向复核；未宣称 PASS。
+
+### 第二轮设计评审处置
+
+- cmark 08ddb528 是上游 0.9.0，首个维护版本更正为 0.9.1；Swift 桥接仍为基于 0.8.0 的 0.8.1。库旧 resolved 为 cmark 0.8.0；基线升级差异只含 src/html.c 两处相同 UTF8 字节的字面量转换。增加脚注 HTML 与 AST/source-range 兼容验证，不将前述 670 项错误记作 0.8.0 证据。
+- 空白表生成改为 GC=Zs 加 TAB/LF/FF/CR。PropList 不用于生成该表；增加 VT/NEL/Zl/Zp 负例。
+- Exports.swift 增加显式公共 typealias，consumer fixture 只 import OhMyMarkdown，显式声明 MarkdownParseOptions 并调用 modifier。

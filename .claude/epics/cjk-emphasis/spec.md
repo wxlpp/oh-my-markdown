@@ -44,7 +44,7 @@ fork 是官方包的互斥替代品，不支持同一依赖图中与官方实现
 
 | 层 | URL / identity | 基线 | 首个维护版本及要求 |
 |---|---|---|---|
-| cmark | https://github.com/wxlpp/swift-cmark.git / swift-cmark | 08ddb528923cc1a6527e02b7a1aee9e516ca749a | 0.8.1，精确版本 |
+| cmark | https://github.com/wxlpp/swift-cmark.git / swift-cmark | 08ddb528923cc1a6527e02b7a1aee9e516ca749a（上游 0.9.0） | 0.9.1，精确版本 |
 | Swift 桥接 | https://github.com/wxlpp/swift-markdown.git / swift-markdown | 3c6f9523da3a1ec2fd829673e472d95b8097a3b8 | 0.8.1，精确依赖上述 cmark |
 | oh-my-markdown | 现有仓库 | 本次修复分支 | 精确依赖上述 Swift 桥接 0.8.1 |
 
@@ -52,8 +52,11 @@ fork 是官方包的互斥替代品，不支持同一依赖图中与官方实现
 
 保留上游许可证和 base SHA。允许 fork 修改：cmark 的 inlines.c、option 头文件、独立 Unicode 分类辅助文件/生成器/冻结数据、CLI 测试选项、测试和维护说明；Swift 桥接仅 Package.swift、ParseOptions、CommonMarkConverter 和相应用例/维护说明。其他文件修改必须说明必要性。后续跟进上游安全更新，重跑严格模式与扩展测试；上游支持并发布等价选项后，通过下一次明确版本迁移退回官方 URL，不自动切换。
 
+当前 Markdown 库 resolved 的 cmark 为 0.8.0（924936d0427cb25a61169739a7660230bffa6ea6），App 冻结 checkout 为 0.9.0；本次明确统一到 0.9.0 基线并发布 0.9.1，不将其标作 0.8.x。两基线 diff 只有 src/html.c 的两处脚注返回箭头从 UTF8 字面量改成同字节 hex escape；仍需严格 CommonMark、GFM 脚注输出以及库 AST/source-range 回归验证升级兼容。此前 670 项结果仅是 0.9.0 基线，不能标为 0.8.0 基线验证。
+
 ### API 与数据流
 
+- umbrella `OhMyMarkdown/Exports.swift` 显式 `public typealias MarkdownParseOptions = MarkdownCore.MarkdownParseOptions`；增加只 import OhMyMarkdown 的消费者编译验证。
 - `public struct MarkdownParseOptions: OptionSet, Sendable, Hashable`；`rawValue: UInt`，`.cjkFriendlyEmphasis`；默认 `[]`。
 - `MarkdownDocument.init(parsing: String, options: MarkdownParseOptions = [])`；`public let parseOptions`；equality 比较配置和 blocks。内部由 blocks 构造的 initializer 也显式接收配置。`parsingAppend` 使用原 document 的配置。
 - `IncrementalParseState.parseOptions`、`IncrementalParseResult.document.parseOptions` 一致；`IncrementalSourceBuffer.parse(options:previous:metrics:afterCmark:)` 自身验证配置，失配以 `FullParseReason.configurationChanged` 从 byte 0 全量解析，不依赖 UI 清缓存。
@@ -66,7 +69,9 @@ fork 是官方包的互斥替代品，不支持同一依赖图中与官方实现
 
 ### Unicode 输入与明确范围
 
-冻结 Unicode 18.0.0。输入包括 EastAsianWidth、Scripts、Blocks、UnicodeData、PropList（空白）、StandardizedVariants、emoji-data、emoji-variation-sequences、emoji-sequences 和 emoji-test；全部保存 URL、SHA256、许可证。生成器输出 CJK、P/S 标点、Unicode 空白和 fullwidth ambiguous punctuation sequence 表，扩展模式不混用旧 cmark 标点数据；严格模式继续原逻辑。码点/VS 分类按固定提案，不把不同参考实现的不同版本混为同一规范。
+冻结 Unicode 18.0.0。输入包括 EastAsianWidth、Scripts、Blocks、UnicodeData、PropList（仅用于交叉校验）、StandardizedVariants、emoji-data、emoji-variation-sequences、emoji-sequences 和 emoji-test；全部保存 URL、SHA256、许可证。生成器输出 CJK、P/S 标点、Unicode 空白和 fullwidth ambiguous punctuation sequence 表，扩展模式不混用旧 cmark 标点数据；严格模式继续原逻辑。码点/VS 分类按固定提案，不把不同参考实现的不同版本混为同一规范。
+
+CommonMark 空白分类精确等于 UnicodeData 的 General_Category=Zs 加 U+0009/U+000A/U+000C/U+000D；不得直接使用 PropList.White_Space。VT U+000B、NEL U+0085、Zl U+2028、Zp U+2029 必须有不属于空白的负例。
 
 伪 emoji、FE00–FE0E、FE0F、IVS、non-BMP、未分配宽字符都进入分类测试。畸形 UTF8 使用现有 cmark validate 行为，新增分类函数不得越界读取。生成器与输入校验和进入仓库；生成结果必须可重现。
 
