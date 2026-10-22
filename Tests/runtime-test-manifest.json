@@ -19,7 +19,10 @@
       "rightToLeftSelectionReportsItsDirectionAndVisualEdge()",
       "logicalOffsetsRejectPositionsOutsideDocument()",
       "characterHitIncludesBothHalvesOfGlyph()",
-      "mixedDirectionCharacterExtensionSelectsOneGrapheme()"
+      "mixedDirectionCharacterExtensionSelectsOneGrapheme()",
+      "mixedDirectionRectsFollowSelectedRun()",
+      "paragraphBoundaryRespectsStorageDirection()",
+      "farthestPositionExistsAtDocumentEdges()"
     ]
   },
   "macos15": {

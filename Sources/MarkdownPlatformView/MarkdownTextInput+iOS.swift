@@ -300,7 +300,7 @@ extension MarkdownLabelView: UITextInput {
     )
         -> NSWritingDirection {
         guard let position = position as? MarkdownTextPosition,
-              let location = locationAt(position.offset),
+              let location = locationAt(direction == .backward ? max(0, position.offset - 1) : position.offset),
               let source = self.layoutManager.textSelectionNavigation.textSelectionDataSource else { return .natural }
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         return source.baseWritingDirection(at: location) == .rightToLeft ? .rightToLeft : .leftToRight
@@ -363,17 +363,40 @@ extension MarkdownLabelView: UITextInput {
             ) else {
             return []
         }
-        var rects: [MarkdownSelectionRect] = []
+        self.layoutManager.ensureLayout(for: tr)
+        var segments: [(NSTextRange?, CGRect)] = []
         self.layoutManager.enumerateTextSegments(in: tr, type: .selection, options: []) { segment, frame, _, _ in
+            segments.append((segment, frame))
+            return true
+        }
+        let source = self.layoutManager.textSelectionNavigation.textSelectionDataSource
+        var directions: [Int: NSWritingDirection] = [:]
+        var rects: [MarkdownSelectionRect] = []
+        for (segment, frame) in segments {
+            let location = segment?.location ?? tr.location
+            let offset = self.offsetOf(location)
+            if directions[offset] == nil {
+                // TextKit provides both logical edges for each character in visual order.
+                // Cache the whole line so adjacent selection segments share one query.
+                var leadingEdges: [Int: CGFloat] = [:]
+                var trailingEdges: [Int: CGFloat] = [:]
+                source?.enumerateCaretOffsetsInLineFragment(at: location) { x, edgeLocation, leading, _ in
+                    let index = self.offsetOf(edgeLocation)
+                    if leading { leadingEdges[index] = x } else { trailingEdges[index] = x }
+                }
+                for (index, leading) in leadingEdges {
+                    if let trailing = trailingEdges[index], leading != trailing {
+                        directions[index] = leading < trailing ? .leftToRight : .rightToLeft
+                    }
+                }
+            }
+            let direction = directions[offset] ?? (source?.baseWritingDirection(at: location) == .rightToLeft ? .rightToLeft : .leftToRight)
             rects.append(MarkdownSelectionRect(
                 frame,
                 containsStart: segment?.location.compare(tr.location) == .orderedSame,
                 containsEnd: segment?.endLocation.compare(tr.endLocation) == .orderedSame,
-                writingDirection: self.baseWritingDirection(
-                    for: MarkdownTextPosition(self.offsetOf(segment?.location ?? tr.location)), in: .forward
-                )
+                writingDirection: direction
             ))
-            return true
         }
         return rects
     }

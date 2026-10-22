@@ -39,6 +39,41 @@ struct MarkdownTextSelectionTests {
         }
     }
 
+    @Test @MainActor func mixedDirectionRectsFollowSelectedRun() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("abc مرحبا xyz")
+        await view.settled { view.currentSnapshot != nil }
+        let start = try #require(view.position(from: view.beginningOfDocument, offset: 4))
+        let end = try #require(view.position(from: start, offset: 5))
+        let range = try #require(view.textRange(from: start, to: end))
+        let rects = view.selectionRects(for: range)
+        #expect(!rects.isEmpty)
+        #expect(rects.allSatisfy { $0.writingDirection == .rightToLeft })
+    }
+
+    @Test @MainActor func paragraphBoundaryRespectsStorageDirection() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("مرحبا\n\nEnglish")
+        await view.settled { view.currentSnapshot != nil }
+        let text = try #require(view.currentSnapshot).attributedString.string as NSString
+        let position = try #require(view.position(from: view.beginningOfDocument, offset: text.range(of: "English").location))
+        #expect(view.baseWritingDirection(for: position, in: .forward) == .leftToRight)
+        #expect(view.baseWritingDirection(for: position, in: .backward) == .rightToLeft)
+    }
+
+    @Test @MainActor func farthestPositionExistsAtDocumentEdges() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("第一行\n\n最后一行")
+        await view.settled { view.currentSnapshot != nil }
+        let range = try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))
+        for direction: UITextLayoutDirection in [.up, .down, .left, .right] {
+            #expect(view.position(within: range, farthestIn: direction) != nil)
+        }
+    }
+
     @Test @MainActor func extendingSelectionKeepsComposedCharactersWhole() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         defer { view.dismantleRenderSession() }

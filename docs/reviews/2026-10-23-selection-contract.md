@@ -25,3 +25,12 @@
 - iOS 26.4 的 MarkdownTextSelectionTests 共 11 项通过（`/tmp/selection-mixed-green.log`），包括组合字符、上下移动、引用命中和新增混排测试。
 - M3 的普通中文左右半区命中未复现：首尾字形两侧均命中正确字符。该证据仅覆盖普通中文，尚不能排除连字、RTL 或行尾空白问题。
 - 新测试加入运行时清单。其余 Claude 反馈、完整运行时门禁与 App 最终固定版本仍待完成。
+
+## 混排方向与布局枚举
+
+- M2 / M6 已分别复现：LTR 段落内 Arabic run 的 rect 方向错误；段落起点 backward 查询错误地返回后一段方向（`/tmp/selection-direction-review-red.log`）。
+- rect 方向改由 TextKit 提供的同一字符 leading/trailing caret x 顺序推导；每次请求按行缓存，避免自行猜测 Unicode bidi。枚举 segment 前只准备目标范围布局，收集后再查询 caret，不在回调里重复整篇 ensureLayout。
+- backward 查询使用插入点之前的文本位置。
+- M4 的文档首尾上下左右非空返回用例全部通过，当前未复现 nil，未加入推测性 fallback。
+- 格式化后 iOS 26.4 的选择 suite 14 项通过（`/tmp/selection-edges.log`）；新增用例已登记运行时清单。
+- 仍待：M3 RTL/连字及行尾验证、M5 连续上下移动目标 x、完整库与 App 回归、最终外部复审。
