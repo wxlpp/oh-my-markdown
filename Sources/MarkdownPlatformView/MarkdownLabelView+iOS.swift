@@ -1091,7 +1091,6 @@ private final class MarkdownLinkTapDelegate: NSObject, UIGestureRecognizerDelega
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
         otherGestureRecognizer.view === gestureRecognizer.view
-            && otherGestureRecognizer is UITapGestureRecognizer
     }
 }
 
