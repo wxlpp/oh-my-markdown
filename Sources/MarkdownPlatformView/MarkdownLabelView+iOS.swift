@@ -662,6 +662,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
 
     /// Bundles long-press selection, handle dragging, and Copy/Share menu (no keyboard).
     private var textInteraction: UITextInteraction!
+    private let linkTapDelegate = MarkdownLinkTapDelegate()
 
     private var lastParsedSource: String {
         self.currentSnapshot?.displayModel.source ?? ""
@@ -859,6 +860,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         // Tap recognizer for link activation / selection dismissal.
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tap.cancelsTouchesInView = false
+        tap.delegate = self.linkTapDelegate
         addGestureRecognizer(tap)
     }
 
@@ -1079,4 +1081,18 @@ extension MarkdownLabelView: UITextSelectionDisplayInteractionDelegate {
         self.highlightContainerView
     }
 }
+
+/// UITextInteraction installs its own tap recognizers. Let the link tap receive
+/// the same short tap without competing with scrolling or long-press selection.
+@MainActor
+private final class MarkdownLinkTapDelegate: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        otherGestureRecognizer.view === gestureRecognizer.view
+            && otherGestureRecognizer is UITapGestureRecognizer
+    }
+}
+
 #endif
