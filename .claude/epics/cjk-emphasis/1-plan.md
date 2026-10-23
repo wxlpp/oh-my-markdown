@@ -1,13 +1,15 @@
 # CJK 强调解析实施计划
 
-## 最新集成证据
+## 最新集成证据（2026-10-23 交付核对）
 
-- 57f16f4 已推送维护分支，尚未合并或发布 Markdown 正式版本。
-- iOS18 串行 package 与 Example 的 xcresult 清单断言：551 executed / 551 passed / 0 skipped / 0 failed。结果与运行环境记录保存在 `.artifacts/ios18-cjk-serial/`。
-- fork 发布后的平台最低版本复查全部通过：package、Example/ExampleTests/ExampleUITests 的 Debug/Release 均为 iOS18、macOS15。日志 `.artifacts/cjk-final-platform-floors.log`。macOS15 真机运行门禁仍未解决，不以新宿主测试替代。
-- 稳定版本消费者 fixture 已构建成功：本库57f16f4在临时bare仓库使用仅本地99.0.0标签，消费者只import OhMyMarkdown，显式声明MarkdownParseOptions并调用modifier；依赖真实远端fork0.8.1/0.9.1，独立cache，未使用mirror。证据 `.artifacts/cjk-consumer/positive.log` 和 fixture 的Package.resolved。这不表示99.0.0已公开发布。
-- 负例同时要求官方swift-markdown0.8.0，解析明确失败于与维护版0.8.1的版本冲突，见 `.artifacts/cjk-consumer/negative.log`；不宣称覆盖所有可能的第三方依赖组合。
-- Claude Opus5.5跨库定向评审运行中，结果路径 `.artifacts/claude-review/cjk-result.json`。App正在接入已推送的库revision；最终构建、交互与真机交付未完成。
+- 已验证源码 revision：411fae3806ec6d08a9350192f97faee15c11bc63。之后本次仅整理计划状态，不改生产代码、测试或依赖。
+- 当前源码 iOS18 完整 package + Example 清单断言：552 executed / 552 passed / 0 skipped / 0 failed；必需 target/case 齐全。日志、xcresult、git SHA 和环境记录在 `.artifacts/ios18-final-head/`。
+- 当前源码 macOS26 宿主完整测试541项通过；Release warnings-as-errors、格式、图片所有权与链接隔离门禁通过，见 `.artifacts/claude-review/final-macos-tests.log`、`.artifacts/final-head-static/`。这些不代替 macOS15 实际运行。
+- macOS15 环境不可用；用户已确认库 PR 保持草稿、继续 App 验证。Markdown 正式版本发布与合并均延期，下面相关交付项仍不打勾。
+- 公共 fork 标签已核对：cmark 0.9.1=17ad3e9b113f7747a5822ac00bc0efca2c15e628；Swift桥接0.8.1=92f5d9cad5e048a04dd3f4d306348836dbe89eae。标签未覆盖。
+- 独立稳定版本消费者及同 identity 冲突负例证据保留在 `.artifacts/cjk-consumer/`，仅本地测试标签99.0.0未对外发布；App 实际消费411fae3/Harness154a08b并完成签名Release构建和真机安装。
+- Claude Opus5.5配置隔离修复复核PASS，完整报告 `docs/reviews/2026-10-23-claude-cjk.md`，PR #15 已同步原文与处置。App PR #270 的后续键盘修复另有定向报告，不能借本库PASS替代其评审。
+- 下方勾选代表实现/指定证据完成，不代表整个发布门禁或所有库已合并。后文按时间追加的旧状态仅为历史。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use oh-my-superpowers:executing-plans to implement this plan task-by-task.
 
@@ -16,32 +18,32 @@
 
 ## 1. 底层规则与可再现输入
 
-- [ ] 从当前冻结上游 revision 建立独立维护 checkout，记录来源、许可证、版本；不修改 SourcePackages。
-- [ ] 下载并固定社区用例及 Unicode 数据，生成区间表脚本，明确数据版本及许可。
-- [ ] 用 cmark 测试展示严格模式原输出及目标 CJK 差异（红）。
-- [ ] 在 `src/inlines.c` 加 option 控制的 flanking 分类辅助函数；在 `src/cmark-gfm.h` 分配无冲突 option bit，Unicode 分类单独文件。保留原匹配算法。
-- [ ] 严格模式跑上游规范测试；开启模式跑社区强调用例和畸形 UTF8/超长 delimiter 边界。记录结果并提交。
+- [x] 从当前冻结上游 revision 建立独立维护 checkout，记录来源、许可证、版本；不修改 SourcePackages。
+- [x] 下载并固定社区用例及 Unicode 数据，生成区间表脚本，明确数据版本及许可。
+- [x] 用 cmark 测试展示严格模式原输出及目标 CJK 差异（红）。
+- [x] 在 `src/inlines.c` 加 option 控制的 flanking 分类辅助函数；在 `src/cmark-gfm.h` 分配无冲突 option bit，Unicode 分类单独文件。保留原匹配算法。
+- [x] 严格模式跑上游规范测试；开启模式跑社区强调用例和畸形 UTF8/超长 delimiter 边界。记录结果并提交。
 
 ## 2. Swift 桥接
 
-- [ ] swift-markdown `ParseOptions.swift` 新增 `cjkFriendlyEmphasis`，`CommonMarkConverter.swift` 映射底层 option。
-- [ ] 增加强调树和 source range 测试；关闭选项输出不变。
-- [ ] 跑 Swift 桥接测试，提交维护分支。版本依赖发布前使用本地受控联调，仅在最终交付时锁稳定版本。
+- [x] swift-markdown `ParseOptions.swift` 新增 `cjkFriendlyEmphasis`，`CommonMarkConverter.swift` 映射底层 option。
+- [x] 增加强调树和 source range 测试；关闭选项输出不变。
+- [x] 跑 Swift 桥接测试，提交维护分支。版本依赖发布前使用本地受控联调，仅在最终交付时锁稳定版本。
 
 ## 3. Markdown 库端到端传播
 
-- [ ] 先定位 DocumentParser、IncrementalParseState、ParseExecutor、渲染会话及 SwiftUI 配置的真实签名，列出完整 option 流向后修改。
-- [ ] 新增 Sendable/Equatable 解析配置，默认严格；document 保留配置，所有 parsePipeline/plain/math tail 使用它。
-- [ ] 选项改变时失效旧解析任务/缓存，不沿用旧增量边界；SwiftUI/UIKit 配置保持一致。
-- [ ] 对每个 UTF8 合法切分点验证增量==全量；数学、链接、复制、选区及 source range 回归。
-- [ ] 更新运行时清单与说明，跑必需平台门禁及完整库测试。
+- [x] 先定位 DocumentParser、IncrementalParseState、ParseExecutor、渲染会话及 SwiftUI 配置的真实签名，列出完整 option 流向后修改。
+- [x] 新增 Sendable/Equatable 解析配置，默认严格；document 保留配置，所有 parsePipeline/plain/math tail 使用它。
+- [x] 选项改变时失效旧解析任务/缓存，不沿用旧增量边界；SwiftUI/UIKit 配置保持一致。
+- [x] 对每个 UTF8 合法切分点验证增量==全量；数学、链接、复制、选区及 source range 回归。
+- [ ] 更新运行时清单与说明，跑必需平台门禁及完整库测试。清单、iOS18和当前宿主已完成；macOS15实际运行延期。
 
 ## 4. 发布与 App 消费
 
-- [ ] 审查最小 fork diff，发布可稳定解析的语义版本；库依赖切到冻结版本后验证独立消费 fixture。
-- [ ] App 聊天显式开启 CJK，统一 Xcode、StoryUI 和 resolved 冻结版本。
-- [ ] 真实 App 展示截图句子与流式输出，验证源码复制、引用点击及选择；记录未覆盖范围。
-- [ ] Claude Code 对最终跨库 diff 评审，处理真实问题并将评审模型、SHA、验证和处置同步 PR。
+- [x] 审查最小 fork diff，发布可稳定解析的语义版本；库依赖切到冻结版本后验证独立消费 fixture。
+- [x] App 聊天显式开启 CJK，统一 Xcode、StoryUI 和 resolved 冻结版本。
+- [x] 真实 App 展示截图句子与流式输出，验证源码复制、引用点击及选择；记录未覆盖范围。
+- [x] Claude Code 对最终跨库 diff 评审，处理真实问题并将评审模型、SHA、验证和处置同步 PR。
 
 ## 未完成的其他整改
 
@@ -57,13 +59,13 @@
 
 ## 评审后具体实施约束
 
-- [ ] 依 spec 修订的 API 签名执行，不再把 API 设计推迟到写代码阶段。新增 `Sources/MarkdownCore/MarkdownParseOptions.swift`，在 DocumentParser/IncrementalParseState 中传播；RenderSessionTypes/ParseExecutor/MarkdownRenderSession 中建立 submission 配置隔离；MarkdownLabelView+iOS/+macOS 和 OhMyMarkdown 的环境 modifier、两个 representable 接入。
-- [ ] 新增配置切换矩阵：strict→CJK / CJK→strict，静态同 source、append、active、queued、retry、取消恢复；底层 parse 直接传错误 previous 也必须从0开始。文档模式验证 changing options 不隐式重新解释 AST，后续 setMarkdown 才采用新规则。
-- [ ] 将 Unicode 输入清单补全，校验 manifest 后生成；测试生成区间分类与参考数据一致，不能只测原截图。
-- [ ] fork base SHA 和允许文件按 spec 表格校验。fork URL 未存在时创建；cmark 0.9.1 / Swift 桥接 0.8.1 tag 占用时停止该发布步骤并更新版本设计，绝不覆盖 tag。
+- [x] 依 spec 修订的 API 签名执行，不再把 API 设计推迟到写代码阶段。新增 `Sources/MarkdownCore/MarkdownParseOptions.swift`，在 DocumentParser/IncrementalParseState 中传播；RenderSessionTypes/ParseExecutor/MarkdownRenderSession 中建立 submission 配置隔离；MarkdownLabelView+iOS/+macOS 和 OhMyMarkdown 的环境 modifier、两个 representable 接入。
+- [x] 新增配置切换矩阵：strict→CJK / CJK→strict，静态同 source、append、active、queued、retry、取消恢复；底层 parse 直接传错误 previous 也必须从0开始。文档模式验证 changing options 不隐式重新解释 AST，后续 setMarkdown 才采用新规则。
+- [x] 将 Unicode 输入清单补全，校验 manifest 后生成；测试生成区间分类与参考数据一致，不能只测原截图。
+- [x] fork base SHA 和允许文件按 spec 表格校验。fork URL 未存在时创建；cmark 0.9.1 / Swift 桥接 0.8.1 tag 占用时停止该发布步骤并更新版本设计，绝不覆盖 tag。
 - [ ] 每一级先构建验证再 tag；Swift 桥接精确依赖 cmark `0.9.1`，Markdown 库精确依赖 Swift 桥接 `0.8.1`。最后用本地临时 bare Git remote 的 version-tag consumer fixture 证明稳定版本解析，再发布真实库版本，避免仅在 path override 下成功。
-- [ ] 干净缓存 fixture：单独版本消费 Markdown 库成功；App 完整依赖图成功；加入官方同 identity URL 的负例被明确拒绝。脚本断言所有 resolved 的 identity/URL/version/revision，禁止 branch/revision/path 依赖进入稳定库 manifest。
-- [ ] 维护文档记录上游安全修复更新步骤及退回官方的迁移要求；最终 PR 明示 fork 互斥兼容限制。
+- [x] 干净缓存 fixture：单独版本消费 Markdown 库成功；App 完整依赖图成功；加入官方同 identity URL 的负例被明确拒绝。脚本断言所有 resolved 的 identity/URL/version/revision，禁止 branch/revision/path 依赖进入稳定库 manifest。
+- [x] 维护文档记录上游安全修复更新步骤及退回官方的迁移要求；最终 PR 明示 fork 互斥兼容限制。
 
 ## 设计评审状态
 
