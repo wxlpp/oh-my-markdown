@@ -6,6 +6,33 @@ import UIKit
 
 @Suite(.serialized)
 struct MarkdownTextSelectionTests {
+    @Test @MainActor func widthProbePreservesDecorationDrawing() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("前面的普通段落需要足够长，才能在不同宽度下换行，并且改变后面引用段落的位置。\n\n> 引用的竖线应该与正文对齐。")
+        await view.settled { view.currentSnapshot != nil }
+        view.layoutIfNeeded()
+        let renderer = UIGraphicsImageRenderer(bounds: view.bounds)
+        let before = try #require(renderer.image { _ in view.draw(view.bounds) }.pngData())
+        _ = view.sizeThatFits(CGSize(width: 10000, height: CGFloat.greatestFiniteMagnitude))
+        let after = try #require(renderer.image { _ in view.draw(view.bounds) }.pngData())
+        let matches = before == after
+        #expect(matches)
+    }
+
+    @Test @MainActor func widthProbePreservesAnnotationGeometry() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("前面的普通段落需要足够长，才能在不同宽度下换行，并且改变后面引用段落的位置。\n\nApple 平台。")
+        await view.settled { view.currentSnapshot != nil }
+        view.layoutIfNeeded()
+        let text = try #require(view.contentStorage.textStorage?.string as NSString?)
+        let range = text.range(of: "Apple")
+        let expected = view.reviewRects(for: range)
+        _ = view.sizeThatFits(CGSize(width: 10000, height: CGFloat.greatestFiniteMagnitude))
+        #expect(view.reviewRects(for: range) == expected)
+    }
+
     @Test @MainActor func measuringAnotherWidthPreservesSelectionGeometry() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 362, height: 400))
         defer { view.dismantleRenderSession() }
