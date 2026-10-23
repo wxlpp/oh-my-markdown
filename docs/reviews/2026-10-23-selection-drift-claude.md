@@ -259,3 +259,71 @@ App 日志显示同一个文本视图的 frame/bounds 和选区 33...38 均不�
 - 原始复审结论为 REVISE，不篡改为 Claude PASS。其要求的行尾补测与 App 实测条件已满足；未发起第三轮自动评审。
 - 静态门禁全部通过，含 macOS26宿主541项、Release warnings-as-errors、格式与平台边界检查；不替代macOS15运行。
 - 真机使用626e15a生产源码，补测只新增测试，不改变已安装二进制的生产内容。
+
+## 后续：I2 性能风险的实测与按需布局
+
+本轮根据持续整改目标验证先前登记的I2，没有将假设直接当成缺陷修复。
+
+- 诊断源归档：.artifacts/MeasurementCostProbeTests.swift；约8400字普通段落，创建未布局视图（bounds.width=0、container.width=1）后连续测量362pt宽度5次。
+- 同进程交替A/B（selection-measurement-isolation）：按需恢复83.37/88.18ms；立即恢复353.76/365.21ms，恢复步骤单独耗时263.83/247.98ms。已布局362pt视图两者均不足0.04ms。这是模拟器固定样例，不推导真机帧率提升。
+- 改用几何查询方保证布局有效：sizeThatFits恢复宽度但不立即重排，firstRect/caretRect/selectionRects查询前ensureLayout(documentRange)。其他视觉导航与命中接口原已执行全文ensure。
+- 只ensure查询range的初始尝试失败6处；高亮矩形单独使用range也失败3处。前面段落换行决定后面段落的origin，不能只刷新目标range。两个失败结果分别为selection-lazy-geometry、selection-lazy-all-geometry-red。
+- 回归扩展为在每一种几何查询前单独进行宽度探测，避免前一次查询刷新布局掩盖后一次遗漏。
+- 临时性能探针未进入产品测试集，不增加脆弱的毫秒阈值。永久保留几何一致性回归。
+- 因I2从假设变成具名的实测风险且修复方式改变，限定复审范围为I2/S1，未重启全量审计；输入selection-lazy-geometry-input.txt。测试与评审结果待下文补充。
+
+## I2/S1限定复核原文
+
+# 结论：REVISE（条件性，只差一处）
+
+`sizeThatFits` 改为惰性恢复，三个 UITextInput 几何查询改为全文 `ensureLayout`。这部分我认为正确，性能也不比 eager 方案差。遗漏的是一个相关消费者：`draw(_:)` 里的装饰绘制。
+
+## 已核对、没有问题的部分
+
+- **`MarkdownLabelView+iOS.swift:598-603`**：探测后只把容器宽度恢复成 `prev`，`textContainer.size` 的变化会让布局失效。下一次读取前必须重新 ensure，这正是本次改动的前提，逻辑成立。fast path（`:584` 附近）用恢复后的 `prev` 判断宽度相同，不会被探测宽度误导。
+- **`MarkdownTextInput+iOS.swift:343 / :359 / :377`**：三处都在 `enumerateTextSegments` 之前对 `documentRange` 做 ensure，和你已证伪"只 ensure 查询 range"的结论一致。测试在每类查询前都重新探测 10000/180/500，三类查询互不掩盖。其中 10000 和 180 会改变第一段的折行，所以测试确实能区分对错。
+- **性能**：最坏情况是"探测 → 查询"交替出现，每次查询都要按真实宽度全量重排一次，成本最多等于 eager。没有查询时就是你测到的 lazy 数字。布局有效时 ensure 一次的开销，在 `textPosition` 和 `position(from:in:)` 里本来就有，不算新风险。
+- **其他消费者**：
+  - 已有全文 ensure：`intrinsicContentSize`、`layoutSubviews`（两个分支都有）、`resetLayout`、`updateMeasuredHeightIfNeeded`、`accessibilityFrames`、`position(from:in:offset:)`、`position(within:farthestIn:)`、`characterRange(byExtending:)`、`baseWritingDirection`、`textPosition`。
+  - `linkGlyphRects` 自己不做 ensure，但它在 `activateLink(at:)` 里只会经由 `hitsOrdinaryText` 调用。那里先走 `closestPosition` 再到 `textPosition`，必然先做全文 ensure，所以当前是安全的，只是依赖调用顺序。
+
+## R1（REVISE）：`draw(_:)` 在 ensure 之前就读取了装饰几何
+
+- **位置**：`MarkdownLabelView+iOS.swift:612-613`。`decorations.drawAll(blocks:in:)` 和 `drawReviewAnnotations(in:)` 都排在 `:614` 那次带 `.ensuresLayout` 的文本枚举之前。
+- **触发路径**：宿主用不同宽度调用 `sizeThatFits` 但没有改 frame，所以 `layoutSubviews` 不会运行。接着用户改了选区：`selectedTextRange` setter 调用 `setNeedsDisplay()`，进入 `draw`。
+  - 文本本身会被 `.ensuresLayout` 按真实宽度重排，位置正确。
+  - 但代码块背景、引用竖条、批注标记是按失效后残留的探测宽度片段 frame 画出来的，和文本错位，并且会一直保持到下一次重绘。
+  - 这个触发场景恰好就是本修复针对的"有选区"场景。
+- **证据**：`_blockFrameUnionForTesting` 在调用 `decorations.blockFrameUnion` 之前手动 ensure 了一次，说明 decorations 不会自己保证布局有效。另外，`:595-597` 的新注释写的是 "Geometry readers ensure layout on demand"，对这条路径来说并不成立。
+- **建议修法**：在 `draw(_:)` 的 `guard` 之后、`drawAll` 之前加一行：
+  ```swift
+  self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
+  ```
+  后面的文本枚举本来就会把全文重排一遍，这一行只是把同样的重排提前，不增加成本。它也属于读取方按需 ensure，不是测量后立即重排，符合你的约束。
+- **何时可以直接 PASS**：如果 `MarkdownLabelDecorations.drawAll` 和 `drawReviewAnnotations` 内部本来就用 `.ensuresLayout` 枚举，或者自己做了 ensure，那这条不成立，结论可以直接改为 PASS。
+
+## 同一类问题、需要你确认实现的两处（源码不在这次给的范围里）
+
+- **`handleTap` → `activateReviewAnnotation(at:)`**：它在任何 ensure 之前执行。如果它直接用 `enumerateTextSegments` 或片段 frame 做命中测试，探测后的第一次点击会命中错位的旧几何。
+- **`reviewConfiguration.didSet`**：如果配置没有实质变化，它会跳过 `resetLayout()`，但仍然调用 `publishInlineCommentLayout()`。如果后者读取片段 frame 又不自己 ensure，会把旧几何发布给宿主。
+
+这两处如果确实缺 ensure，修法和 R1 相同：在读取方入口加全文 ensure。
+
+## 范围外，不计入结论
+
+同名的"1pt 成本"风险在别处还有：`resetLayout()` 用 `max(bounds.width, 1)` 立即做全文 ensure，每次 `replaceSnapshot` 都会走到这里。宽度为 0 的未布局视图仍会按 1pt 重排。这和本次改动无关，这里只记录，不展开。
+
+
+## 限定复核处置
+
+- R1绘制：新增widthProbePreservesDecorationDrawing，在同一视图不同宽度测量前后直接draw到位图，引用竖线和正文图像一致。未复现评审假设；保留测试，不加入无证据的额外绘制刷新。
+- 批注消费者：新增widthProbePreservesAnnotationGeometry真实失败，reviewRects仅ensure目标range导致y=23.09375而应为58.1875。改为全文ensure，所有使用reviewRects的批注绘制、命中与行内布局共用修复；不在各调用端分别补丁。
+- 证据：selection-lazy-readers-red-v2共22项中批注测试1处失败；绘制测试通过。首次读者测试编译失败（CGFloat推断歧义）不计入行为红灯。
+- 本轮限定复核仍为条件REVISE，不改写为Claude批准。作者据实际测试处置；不再启动追求PASS的自动评审循环。
+
+## 按需布局最终验证（源码7312305）
+
+- iOS18完整包553项通过；Example以同一最终源码重跑通过。清单脚本合并检查558项执行/558项通过/0跳过/0失败，包含所需四个target。证据：selection-lazy-complete-ios18、selection-lazy-complete-example-ios18、selection-lazy-complete-ios18-assert.log与selection-lazy-complete-runtime.txt。
+- 静态门禁全部通过，macOS26宿主541项、Release warnings-as-errors、格式与平台边界检查；不替代延期的macOS15。
+- App实际checkout与manifest/resolved均为73123054c614933a7a1e1af8fc383eb32fa64fc7，最终右手柄拖动、复制和引用近点两项UI测试通过，截图已人工检查；Release真机签名构建通过。
+- 既有Harness与业务层未变化，沿用原有有效证据，不冒称重新执行其全部测试。剩余正式发布阻塞仍是用户明确延期的macOS15环境与运行门禁。
