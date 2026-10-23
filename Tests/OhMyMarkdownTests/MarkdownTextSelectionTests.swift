@@ -6,6 +6,73 @@ import UIKit
 
 @Suite(.serialized)
 struct MarkdownTextSelectionTests {
+    @Test @MainActor func measuringAnotherWidthPreservesSelectionGeometry() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 362, height: 400))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("可以先从 Swift 官方文档入手，了解语言、标准库和工具链。[1](https://example.com)\n\nApple 平台的具体 API 可以查阅开发者文档；目前只有搜索摘要。")
+        await view.settled { view.currentSnapshot != nil }
+        view.layoutIfNeeded()
+        let text = try #require(view.contentStorage.textStorage?.string as NSString?)
+        let apple = text.range(of: "Apple")
+        let start = try #require(view.position(from: view.beginningOfDocument, offset: apple.location))
+        let end = try #require(view.position(from: start, offset: apple.length))
+        let range = try #require(view.textRange(from: start, to: end))
+        view.selectedTextRange = range
+        let expectedCaret = view.caretRect(for: start)
+        let expectedFirst = view.firstRect(for: range)
+        for width: CGFloat in [10000, 180, 500] {
+            _ = view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+            #expect(view.caretRect(for: start) == expectedCaret)
+            #expect(view.firstRect(for: range) == expectedFirst)
+        }
+    }
+
+    @Test(arguments: ["甲乙丙丁", "مرحبا", "office", "👩‍💻e\u{301}后"]) @MainActor func closestPositionUsesNearestCaretBoundary(sample: String) async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown(sample)
+        await view.settled { view.currentSnapshot != nil }
+        var index = 0
+        for character in sample {
+            let length = String(character).utf16.count
+            let start = try #require(view.position(from: view.beginningOfDocument, offset: index))
+            let end = try #require(view.position(from: start, offset: length))
+            let range = try #require(view.textRange(from: start, to: end))
+            let selection = try #require(view.selectionRects(for: range).first)
+            let rect = view.firstRect(for: range)
+            let rtl = selection.writingDirection == .rightToLeft
+            for (fraction, expected) in [(0.25, rtl ? index + length : index), (0.75, rtl ? index : index + length)] {
+                let hit = try #require(view.closestPosition(to: CGPoint(x: rect.minX + rect.width * fraction, y: rect.midY)))
+                #expect(view.offset(from: view.beginningOfDocument, to: hit) == expected)
+            }
+            index += length
+        }
+    }
+
+    @Test @MainActor func selectionSetterMatchesNativeNotificationContract() async throws {
+        let native = UITextView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        native.text = "甲乙丙丁戊己庚辛"
+        let custom = MarkdownLabelView(frame: native.frame)
+        defer { custom.dismantleRenderSession() }
+        custom.setMarkdown(native.text)
+        await custom.settled { custom.currentSnapshot != nil }
+        let nativeDelegate = SelectionNotificationRecorder()
+        let customDelegate = SelectionNotificationRecorder()
+        native.inputDelegate = nativeDelegate
+        custom.inputDelegate = customDelegate
+        for endOffset in [4, 5, 6, 7, 6, 5] {
+            for input: any UITextInput in [native, custom] {
+                let start = try #require(input.position(from: input.beginningOfDocument, offset: 2))
+                let end = try #require(input.position(from: input.beginningOfDocument, offset: endOffset))
+                input.selectedTextRange = input.textRange(from: start, to: end)
+                let selection = try #require(input.selectedTextRange)
+                #expect(input.offset(from: input.beginningOfDocument, to: selection.start) == 2)
+                #expect(input.offset(from: input.beginningOfDocument, to: selection.end) == endOffset)
+            }
+        }
+        #expect(customDelegate.events == nativeDelegate.events)
+    }
+
     @Test(arguments: ["甲乙丙丁", "مرحبا", "office", "👩‍💻e\u{301}后"]) @MainActor func characterHitIncludesBothHalvesOfGlyph(sample: String) async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         defer { view.dismantleRenderSession() }
@@ -269,6 +336,27 @@ struct MarkdownTextSelectionTests {
         await handler.events.settled { handler.opened.count == 2 }
         #expect(handler.opened.last?.absoluteString == "https://example.com/two")
         #expect(!view.activateLink(at: CGPoint(x: rect.midX, y: rect.maxY + 45)))
+    }
+}
+
+@MainActor private final class SelectionNotificationRecorder: NSObject, UITextInputDelegate {
+    var events: [String] = []
+    @available(iOS 18.4, *)
+    func conversationContext(_ context: UIConversationContext?, didChange textInput: (any UITextInput)?) {}
+    func selectionWillChange(_ textInput: (any UITextInput)?) {
+        self.events.append("selectionWillChange")
+    }
+
+    func selectionDidChange(_ textInput: (any UITextInput)?) {
+        self.events.append("selectionDidChange")
+    }
+
+    func textWillChange(_ textInput: (any UITextInput)?) {
+        self.events.append("textWillChange")
+    }
+
+    func textDidChange(_ textInput: (any UITextInput)?) {
+        self.events.append("textDidChange")
     }
 }
 #endif

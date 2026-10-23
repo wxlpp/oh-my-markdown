@@ -411,6 +411,10 @@ extension MarkdownLabelView: UITextInput {
 
     /// Hit testing
     public func closestPosition(to point: CGPoint) -> UITextPosition? {
+        self.textPosition(at: point, nearestInsertionBoundary: true)
+    }
+
+    private func textPosition(at point: CGPoint, nearestInsertionBoundary: Bool) -> MarkdownTextPosition {
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         var nearestOffset = 0
         var nearestDistance = CGFloat.greatestFiniteMagnitude
@@ -431,7 +435,17 @@ extension MarkdownLabelView: UITextInput {
                     nearestHorizontalDistance = dx
                     let local = CGPoint(x: point.x - rect.minX, y: point.y - rect.minY)
                     let index = line.characterIndex(for: local)
-                    nearestOffset = base + min(max(index, line.characterRange.location), NSMaxRange(line.characterRange))
+                    let boundedIndex = min(max(index, line.characterRange.location), NSMaxRange(line.characterRange))
+                    nearestOffset = base + boundedIndex
+                    // TextKit distinguishes the character under the point from
+                    // the nearest insertion boundary, including RTL glyphs.
+                    if nearestInsertionBoundary,
+                       boundedIndex < NSMaxRange(line.characterRange),
+                       line.fractionOfDistanceThroughGlyph(for: local) > 0.5,
+                       let text = self.contentStorage.textStorage?.string as NSString?,
+                       nearestOffset < text.length {
+                        nearestOffset = NSMaxRange(text.rangeOfComposedCharacterSequence(at: nearestOffset))
+                    }
                 }
             }
             return fragment.layoutFragmentFrame.maxY < point.y
@@ -450,9 +464,8 @@ extension MarkdownLabelView: UITextInput {
     }
 
     public func characterRange(at point: CGPoint) -> UITextRange? {
-        guard
-            let pos = closestPosition(to: point) as? MarkdownTextPosition,
-            pos.offset < documentLength else {
+        let pos = self.textPosition(at: point, nearestInsertionBoundary: false)
+        guard pos.offset < documentLength else {
             return nil
         }
         guard let text = self.contentStorage.textStorage?.string as NSString? else { return nil }
