@@ -130,6 +130,9 @@ extension MarkdownLabelView: UITextInput {
             )
         }
         set {
+            let requestedRange = (newValue as? MarkdownTextRange)?.nsRange
+            let currentRange = (self.selectedTextRange as? MarkdownTextRange)?.nsRange
+            guard requestedRange != currentRange else { return }
             self._inputDelegate?.selectionWillChange(self)
             guard
                 let r = newValue as? MarkdownTextRange,

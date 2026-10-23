@@ -80,6 +80,26 @@ struct MarkdownTextSelectionTests {
         }
     }
 
+    @Test(arguments: ["कि", "कि की कु", "abc مرحبا xyz", "👩‍💻e\u{301}后"]) @MainActor func hitTestingPreservesGraphemeBoundaries(sample: String) async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown(sample)
+        await view.settled { view.currentSnapshot != nil }
+        var boundaries: Set = [0]
+        var offset = 0
+        for character in sample {
+            offset += String(character).utf16.count
+            boundaries.insert(offset)
+        }
+        let range = try #require(view.textRange(from: view.beginningOfDocument, to: view.endOfDocument))
+        let rect = view.firstRect(for: range)
+        for x in stride(from: rect.minX, through: rect.maxX, by: 1) {
+            let hit = try #require(view.closestPosition(to: CGPoint(x: x, y: rect.midY)))
+            let actual = view.offset(from: view.beginningOfDocument, to: hit)
+            #expect(boundaries.contains(actual), "Hit at x=\(x) returned interior offset \(actual)")
+        }
+    }
+
     @Test @MainActor func selectionSetterMatchesNativeNotificationContract() async throws {
         let native = UITextView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         native.text = "甲乙丙丁戊己庚辛"
@@ -101,7 +121,14 @@ struct MarkdownTextSelectionTests {
                 #expect(input.offset(from: input.beginningOfDocument, to: selection.end) == endOffset)
             }
         }
-        #expect(customDelegate.events == nativeDelegate.events)
+        // UIKit may reapply an unchanged range or clear it when dismissing
+        // selection. Preserve its notification contract in those paths too.
+        for step in 0 ..< 3 {
+            for input: any UITextInput in [native, custom] {
+                input.selectedTextRange = step == 0 ? input.selectedTextRange : nil
+            }
+            #expect(customDelegate.events == nativeDelegate.events)
+        }
     }
 
     @Test(arguments: ["甲乙丙丁", "مرحبا", "office", "👩‍💻e\u{301}后"]) @MainActor func characterHitIncludesBothHalvesOfGlyph(sample: String) async throws {

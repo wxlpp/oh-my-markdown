@@ -327,3 +327,15 @@ App 日志显示同一个文本视图的 frame/bounds 和选区 33...38 均不�
 - 静态门禁全部通过，macOS26宿主541项、Release warnings-as-errors、格式与平台边界检查；不替代延期的macOS15。
 - App实际checkout与manifest/resolved均为73123054c614933a7a1e1af8fc383eb32fa64fc7，最终右手柄拖动、复制和引用近点两项UI测试通过，截图已人工检查；Release真机签名构建通过。
 - 既有Harness与业务层未变化，沿用原有有效证据，不冒称重新执行其全部测试。剩余正式发布阻塞仍是用户明确延期的macOS15环境与运行门禁。
+
+## 继续处置剩余建议：字符边界与无变化选区（2026-10-23）
+
+用户明确延期 macOS15 测试；本轮不轮询 runner，继续验证未决建议。
+
+- S3 字素内部命中假设：新增逐像素命中检查，覆盖 `कि`、`कि की कु`、`abc مرحبا xyz`、组合 emoji 与重音字符。iOS18 实际运行未返回字素内部偏移；不据此增加归一化补丁。此检查不证明混合方向交界的所有视觉亲和性或字体连字行为。
+- S4 重复赋值通知：对照 UITextView，已选区再次赋相同范围不通知；首次清空通知，重复清空不通知。本库此前三步均通知，并重建相同选区。selection-boundary-notifications 与 selection-nil-probe 实际失败，原生14条事件、自定义18条。
+- 修复在 selectedTextRange setter 比较逻辑范围，无变化直接返回；真实改变仍通知。没有删除必要通知，也没有增加手柄锁定或像素补偿。临时 print 探针已删除。
+- 本轮是对既有 Claude S3/S4 建议的作者实测与处置，没有宣称新增 Claude PASS。
+
+验证：`selection-noop-full.xcresult` 的 iOS18 完整包测试通过，Math30项 + 主包524项 = 554项；真实改变选区的通知对照仍通过。随后将通知测试加强为逐步比较事件，并复查格式，不改变生产实现。macOS15与新版真机验收仍分别待办，不能将本轮模拟器验证写成真机验收。
+最终逐步通知对照与边界测试复跑：`selection-noop-final.xcresult`，23项通过；SwiftFormat lint及git diff --check通过。
