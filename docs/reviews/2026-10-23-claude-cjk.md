@@ -76,3 +76,31 @@
 - 修复后11项CJK会话/SwiftUI/公开模式测试通过，含参数化方向。日志.artifacts/claude-review/document-config-{red,green}.log。
 - 内部默认参数与首次空解析目前没有错误路径证据，保留为非阻断建议；不为消除一次空初始化解析新增状态机。
 - 底层Unicode分类、option bit及严格模式已有前一阶段专项和独立评审覆盖；本次报告未见头文件不等于这些项未验证。
+# 复核结论：**PASS**
+
+我只审了你贴的 `57f16f4..5145476` diff 和 session 片段。这次会话没有读文件或跑命令的工具，所以没有去仓库里核对上下文，也没有自己重跑测试。"11 项通过"是你报告的结果，我没有复现。
+
+## 阻断问题是否已解决：是
+
+**生产代码**
+- 三处删除后，`parseOptions` 只剩一个来源。view 的 `storedParseOptions` 和 session 的 `parseOptions` 都只保存用户配置的值，文档自带的选项只通过 `suppliedDocument` 生效。
+- `effectiveParseOptions = suppliedDocument?.parseOptions ?? parseOptions` 的效果是：有文档时用文档的选项，`setMarkdown` 清掉 `suppliedDocument` 后自动回到用户配置。不用再在 `setDocument` 里回写选项。
+- 两个平台的 `setDocument` 改动一致，session 侧也同步改了。如果只改 view 层，session 里的值仍会被覆盖，配置等于没改，现在没有这个问题。
+
+**新测试 `documentDoesNotReplaceSourceParsingConfiguration`**
+- 文档的选项与配置故意取相反值，两个方向都跑。覆盖了上一轮指出的两处：
+  1. getter：`#expect(view.parseOptions == configured)`。
+  2. 后续渲染：`setMarkdown` 之后的输出必须符合配置值，不能跟着文档走。
+- 去掉 session 那一行修改，`configuredCJK: true` 这一组就会失败；去掉 view 那一行，getter 断言会失败。所以测试确实测到了修改点。
+- 用 commit token 变化来判断渲染已稳定是对的。两个方向的前后字符串本来就不同，按 token 判断能直接给出断言失败，不会卡到超时。
+
+**原测试的调整**
+- setter 改成写 `.cjkFriendlyEmphasis`，这样新值和当前 getter 返回的 `[]` 不同，确实会触发一次提交，`settled { token != ... }` 不会空等。
+- `setMarkdown` 前补了 `view.parseOptions = []`，这一段的意图没变：在默认选项下按原文渲染。
+
+## 不阻断的建议
+
+1. **两个平台都要跑测试**：iOS 和 macOS 的实现都改了，请确认 11 项在两个平台上都通过。如果只跑了一个，PR 正文里写明是哪个。
+2. **公开 API 的语义变了**：`setDocument` 之后，`parseOptions` getter 不再返回文档的选项。如果 `parseOptions` 的 doc comment 或 SwiftUI 包装层（`fa1df30`）里有"反映当前文档选项"之类的说法，或者有依赖这个旧行为的比较逻辑，请顺手核对一下。
+
+iOS18同路径11项/3 suites通过，xcresult：.artifacts/cjk-final-ios/Options.xcresult。该专项覆盖本轮改动；前一版本完整iOS18结果仍仅代表其原revision。

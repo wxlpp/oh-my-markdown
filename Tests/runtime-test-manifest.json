@@ -30,6 +30,7 @@
       "activeAndPendingConfigurationCannotPublishOldResults(initialCJK:)",
       "ruleChangeReplacesBusyRetry()",
       "platformSameSourceAndDocumentAuthority()",
+      "documentDoesNotReplaceSourceParsingConfiguration(configuredCJK:)",
       "unchangedSourceReparsesWhenEnvironmentChanges(streaming:)",
       "cancelledSessionCannotOverwriteRestoredRules()",
       "lineEndBlankHitResolvesToInsertionBoundary()"
@@ -49,6 +50,7 @@
       "activeAndPendingConfigurationCannotPublishOldResults(initialCJK:)",
       "ruleChangeReplacesBusyRetry()",
       "platformSameSourceAndDocumentAuthority()",
+      "documentDoesNotReplaceSourceParsingConfiguration(configuredCJK:)",
       "unchangedSourceReparsesWhenEnvironmentChanges(streaming:)",
       "cancelledSessionCannotOverwriteRestoredRules()"
     ]
