@@ -23,8 +23,7 @@ struct MarkdownLabelViewRenderModeTests {
         #expect(view.renderMode == .static)
     }
 
-    /// `appendMarkdown` 之后无论之前是什么 mode 都翻 `.streaming`。
-    /// appendMarkdown always lands in `.streaming`.
+    /// 源码模式下 appendMarkdown 切到 streaming；显式文档模式保持 static。
     @Test func appendMarkdownSetsRenderModeStreaming() {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         view.setMarkdown("foo")

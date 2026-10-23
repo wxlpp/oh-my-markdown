@@ -106,3 +106,5 @@ public typealias MarkdownReviewConfiguration = MarkdownPlatformView.MarkdownRevi
 public typealias MarkdownAnnotationStatus = MarkdownPlatformView.MarkdownAnnotationStatus
 public typealias MarkdownMaterializationWork = MarkdownRenderKit.MarkdownMaterializationWork
 public typealias MarkdownMaterializationFallback = MarkdownRenderKit.MarkdownMaterializationFallback
+
+public typealias MarkdownParseOptions = MarkdownCore.MarkdownParseOptions

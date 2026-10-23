@@ -310,12 +310,32 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         }
     }
 
+    private var storedParseOptions: MarkdownParseOptions = []
+    private var hasAuthoritativeDocument = false
+
+    /// Changing rules reparses source-backed content; an explicit document stays authoritative.
+    public var parseOptions: MarkdownParseOptions {
+        get { self.storedParseOptions }
+        set {
+            guard !self.isDismantled, newValue != self.storedParseOptions else { return }
+            self.storedParseOptions = newValue
+            self.reviewSnapshotReady = false
+            self.driver().send(.replaceParseOptions(newValue))
+        }
+    }
+
+    public func setDocument(_ document: MarkdownDocument) {
+        guard !self.isDismantled else { return }
+        self.hasAuthoritativeDocument = true
+        self.reviewSnapshotReady = false
+        self.renderMode = .static
+        self.driver().send(.setDocument(document, self.configurationSnapshot()))
+    }
+
     public var blocks: [BlockNode] {
         get { self.renderedDocument?.blocks ?? [] }
         set {
-            guard !self.isDismantled else { return }
-            self.reviewSnapshotReady = false
-            self.driver().send(.setDocument(MarkdownDocument(parsedBlocks: newValue.map { ParsedBlockNode(block: $0) }), self.configurationSnapshot()))
+            self.setDocument(MarkdownDocument(parsedBlocks: newValue.map { ParsedBlockNode(block: $0) }, options: self.parseOptions))
         }
     }
 
@@ -572,9 +592,9 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
                 height: self.contentHeight
             )
         }
-        // Different width: measure at proposed width, then restore the real width.
-        // layoutSubviews will call resetLayout at the actual bounds width when needed,
-        // so we avoid a gratuitous second ensureLayout here.
+        // Restore the container width after probing. Geometry readers ensure
+        // layout on demand, so an unlaid-out view is not eagerly reflowed at 1pt
+        // after every measurement proposal.
         let prev = self.textContainer.size.width
         self.textContainer.size = CGSize(width: targetWidth, height: .greatestFiniteMagnitude)
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
@@ -605,14 +625,16 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     public func setMarkdown(_ source: String) {
         self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
+        self.hasAuthoritativeDocument = false
         self.renderMode = .static
         self.driver().send(.setSource(source, self.configurationSnapshot()))
     }
 
+    /// Appends in source mode. After setDocument, ignored until setMarkdown establishes a source.
     public func appendMarkdown(_ chunk: String) {
         self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
-        self.renderMode = .streaming
+        if !self.hasAuthoritativeDocument { self.renderMode = .streaming }
         self.driver().send(.append(chunk))
     }
 
@@ -772,20 +794,58 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     package func activateLink(at point: CGPoint) -> Bool {
         guard !self.isDismantled, let string = contentStorage.textStorage,
               bounds.contains(point) else { return false }
+        guard !self.hitsOrdinaryText(at: point, string: string) else { return false }
         var destination: URL?
-        string.enumerateAttribute(.link, in: NSRange(location: 0, length: string.length)) { value, range, stop in
+        var nearestDistance = CGFloat.greatestFiniteMagnitude
+        string.enumerateAttribute(.link, in: NSRange(location: 0, length: string.length)) { value, range, _ in
             guard let value,
-                  let start = position(from: beginningOfDocument, offset: range.location),
-                  let end = position(from: beginningOfDocument, offset: NSMaxRange(range)),
-                  let textRange = textRange(from: start, to: end),
-                  selectionRects(for: textRange).contains(where: { $0.rect.contains(point) })
+                  let url = (value as? URL) ?? (value as? String).flatMap(URL.init(string:))
             else { return }
-            destination = (value as? URL) ?? (value as? String).flatMap(URL.init(string:))
-            stop.pointee = ObjCBool(destination != nil)
+            for rect in self.linkGlyphRects(for: range) {
+                // Keep small citations visually compact, but give taps a finger-sized target.
+                let target = rect.insetBy(
+                    dx: -max(0, (44 - rect.width) / 2),
+                    dy: -max(0, (44 - rect.height) / 2)
+                )
+                guard target.contains(point) else { continue }
+                let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
+                let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
+                let distance = dx * dx + dy * dy
+                // Exact glyph hits win; overlapping targets choose the nearest link.
+                if distance < nearestDistance {
+                    nearestDistance = distance
+                    destination = url
+                }
+            }
         }
         guard let destination else { return false }
         self.driver().activateLink(destination, sourceRange: nil)
         return true
+    }
+
+    private func linkGlyphRects(for range: NSRange) -> [CGRect] {
+        guard let textRange = makeTextRange(from: range.location, to: NSMaxRange(range)) else { return [] }
+        var rects: [CGRect] = []
+        self.layoutManager.enumerateTextSegments(in: textRange, type: .highlight, options: []) { _, rect, _, _ in
+            rects.append(rect)
+            return true
+        }
+        return rects
+    }
+
+    private func hitsOrdinaryText(at point: CGPoint, string: NSAttributedString) -> Bool {
+        guard let position = closestPosition(to: point) else { return false }
+        let offset = self.offset(from: beginningOfDocument, to: position)
+        let text = string.string as NSString
+        // A caret can lie on either side of the glyph under the finger.
+        for index in [offset - 1, offset] where index >= 0 && index < string.length {
+            let range = text.rangeOfComposedCharacterSequence(at: index)
+            guard string.attribute(.link, at: index, effectiveRange: nil) == nil,
+                  !text.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { continue }
+            if self.linkGlyphRects(for: range).contains(where: { $0.contains(point) }) { return true }
+        }
+        return false
     }
 
     /// Install a stable wrapper to preserve its completed-cache identity.
@@ -857,7 +917,7 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         self.textInteraction = UITextInteraction(for: .nonEditable)
         self.textInteraction.textInput = self
         addInteraction(self.textInteraction)
-        // Tap recognizer for link activation / selection dismissal.
+        // Tap recognizer for link activation. UITextInteraction owns selection.
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tap.cancelsTouchesInView = false
         tap.delegate = self.linkTapDelegate
@@ -917,14 +977,9 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
         }
         let point = gesture.location(in: self)
         if self.activateReviewAnnotation(at: point) { return }
-        let activated = self.activateLink(at: point)
-        // Tap on non-link text clears any active selection.
-        if !activated, !self.layoutManager.textSelections.isEmpty {
-            self._inputDelegate?.selectionWillChange(self)
-            self.layoutManager.textSelections = []
-            self._inputDelegate?.selectionDidChange(self)
-            setNeedsDisplay()
-        }
+        // UITextInteraction owns selection and dismissal. Clearing here races
+        // its selection gestures when recognizers receive the same touch.
+        self.activateLink(at: point)
     }
 
     // MARK: Image loading

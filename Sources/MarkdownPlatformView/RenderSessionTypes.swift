@@ -59,10 +59,29 @@ package struct ParseSubmission: Hashable {
     package let sessionToken: ParseSessionToken
     package let commitToken: RenderCommitToken
     package let attempt: UInt8
+    package let parseOptions: MarkdownParseOptions
+
+    package init(
+        id: UUID,
+        sessionToken: ParseSessionToken,
+        commitToken: RenderCommitToken,
+        attempt: UInt8,
+        parseOptions: MarkdownParseOptions = []
+    ) {
+        self.id = id
+        self.sessionToken = sessionToken
+        self.commitToken = commitToken
+        self.attempt = attempt
+        self.parseOptions = parseOptions
+    }
 }
 
 package struct ParseJob {
     package let submission: ParseSubmission
+    package var parseOptions: MarkdownParseOptions {
+        self.submission.parseOptions
+    }
+
     private let suppliedSource: String?
     package let sourceBuffer: IncrementalSourceBuffer?
     package let previousParse: IncrementalParseResult?
@@ -194,6 +213,7 @@ package enum RenderSessionMutation {
     case setDocument(MarkdownDocument, RenderConfigurationSnapshot)
     case append(String)
     case replaceConfiguration(RenderConfigurationSnapshot)
+    case replaceParseOptions(MarkdownParseOptions)
     case replaceImageConfiguration(MarkdownImageConfiguration)
     /// Carries nothing: the policy, the handler and their identities all live on
     /// the main-actor driver, which is also what activation revalidates against.

@@ -13,7 +13,27 @@
       "testRootDemoIsAccessible()",
       "testRenderedMarkdownIsTraversedElementByElement()",
       "testTheRenderedDocumentGrowsWithTheTextSize()",
-      "linkHitTestingUsesGlyphsAcrossParagraphs()"
+      "linkHitTestingUsesGlyphsAcrossParagraphs()",
+      "extendingSelectionKeepsComposedCharactersWhole()",
+      "verticalMovementFollowsRenderedLines()",
+      "rightToLeftSelectionReportsItsDirectionAndVisualEdge()",
+      "logicalOffsetsRejectPositionsOutsideDocument()",
+      "characterHitIncludesBothHalvesOfGlyph(sample:)",
+      "mixedDirectionCharacterExtensionSelectsOneGrapheme()",
+      "mixedDirectionRectsFollowSelectedRun()",
+      "paragraphBoundaryRespectsStorageDirection()",
+      "farthestPositionExistsAtDocumentEdges()",
+      "repeatedVerticalMovementRetainsHorizontalIntent(prefix:)",
+      "explicitModeAndAppendKeepSource()",
+      "configurationChangeRejectsPreviousIncrementalState()",
+      "scalarSplitsMatchFullParse(source:)",
+      "activeAndPendingConfigurationCannotPublishOldResults(initialCJK:)",
+      "ruleChangeReplacesBusyRetry()",
+      "platformSameSourceAndDocumentAuthority()",
+      "documentDoesNotReplaceSourceParsingConfiguration(configuredCJK:)",
+      "unchangedSourceReparsesWhenEnvironmentChanges(streaming:)",
+      "cancelledSessionCannotOverwriteRestoredRules()",
+      "lineEndBlankHitResolvesToInsertionBoundary()"
     ]
   },
   "macos15": {
@@ -23,7 +43,16 @@
     ],
     "requiredTests": [
       "Parsed blocks include stable source fingerprints",
-      "合法公式 → .rendered，尺寸为正"
+      "合法公式 → .rendered，尺寸为正",
+      "explicitModeAndAppendKeepSource()",
+      "configurationChangeRejectsPreviousIncrementalState()",
+      "scalarSplitsMatchFullParse(source:)",
+      "activeAndPendingConfigurationCannotPublishOldResults(initialCJK:)",
+      "ruleChangeReplacesBusyRetry()",
+      "platformSameSourceAndDocumentAuthority()",
+      "documentDoesNotReplaceSourceParsingConfiguration(configuredCJK:)",
+      "unchangedSourceReparsesWhenEnvironmentChanges(streaming:)",
+      "cancelledSessionCannotOverwriteRestoredRules()"
     ]
   },
   "ios18-dynamic-type": {
