@@ -93,6 +93,17 @@ struct MarkdownTextSelectionTests {
         }
     }
 
+    @Test @MainActor func paragraphEndBlankHitStaysBeforeSeparator() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("第一段\n\n第二段")
+        await view.settled { view.currentSnapshot != nil }
+        let end = try #require(view.position(from: view.beginningOfDocument, offset: 3))
+        let caret = view.caretRect(for: end)
+        let hit = try #require(view.closestPosition(to: CGPoint(x: caret.maxX + 30, y: caret.midY)))
+        #expect(view.offset(from: view.beginningOfDocument, to: hit) == 3)
+    }
+
     @Test @MainActor func lineEndBlankHitResolvesToInsertionBoundary() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         defer { view.dismantleRenderSession() }
