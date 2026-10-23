@@ -329,7 +329,8 @@ extension MarkdownLabelView: UITextInput {
         for range: UITextRange
     ) {}
 
-    /// Geometry
+    /// Geometry queries must include preceding paragraphs: a width probe can
+    /// invalidate their wrapping and therefore every later paragraph's origin.
     public func firstRect(for range: UITextRange) -> CGRect {
         guard
             let r = range as? MarkdownTextRange,
@@ -339,6 +340,7 @@ extension MarkdownLabelView: UITextInput {
             ) else {
             return .null
         }
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         var result = CGRect.null
         self.layoutManager.enumerateTextSegments(in: tr, type: .standard, options: []) { _, frame, _, _ in
             result = frame
@@ -354,6 +356,7 @@ extension MarkdownLabelView: UITextInput {
             return .null
         }
         let zr = NSTextRange(location: loc)
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         var result = CGRect.null
         self.layoutManager.enumerateTextSegments(in: zr, type: .selection, options: []) { _, frame, _, _ in
             result = CGRect(x: frame.minX, y: frame.minY, width: 2, height: frame.height)
@@ -371,7 +374,7 @@ extension MarkdownLabelView: UITextInput {
             ) else {
             return []
         }
-        self.layoutManager.ensureLayout(for: tr)
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         var segments: [(NSTextRange?, CGRect)] = []
         self.layoutManager.enumerateTextSegments(in: tr, type: .selection, options: []) { segment, frame, _, _ in
             segments.append((segment, frame))

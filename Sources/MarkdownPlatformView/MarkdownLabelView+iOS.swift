@@ -592,15 +592,14 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
                 height: self.contentHeight
             )
         }
-        // Measurement must leave both the container and its layout at the real
-        // width. UIKit can query selection geometry before another layout pass;
-        // restoring only the width leaves caret/selection rectangles from the probe.
+        // Restore the container width after probing. Geometry readers ensure
+        // layout on demand, so an unlaid-out view is not eagerly reflowed at 1pt
+        // after every measurement proposal.
         let prev = self.textContainer.size.width
         self.textContainer.size = CGSize(width: targetWidth, height: .greatestFiniteMagnitude)
         self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         let h = self.contentHeight
         self.textContainer.size = CGSize(width: prev, height: .greatestFiniteMagnitude)
-        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         return CGSize(width: size.width, height: h)
     }
 

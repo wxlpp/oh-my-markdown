@@ -20,9 +20,13 @@ struct MarkdownTextSelectionTests {
         view.selectedTextRange = range
         let expectedCaret = view.caretRect(for: start)
         let expectedFirst = view.firstRect(for: range)
+        let expectedSelection = view.selectionRects(for: range).map(\.rect)
         for width: CGFloat in [10000, 180, 500] {
             _ = view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+            #expect(view.selectionRects(for: range).map(\.rect) == expectedSelection)
+            _ = view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
             #expect(view.caretRect(for: start) == expectedCaret)
+            _ = view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
             #expect(view.firstRect(for: range) == expectedFirst)
         }
     }
