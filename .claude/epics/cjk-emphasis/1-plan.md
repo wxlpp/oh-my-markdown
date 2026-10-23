@@ -1,5 +1,14 @@
 # CJK 强调解析实施计划
 
+## 最新集成证据
+
+- 57f16f4 已推送维护分支，尚未合并或发布 Markdown 正式版本。
+- iOS18 串行 package 与 Example 的 xcresult 清单断言：551 executed / 551 passed / 0 skipped / 0 failed。结果与运行环境记录保存在 `.artifacts/ios18-cjk-serial/`。
+- fork 发布后的平台最低版本复查全部通过：package、Example/ExampleTests/ExampleUITests 的 Debug/Release 均为 iOS18、macOS15。日志 `.artifacts/cjk-final-platform-floors.log`。macOS15 真机运行门禁仍未解决，不以新宿主测试替代。
+- 稳定版本消费者 fixture 已构建成功：本库57f16f4在临时bare仓库使用仅本地99.0.0标签，消费者只import OhMyMarkdown，显式声明MarkdownParseOptions并调用modifier；依赖真实远端fork0.8.1/0.9.1，独立cache，未使用mirror。证据 `.artifacts/cjk-consumer/positive.log` 和 fixture 的Package.resolved。这不表示99.0.0已公开发布。
+- 负例同时要求官方swift-markdown0.8.0，解析明确失败于与维护版0.8.1的版本冲突，见 `.artifacts/cjk-consumer/negative.log`；不宣称覆盖所有可能的第三方依赖组合。
+- Claude Opus5.5跨库定向评审运行中，结果路径 `.artifacts/claude-review/cjk-result.json`。App正在接入已推送的库revision；最终构建、交互与真机交付未完成。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use oh-my-superpowers:executing-plans to implement this plan task-by-task.
 
 **目标：** 按 spec 为 App 聊天提供可选择的解析器层 CJK 强调，不改写原文。

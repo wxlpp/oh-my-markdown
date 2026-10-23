@@ -327,7 +327,6 @@ public final class MarkdownLabelView: UIView, RenderSessionSink, RenderSessionRe
     public func setDocument(_ document: MarkdownDocument) {
         guard !self.isDismantled else { return }
         self.hasAuthoritativeDocument = true
-        self.storedParseOptions = document.parseOptions
         self.reviewSnapshotReady = false
         self.renderMode = .static
         self.driver().send(.setDocument(document, self.configurationSnapshot()))

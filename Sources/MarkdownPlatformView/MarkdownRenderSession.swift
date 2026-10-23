@@ -134,7 +134,6 @@ package actor MarkdownRenderSession: ParseResultSink {
             self.sourceBuffer = IncrementalSourceBuffer(recorder: self.workRecorder)
             self.latestParse = nil
             self.suppliedDocument = document
-            self.parseOptions = document.parseOptions
             self.placeholderMode = .static
             self.configuration = configuration
         case .append(let delta):

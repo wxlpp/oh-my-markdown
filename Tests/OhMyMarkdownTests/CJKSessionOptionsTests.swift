@@ -105,9 +105,9 @@ struct CJKSessionOptionsTests {
         await view.settled { view.currentSnapshot?.attributedString.string == self.source }
         view.setDocument(MarkdownDocument(parsing: "文**“档”**原文", options: .cjkFriendlyEmphasis))
         await view.settled { view.currentSnapshot?.attributedString.string == "文“档”原文" }
-        #expect(view.parseOptions == .cjkFriendlyEmphasis)
+        #expect(view.parseOptions == [])
         let token = view.currentCommitToken
-        view.parseOptions = []
+        view.parseOptions = .cjkFriendlyEmphasis
         await view.settled { view.currentCommitToken != token }
         #expect(view.currentSnapshot?.attributedString.string == "文“档”原文")
         let beforeAppend = view.currentCommitToken
@@ -115,10 +115,26 @@ struct CJKSessionOptionsTests {
         await view.settled { view.currentCommitToken != beforeAppend }
         #expect(view.currentSnapshot?.attributedString.string == "文“档”原文")
         #expect(view.renderMode == .static)
+        view.parseOptions = []
         view.setMarkdown(self.source)
         await view.settled { view.currentSnapshot?.attributedString.string == self.source }
         view.appendMarkdown("续")
         #expect(view.renderMode == .streaming)
         await view.settled { view.currentSnapshot?.attributedString.string == self.source + "续" }
+    }
+
+    @Test(arguments: [false, true])
+    func documentDoesNotReplaceSourceParsingConfiguration(configuredCJK: Bool) async {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        defer { view.dismantleRenderSession() }
+        let configured: MarkdownParseOptions = configuredCJK ? .cjkFriendlyEmphasis : []
+        view.parseOptions = configured
+        view.setDocument(MarkdownDocument(parsing: self.source, options: configuredCJK ? [] : .cjkFriendlyEmphasis))
+        await view.settled { view.currentSnapshot?.attributedString.string == (configuredCJK ? self.source : "中“文”后") }
+        #expect(view.parseOptions == configured)
+        let beforeSource = view.currentCommitToken
+        view.setMarkdown(self.source)
+        await view.settled { view.currentCommitToken != beforeSource }
+        #expect(view.currentSnapshot?.attributedString.string == (configuredCJK ? "中“文”后" : self.source))
     }
 }

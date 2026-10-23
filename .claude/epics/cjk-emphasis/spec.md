@@ -63,7 +63,7 @@ fork 是官方包的互斥替代品，不支持同一依赖图中与官方实现
 - `parsePipeline`、`parsePlainTail`、`parseMathTail` 都接受同一不可变 options；所有 swift-markdown 入口由单一映射函数构造 ParseOptions。
 - `ParseSubmission.parseOptions` 参与 Hashable identity，`ParseJob.parseOptions` 读取 submission；active/pending/retry 不能被新的配置误认领。结果提交时除了 commit/session token，还检查当前 options。
 - 平台 `MarkdownLabelView.parseOptions: MarkdownParseOptions`（UIKit/AppKit 同名同义，默认 []）。源模式下改变 options 触发新 generation，取消 pending/retry、使 active 结果失效、清空 latestParse/previousModel/parse cache，并按当前完整 source 重解析；不是普通样式重绘。
-- `setDocument` 渲染已解析文档：采用 document.parseOptions，文档是权威事实。因无原文，之后改变 view.parseOptions 只设置下一次 setMarkdown 的规则，不重解释现有 AST；文档模式不得保留旧 source 用来意外覆盖该文档。下一次 setMarkdown 才退出文档模式。
+- `setDocument` 渲染已解析文档：仅渲染该文档时采用 document.parseOptions，文档是权威事实；不改写调用方配置的 view.parseOptions。因无原文，之后改变 view.parseOptions 只设置下一次 setMarkdown 的规则，不重解释现有 AST；文档模式不得保留旧 source 用来意外覆盖该文档。下一次 setMarkdown 才退出文档模式，并使用调用方保留的配置。
 - SwiftUI 使用 `.markdownParseOptions(_:)` 环境 modifier，静态 MarkdownText 与 MarkdownStreamingText 都消费它。coordinator 同时比较 source/source identity 与 options，source 相同但 options 改变也触发重解析。流式 source 本身只负责文本，不保存全局解析配置。
 - App 在聊天 Markdown 根部应用 `.markdownParseOptions(.cjkFriendlyEmphasis)`，其他消费者默认 strict。
 
