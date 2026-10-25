@@ -18,6 +18,7 @@ import AppKit
         switch mutation {
         case .setSource(let source, _): self.events.append("set:\(source)")
         case .append(let source): self.events.append("append:\(source)")
+        case .replaceParseOptions: self.events.append("parseOptions")
         case .replaceConfiguration: self.events.append("configuration")
         case .replaceImageConfiguration: self.events.append("images")
         case .replaceLinkConfiguration: self.events.append("links")

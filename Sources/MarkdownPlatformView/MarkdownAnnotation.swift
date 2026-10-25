@@ -127,7 +127,7 @@ extension MarkdownLabelView {
         } else { textRange = nil }
         #endif
         guard let textRange else { return [] }
-        self.layoutManager.ensureLayout(for: textRange)
+        self.layoutManager.ensureLayout(for: self.layoutManager.documentRange)
         var rects: [CGRect] = []
         self.layoutManager.enumerateTextSegments(in: textRange, type: .highlight, options: []) { _, frame, _, _ in
             rects.append(frame)

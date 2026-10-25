@@ -283,12 +283,32 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         }
     }
 
+    private var storedParseOptions: MarkdownParseOptions = []
+    private var hasAuthoritativeDocument = false
+
+    /// Changing rules reparses source-backed content; an explicit document stays authoritative.
+    public var parseOptions: MarkdownParseOptions {
+        get { self.storedParseOptions }
+        set {
+            guard !self.isDismantled, newValue != self.storedParseOptions else { return }
+            self.storedParseOptions = newValue
+            self.reviewSnapshotReady = false
+            self.driver().send(.replaceParseOptions(newValue))
+        }
+    }
+
+    public func setDocument(_ document: MarkdownDocument) {
+        guard !self.isDismantled else { return }
+        self.hasAuthoritativeDocument = true
+        self.reviewSnapshotReady = false
+        self.renderMode = .static
+        self.driver().send(.setDocument(document, self.configurationSnapshot()))
+    }
+
     public var blocks: [BlockNode] {
         get { self.renderedDocument?.blocks ?? [] }
         set {
-            guard !self.isDismantled else { return }
-            self.reviewSnapshotReady = false
-            self.driver().send(.setDocument(MarkdownDocument(parsedBlocks: newValue.map { ParsedBlockNode(block: $0) }), self.configurationSnapshot()))
+            self.setDocument(MarkdownDocument(parsedBlocks: newValue.map { ParsedBlockNode(block: $0) }, options: self.parseOptions))
         }
     }
 
@@ -630,14 +650,16 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     public func setMarkdown(_ source: String) {
         self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
+        self.hasAuthoritativeDocument = false
         self.renderMode = .static
         self.driver().send(.setSource(source, self.configurationSnapshot()))
     }
 
+    /// Appends in source mode. After setDocument, ignored until setMarkdown establishes a source.
     public func appendMarkdown(_ chunk: String) {
         self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
-        self.renderMode = .streaming
+        if !self.hasAuthoritativeDocument { self.renderMode = .streaming }
         self.driver().send(.append(chunk))
     }
 

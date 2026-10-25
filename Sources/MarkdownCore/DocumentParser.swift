@@ -11,17 +11,18 @@ public struct MarkdownDocument: Sendable, Equatable {
     /// Parse a Markdown source string into a document synchronously.
     /// cmark-gfm has no cancellation hook: cancelling its calling task does not
     /// stop an entered parse. UI consumers admit this work through ParseExecutor.
-    public init(parsing source: String) {
-        self.blockStorage = PersistentValues(Self.parsePipeline(source))
+    public init(parsing source: String, options: MarkdownParseOptions = []) {
+        self.parseOptions = options
+        self.blockStorage = PersistentValues(Self.parsePipeline(source, options: options))
         self.workRecorder = nil
     }
 
     /// 数学感知解析管线：扫描 → 哨兵替换 → swift-markdown 解析 → 数学回填。
     /// `init(parsing:)` 与增量尾窗重解析共用此管线，保证两路语义完全一致。
-    package static func parsePipeline(_ source: String) -> [ParsedBlockNode] {
+    package static func parsePipeline(_ source: String, options: MarkdownParseOptions = []) -> [ParsedBlockNode] {
         let mathSpans = MathScanner.scan(source)
         let sub = MathSentinel.substitute(source: source, spans: mathSpans)
-        let swiftMarkdownDoc = Markdown.Document(parsing: sub.transformed)
+        let swiftMarkdownDoc = Markdown.Document(parsing: sub.transformed, options: options.swiftMarkdown)
         let raw = try! DocumentParser().parse(source: sub.transformed, document: swiftMarkdownDoc)
         // swift-markdown 在「变换串」上解析，sourceRange/fingerprint 都是变换串字节空间。
         // 但 init(parsing:) 与 parsingAppend 都按「原始源码」消费这些区间
@@ -33,10 +34,10 @@ public struct MarkdownDocument: Sendable, Equatable {
         return MathBackfill.resolve(mapped, table: sub.table)
     }
 
-    package static func parsePlainTail(_ source: String, metrics: inout ParseWorkMetrics, afterCmark: () -> Void = {}) throws -> [ParsedBlockNode] {
+    package static func parsePlainTail(_ source: String, options: MarkdownParseOptions = [], metrics: inout ParseWorkMetrics, afterCmark: () -> Void = {}) throws -> [ParsedBlockNode] {
         try Task.checkCancellation()
         metrics.cmarkInputBytes = ParseWorkMetrics.saturatingAdd(metrics.cmarkInputBytes, source.utf8.count)
-        let tree = Markdown.Document(parsing: source)
+        let tree = Markdown.Document(parsing: source, options: options.swiftMarkdown)
         afterCmark()
         try Task.checkCancellation()
         let parser = DocumentParser(checkCancellation: { try Task.checkCancellation() })
@@ -50,6 +51,7 @@ public struct MarkdownDocument: Sendable, Equatable {
 
     package static func parseMathTail(
         _ source: String,
+        options: MarkdownParseOptions = [],
         codeRegionsNeeded: Bool,
         hasReserved: Bool,
         metrics: inout ParseWorkMetrics,
@@ -58,6 +60,7 @@ public struct MarkdownDocument: Sendable, Equatable {
         if let result = try source.utf8.withContiguousStorageIfAvailable({ bytes in
             try self.parseMathTail(
                 source,
+                options: options,
                 bytes: bytes,
                 codeRegionsNeeded: codeRegionsNeeded,
                 hasReserved: hasReserved,
@@ -70,6 +73,7 @@ public struct MarkdownDocument: Sendable, Equatable {
         return try bytes.withUnsafeBufferPointer {
             try self.parseMathTail(
                 source,
+                options: options,
                 bytes: $0,
                 codeRegionsNeeded: codeRegionsNeeded,
                 hasReserved: hasReserved,
@@ -81,6 +85,7 @@ public struct MarkdownDocument: Sendable, Equatable {
 
     private static func parseMathTail(
         _ source: String,
+        options: MarkdownParseOptions,
         bytes: UnsafeBufferPointer<UInt8>,
         codeRegionsNeeded: Bool,
         hasReserved: Bool,
@@ -91,7 +96,7 @@ public struct MarkdownDocument: Sendable, Equatable {
         let sub = try MathSentinel.substitute(source: source, bytes: bytes, spans: scan.spans, hasReserved: hasReserved, metrics: &metrics)
         try Task.checkCancellation()
         metrics.cmarkInputBytes = ParseWorkMetrics.saturatingAdd(metrics.cmarkInputBytes, sub.transformed.utf8.count)
-        let tree = Markdown.Document(parsing: sub.transformed)
+        let tree = Markdown.Document(parsing: sub.transformed, options: options.swiftMarkdown)
         afterCmark()
         try Task.checkCancellation()
         let parser = DocumentParser(checkCancellation: { try Task.checkCancellation() })
@@ -158,7 +163,8 @@ public struct MarkdownDocument: Sendable, Equatable {
         }
     }
 
-    public init(parsedBlocks: [ParsedBlockNode]) {
+    public init(parsedBlocks: [ParsedBlockNode], options: MarkdownParseOptions = []) {
+        self.parseOptions = options
         // Programmatic top-level nodes have no source anchor. Their ordinal is
         // local to this document, deterministic across equivalent reconstruction,
         // and in a separate identity domain from parser/backfill source anchors.
@@ -169,14 +175,17 @@ public struct MarkdownDocument: Sendable, Equatable {
         self.workRecorder = nil
     }
 
-    package init(blockStorage: PersistentValues<ParsedBlockNode>, recorder: ParseWorkRecorder? = nil) {
+    package init(blockStorage: PersistentValues<ParsedBlockNode>, options: MarkdownParseOptions, recorder: ParseWorkRecorder? = nil) {
+        self.parseOptions = options
         self.blockStorage = blockStorage; self.workRecorder = recorder
     }
+
+    public let parseOptions: MarkdownParseOptions
 
     package let blockStorage: PersistentValues<ParsedBlockNode>
     package let workRecorder: ParseWorkRecorder?
     public static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.blockStorage == rhs.blockStorage
+        lhs.parseOptions == rhs.parseOptions && lhs.blockStorage == rhs.blockStorage
     }
 
     /// Top-level block nodes in document order.
@@ -206,7 +215,7 @@ public struct MarkdownDocument: Sendable, Equatable {
         // A source prefix alone cannot establish that earlier blocks are immutable:
         // appended definitions and cross-block math can change them retroactively.
         // Stateful streaming uses IncrementalSourceBuffer instead.
-        MarkdownDocument(parsing: newSource)
+        MarkdownDocument(parsing: newSource, options: self.parseOptions)
     }
 
     /// internal（非 private）：测试守卫复用同一套 reparse 边界计算，

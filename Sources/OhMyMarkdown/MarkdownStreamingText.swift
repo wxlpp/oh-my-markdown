@@ -75,6 +75,7 @@ public struct MarkdownStreamingText: View {
         // whole document in one breath, which is what a reader actually got.
         _MarkdownStreamingTextRepresentable(
             source: self.source,
+            parseOptions: self.parseOptions,
             style: self.style,
             theme: self.theme,
             mathRenderer: self.mathRenderer,
@@ -87,6 +88,7 @@ public struct MarkdownStreamingText: View {
         .accessibilityElement(children: .contain)
     }
 
+    @Environment(\.markdownParseOptions) private var parseOptions
     @Environment(\.markdownTheme) private var theme
     @Environment(\.markdownStyle) private var style
     @Environment(\.markdownMathRenderer) private var mathRenderer
@@ -112,6 +114,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     }
 
     let source: MarkdownStreamingSource
+    let parseOptions: MarkdownParseOptions
     let style: RenderStyle
     let theme: MarkdownTheme?
     let mathRenderer: MathRendererConfiguration?
@@ -138,11 +141,13 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
         view.setContentCompressionResistancePriority(.required, for: .vertical)
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
         view.setContentHuggingPriority(.required, for: .vertical)
+        view.parseOptions = self.parseOptions
         self.attachListener(to: view, context: context)
         return view
     }
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
+        uiView.parseOptions = self.parseOptions
         uiView.theme = self.theme
         uiView.onResourceError = self.resourceErrorHandler
         // Always forwarded, like the view's own didSet: identity is derived from
@@ -227,6 +232,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
     }
 
     let source: MarkdownStreamingSource
+    let parseOptions: MarkdownParseOptions
     let style: RenderStyle
     let theme: MarkdownTheme?
     let mathRenderer: MathRendererConfiguration?
@@ -249,11 +255,13 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> MarkdownLabelView {
         let view = MarkdownLabelView()
+        view.parseOptions = self.parseOptions
         self.attachListener(to: view, context: context)
         return view
     }
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
+        nsView.parseOptions = self.parseOptions
         nsView.theme = self.theme
         nsView.onResourceError = self.resourceErrorHandler
         // Always forwarded, like the view's own didSet: identity is derived from

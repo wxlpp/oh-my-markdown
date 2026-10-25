@@ -222,6 +222,7 @@ struct IncrementalParseDifferentialTests {
             let previous = try buffer.parse(previous: nil)
             let s = previous.state
             let state = IncrementalParseState(
+                parseOptions: s.parseOptions,
                 safeUTF8Boundary: boundary,
                 fence: s.fence,
                 inlineCodeDelimiterLength: s.inlineCodeDelimiterLength,

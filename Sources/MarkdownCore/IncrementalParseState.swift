@@ -67,6 +67,7 @@ package struct LineContext: Equatable {
 }
 
 package struct IncrementalParseState: Equatable {
+    package let parseOptions: MarkdownParseOptions
     package let safeUTF8Boundary: Int
     package let fence: FenceState?
     package let inlineCodeDelimiterLength: Int?
@@ -84,7 +85,7 @@ package struct IncrementalParseState: Equatable {
 }
 
 package enum FullParseReason: Equatable {
-    case nonPrefixEdit, missingState, referenceDefinition, setextOrThematicBreak
+    case configurationChanged, nonPrefixEdit, missingState, referenceDefinition, setextOrThematicBreak
     case htmlBlock, lazyContainer, splitCRLF, missingFinalNewline, inconsistentPrefix
 }
 
@@ -125,9 +126,11 @@ package struct IncrementalParseResult: Equatable {
 
 extension IncrementalSourceBuffer {
     /// The caller must admit synchronous cmark work through ParseExecutor.
-    package func parse(previous: IncrementalParseResult?, metrics initialMetrics: ParseWorkMetrics = .init(), afterCmark: () -> Void = {}) throws -> IncrementalParseResult {
+    package func parse(options: MarkdownParseOptions = [], previous: IncrementalParseResult?, metrics initialMetrics: ParseWorkMetrics = .init(), afterCmark: () -> Void = {}) throws -> IncrementalParseResult {
         var metrics = initialMetrics
-        let rejectedReason: FullParseReason? = if let previous, previous.state.sourceOrigin != self.origin {
+        let rejectedReason: FullParseReason? = if let previous, previous.state.parseOptions != options || previous.document.parseOptions != options {
+            .configurationChanged
+        } else if let previous, previous.state.sourceOrigin != self.origin {
             .nonPrefixEdit
         } else if let previous,
                   self.witness(at: previous.state.sourceUTF8Count) != previous.state.sourceWitness {
@@ -204,10 +207,11 @@ extension IncrementalSourceBuffer {
         let needsMath = hasGlobalMath || hasReserved || codeCandidate || (start == 0 && (previous?.state.containsMathSyntax == true || previous?.state.containsCodeSyntax == true || previous?.state.containsReservedScalar == true))
         var scan: MathScanner.ScanResult?
         if !needsMath {
-            raw = try MarkdownDocument.parsePlainTail(source, metrics: &metrics, afterCmark: afterCmark)
+            raw = try MarkdownDocument.parsePlainTail(source, options: options, metrics: &metrics, afterCmark: afterCmark)
         } else {
             let parsed = try MarkdownDocument.parseMathTail(
                 source,
+                options: options,
                 codeRegionsNeeded: codeCandidate || (start == 0 && previous?.state.containsCodeSyntax == true),
                 hasReserved: hasReserved || (start == 0 && previous?.state.containsReservedScalar == true),
                 metrics: &metrics,
@@ -264,7 +268,7 @@ extension IncrementalSourceBuffer {
         let changed = PersistentValues(shifted).slice(changedStart - prefixCount ..< changedEnd - prefixCount, metrics: &metrics)
         let retainedPrefix = previous?.document.blockStorage.slice(0 ..< changedStart, metrics: &metrics) ?? prefix
         let retainedSuffix = previous?.document.blockStorage.slice(replacedEnd ..< previous!.document.blockStorage.count, metrics: &metrics) ?? PersistentValues()
-        let document = MarkdownDocument(blockStorage: retainedPrefix.appending(changed, metrics: &metrics).appending(retainedSuffix, metrics: &metrics), recorder: self.recorder)
+        let document = MarkdownDocument(blockStorage: retainedPrefix.appending(changed, metrics: &metrics).appending(retainedSuffix, metrics: &metrics), options: options, recorder: self.recorder)
         let lastBlock = document.blockStorage.count > 0 ? document.blockStorage[document.blockStorage.count - 1] : nil
         let canCloseAtBlank: Bool = switch lastBlock?.block {
         case .paragraph, .heading, .thematicBreak, .mathBlock, .table: true
@@ -295,6 +299,7 @@ extension IncrementalSourceBuffer {
         default: nil
         }
         let state = IncrementalParseState(
+            parseOptions: options,
             safeUTF8Boundary: globalContext || hasReferences ? 0 : boundary,
             fence: scan?.fence.map { FenceState(marker: $0.marker, length: $0.length, startByte: $0.startByte + start) },
             inlineCodeDelimiterLength: scan?.inlineCodeDelimiterLength, math: scan?.math ?? .closed,

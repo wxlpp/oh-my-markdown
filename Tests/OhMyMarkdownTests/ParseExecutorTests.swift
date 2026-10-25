@@ -33,7 +33,7 @@ final class ParseGate: Sendable {
             self.condition.wait()
         }
         self.condition.unlock()
-        return MarkdownDocument(parsing: job.source)
+        return MarkdownDocument(parsing: job.source, options: job.parseOptions)
     }
 
     func release(_ sources: String...) {

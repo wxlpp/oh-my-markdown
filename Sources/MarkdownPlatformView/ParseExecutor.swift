@@ -88,7 +88,7 @@ package actor ParseExecutor {
                 var metrics = job.workMetrics
                 var buffer = job.sourceBuffer ?? IncrementalSourceBuffer(recorder: ParseWorkRecorder(attempt: job.attemptRecorder))
                 if job.sourceBuffer == nil { try buffer.append(job.source, metrics: &metrics) }
-                let result = try buffer.parse(previous: job.previousParse, metrics: metrics, afterCmark: { afterCmark(job) })
+                let result = try buffer.parse(options: job.parseOptions, previous: job.previousParse, metrics: metrics, afterCmark: { afterCmark(job) })
                 return ParseWorkerOutput(job: job, document: result.document, incremental: result)
             } catch {
                 return ParseWorkerOutput(job: job, document: nil, incremental: nil)
