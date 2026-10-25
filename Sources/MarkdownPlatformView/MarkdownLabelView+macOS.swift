@@ -650,6 +650,11 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     public func setMarkdown(_ source: String) {
         self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
+        // 整体替换文档时，按偏移记录的旧选区会落到新内容上；追加流式内容时保留。
+        if !self.layoutManager.textSelections.isEmpty {
+            self.layoutManager.textSelections = []
+            self.needsDisplay = true
+        }
         self.hasAuthoritativeDocument = false
         self.renderMode = .static
         self.driver().send(.setSource(source, self.configurationSnapshot()))

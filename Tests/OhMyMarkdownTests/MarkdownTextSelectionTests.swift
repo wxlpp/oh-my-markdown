@@ -33,6 +33,24 @@ struct MarkdownTextSelectionTests {
         #expect(view.reviewRects(for: range) == expected)
     }
 
+    @Test @MainActor func replacingTheDocumentClearsSelectionButAppendingKeepsIt() async throws {
+        let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        defer { view.dismantleRenderSession() }
+        view.setMarkdown("第一版的回答正文，用来选中其中一段文字。")
+        await view.settled { view.currentSnapshot != nil }
+        view.layoutIfNeeded()
+        let start = try #require(view.position(from: view.beginningOfDocument, offset: 2))
+        let end = try #require(view.position(from: start, offset: 3))
+        view.selectedTextRange = try #require(view.textRange(from: start, to: end))
+        view.appendMarkdown("继续流入的内容。")
+        await view.settled { (view.contentStorage.textStorage?.string ?? "").hasSuffix("继续流入的内容。") }
+        #expect(view.selectedTextRange != nil)
+        view.setMarkdown("完全不同的第二版回答。")
+        #expect(view.selectedTextRange == nil)
+        await view.settled { (view.contentStorage.textStorage?.string ?? "").hasPrefix("完全不同") }
+        #expect(view.selectedTextRange == nil)
+    }
+
     @Test @MainActor func measuringAnotherWidthPreservesSelectionGeometry() async throws {
         let view = MarkdownLabelView(frame: CGRect(x: 0, y: 0, width: 362, height: 400))
         defer { view.dismantleRenderSession() }
