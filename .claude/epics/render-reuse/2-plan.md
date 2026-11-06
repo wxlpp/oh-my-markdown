@@ -23,3 +23,9 @@
 3. App增加真实Markdown子视图/首帧内容验证；8项底层回归、长短父子收展、流式/选区、键盘旋转按影响运行。
 4. 录完整交互，抽原始帧对比旧52.915s正文空帧证据；必须正文与操作栏同时到位。出现反例则不得交付为已修复。
 5. format/diff检查、Debug/Release及签名真机构建；Claude复核集成差异与关键帧；覆盖安装并核实启动，保留用户数据。报告证据边界，不宣称发布门槛全过。
+
+### 评审补充验证
+
+- 新增零frame表格首次测量、连续不同proposal及真实bounds落位用例，验证后续异步模型不回退到宽度1。
+- RenderDisplayModel.detachedForReuse保留不可变节点但断开recorder/sourceBuffer；缓存恢复后读取source/parsedBlocks不增加旧recorder计数。
+- Exports.swift别名与umbrella-only consumer编译覆盖构造、清空、modifier和nil关闭。

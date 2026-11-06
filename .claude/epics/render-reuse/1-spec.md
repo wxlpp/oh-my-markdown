@@ -24,3 +24,9 @@ SwiftUI 通过 `.markdownRenderCache(cache)` 显式接入；nil 为原行为。i
 - App 的父/子收展原始帧必须显示正文首帧可见，不能用外层view身份、终态断言、降采样概览代替。
 - 复用已有8项布局回归；补正文首帧断言及带键盘/旋转、流式阅读和选择验证。Claude Code 独立评审后修复反馈。
 - macOS15运行门槛按作者既有指示暂缓；记录实际运行OS，不宣称满足旧系统发布门槛。不自动合并。
+
+## 设计评审处置
+
+- 首次零frame测量：同步把有效proposal宽度交给driver作为临时requestedWidth；resetLayout在bounds尚无有效宽度时沿用该值，不回退到1。真实bounds确定后仍以bounds为准。连续proposal变化时拒绝不匹配的bootstrap模型，异步提交必须与最新宽度一致。缓存键只用已提交snapshot的configuration和model.availableWidth。
+- 缓存模型专用脱离副本：共享不可变blocks/bundles，把preparedDocument替换为无recorder副本；sourceBuffer替换为调用方提供的原文值，清除materializationDelta并生成新identity，避免缓存访问改写旧解析任务统计。
+- OhMyMarkdown/Exports.swift明确导出缓存类型别名，增加只import OhMyMarkdown的consumer编译用例。
