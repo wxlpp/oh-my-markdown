@@ -108,3 +108,5 @@ public typealias MarkdownMaterializationWork = MarkdownRenderKit.MarkdownMateria
 public typealias MarkdownMaterializationFallback = MarkdownRenderKit.MarkdownMaterializationFallback
 
 public typealias MarkdownParseOptions = MarkdownCore.MarkdownParseOptions
+
+public typealias MarkdownRenderCache = MarkdownRenderKit.MarkdownRenderCache

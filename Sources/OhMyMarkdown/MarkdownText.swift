@@ -32,6 +32,7 @@ public struct MarkdownText: View {
         // whole document in one breath, which is what a reader actually got.
         _MarkdownTextRepresentable(
             source: self.source,
+            renderCache: self.renderCache,
             parseOptions: self.parseOptions,
             style: self.style,
             theme: self.theme,
@@ -47,6 +48,7 @@ public struct MarkdownText: View {
     }
 
     @Environment(\.markdownReviewConfiguration) private var reviewConfiguration
+    @Environment(\.markdownRenderCache) private var renderCache
     @Environment(\.markdownParseOptions) private var parseOptions
     @Environment(\.markdownTheme) private var theme
     @Environment(\.markdownStyle) private var style
@@ -66,10 +68,14 @@ public struct MarkdownText: View {
 
 private struct _MarkdownTextRepresentable: UIViewRepresentable {
     static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
+        if let cache = coordinator.renderCache {
+            uiView.preserveRenderedContent(in: cache, source: coordinator.lastSource)
+        }
         uiView.dismantleRenderSession()
     }
 
     final class Coordinator {
+        var renderCache: MarkdownRenderCache?
         var lastSource = ""
         var lastStyle: RenderStyle?
         var lastMathRenderer: MathRendererConfiguration?
@@ -79,6 +85,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     }
 
     let source: String
+    let renderCache: MarkdownRenderCache?
     let parseOptions: MarkdownParseOptions
     let style: RenderStyle
     let theme: MarkdownTheme?
@@ -104,6 +111,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
+        context.coordinator.renderCache = self.renderCache
         uiView.parseOptions = self.parseOptions
         uiView.reviewConfiguration = self.reviewConfiguration
         uiView.theme = self.theme
@@ -165,6 +173,9 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     )
         -> CGSize? {
         let width = proposal.width ?? UIView.layoutFittingExpandedSize.width
+        if let cache = self.renderCache {
+            uiView.restoreRenderedContent(from: cache, source: self.source, width: width)
+        }
         return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
     }
 }
@@ -173,10 +184,14 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
 
 private struct _MarkdownTextRepresentable: NSViewRepresentable {
     static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
+        if let cache = coordinator.renderCache {
+            nsView.preserveRenderedContent(in: cache, source: coordinator.lastSource)
+        }
         nsView.dismantleRenderSession()
     }
 
     final class Coordinator {
+        var renderCache: MarkdownRenderCache?
         var lastSource = ""
         var lastStyle: RenderStyle?
         var lastMathRenderer: MathRendererConfiguration?
@@ -186,6 +201,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     }
 
     let source: String
+    let renderCache: MarkdownRenderCache?
     let parseOptions: MarkdownParseOptions
     let style: RenderStyle
     let theme: MarkdownTheme?
@@ -206,6 +222,7 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
+        context.coordinator.renderCache = self.renderCache
         nsView.parseOptions = self.parseOptions
         nsView.reviewConfiguration = self.reviewConfiguration
         nsView.theme = self.theme
@@ -266,6 +283,9 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     )
         -> CGSize? {
         let width = proposal.width ?? nsView.fittingSize.width
+        if let cache = self.renderCache {
+            nsView.restoreRenderedContent(from: cache, source: self.source, width: width)
+        }
         let targetWidth = max(width, 1)
         let previousWidth = nsView.frame.width
         if abs(previousWidth - targetWidth) > 0.5 {

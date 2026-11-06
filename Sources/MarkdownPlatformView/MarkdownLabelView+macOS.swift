@@ -647,6 +647,42 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
         return found
     }
 
+    package func preserveRenderedContent(in cache: MarkdownRenderCache, source: String) {
+        guard !self.isDismantled, let token = self.currentCommitToken,
+              let snapshot = self.currentSnapshot, let configuration = snapshot.configuration else { return }
+        self.sessionRegistry.withAuthorizedSink(for: token) { sink in
+            guard sink === self else { return }
+            cache.store(snapshot.displayModel, source: source, options: self.parseOptions, configuration: configuration)
+        }
+    }
+
+    package func restoreRenderedContent(from cache: MarkdownRenderCache, source: String, width: CGFloat) {
+        guard !self.isDismantled, width.isFinite, width > 1 else { return }
+        // 零frame的首次proposal也必须进入会话，避免异步快照随后回退到宽度1。
+        if self.bounds.width <= 1, abs(self.requestedWidth - width) > 0.5 {
+            self.requestedWidth = width
+            self.driver().send(.replaceWidth(width))
+        }
+        guard self.currentSnapshot == nil || self.currentCommitToken?.sequence == 0 else { return }
+        guard self.bounds.width <= 1 || abs(self.bounds.width - width) < 0.5 else { return }
+        let configuration = self.configurationSnapshot()
+        let token = RenderCommitToken(sessionID: self.sessionID, sequence: 0, sourceRevision: 0, configurationGeneration: 0)
+        guard let model = cache.model(source: source, options: self.parseOptions, width: width, configuration: configuration) else {
+            // 连续测量提案变化时，不保留以旧宽度准备的临时表格/正文。
+            if self.currentCommitToken?.sequence == 0 {
+                let empty = RenderDisplayModel(runs: [], blocks: [], resources: [], accessibility: AccessibilityTree(roots: []))
+                self.replaceSnapshot(RenderMaterializer(configuration: configuration).materialize(empty, resources: .init(values: [:])), token: token)
+                self.currentSnapshot = nil
+                self.currentCommitToken = nil
+            }
+            return
+        }
+        guard self.currentSnapshot?.displayModel.identity != model.identity else { return }
+        // 不经过资源ledger/授权registry；无资源模型只同步恢复文字，真实session随后接管。
+        let snapshot = RenderMaterializer(configuration: configuration).materialize(model, resources: .init(values: [:]))
+        self.replaceSnapshot(snapshot, token: token)
+    }
+
     public func setMarkdown(_ source: String) {
         self.reviewSnapshotReady = false
         guard !self.isDismantled else { return }
@@ -828,7 +864,7 @@ public final class MarkdownLabelView: NSView, RenderSessionSink, RenderSessionRe
     }
 
     private func resetLayout() {
-        let w = max(bounds.width, 1)
+        let w = bounds.width > 1 ? bounds.width : self.requestedWidth
         self.textContainer.size = CGSize(width: w, height: .greatestFiniteMagnitude)
         if abs(w - self.requestedWidth) > 0.5 {
             self.requestedWidth = w

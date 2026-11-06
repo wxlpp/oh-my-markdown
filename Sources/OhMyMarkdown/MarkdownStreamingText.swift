@@ -1,3 +1,4 @@
+import MarkdownCore
 import MarkdownPlatformView
 import MarkdownRenderKit
 import SwiftUI
@@ -51,7 +52,7 @@ public final class MarkdownStreamingSource {
         self.listeners.removeValue(forKey: id)
     }
 
-    private var source = ""
+    fileprivate var source = ""
     private var listeners: [UUID: (Event) -> Void] = [:]
 
     private func send(_ event: Event) {
@@ -75,6 +76,7 @@ public struct MarkdownStreamingText: View {
         // whole document in one breath, which is what a reader actually got.
         _MarkdownStreamingTextRepresentable(
             source: self.source,
+            renderCache: self.renderCache,
             parseOptions: self.parseOptions,
             style: self.style,
             theme: self.theme,
@@ -88,6 +90,7 @@ public struct MarkdownStreamingText: View {
         .accessibilityElement(children: .contain)
     }
 
+    @Environment(\.markdownRenderCache) private var renderCache
     @Environment(\.markdownParseOptions) private var parseOptions
     @Environment(\.markdownTheme) private var theme
     @Environment(\.markdownStyle) private var style
@@ -104,6 +107,7 @@ public struct MarkdownStreamingText: View {
 #if canImport(UIKit)
 private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     final class Coordinator {
+        var renderCache: MarkdownRenderCache?
         var listenerID: UUID?
         var currentSource: MarkdownStreamingSource?
         var lastStyle: RenderStyle?
@@ -114,6 +118,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     }
 
     let source: MarkdownStreamingSource
+    let renderCache: MarkdownRenderCache?
     let parseOptions: MarkdownParseOptions
     let style: RenderStyle
     let theme: MarkdownTheme?
@@ -125,6 +130,9 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     let resourceErrorHandler: MarkdownResourceErrorHandler?
 
     static func dismantleUIView(_ uiView: MarkdownLabelView, coordinator: Coordinator) {
+        if let cache = coordinator.renderCache, let source = coordinator.currentSource?.source {
+            uiView.preserveRenderedContent(in: cache, source: source)
+        }
         uiView.dismantleRenderSession()
         coordinator.currentSource?.removeListener(coordinator.listenerID)
         coordinator.listenerID = nil
@@ -147,6 +155,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MarkdownLabelView, context: Context) {
+        context.coordinator.renderCache = self.renderCache
         uiView.parseOptions = self.parseOptions
         uiView.theme = self.theme
         uiView.onResourceError = self.resourceErrorHandler
@@ -199,6 +208,9 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
     )
         -> CGSize? {
         let width = proposal.width ?? UIView.layoutFittingExpandedSize.width
+        if let cache = self.renderCache {
+            uiView.restoreRenderedContent(from: cache, source: self.source.source, width: width)
+        }
         return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
     }
 
@@ -222,6 +234,7 @@ private struct _MarkdownStreamingTextRepresentable: UIViewRepresentable {
 #elseif canImport(AppKit)
 private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
     final class Coordinator {
+        var renderCache: MarkdownRenderCache?
         var listenerID: UUID?
         var currentSource: MarkdownStreamingSource?
         var lastStyle: RenderStyle?
@@ -232,6 +245,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
     }
 
     let source: MarkdownStreamingSource
+    let renderCache: MarkdownRenderCache?
     let parseOptions: MarkdownParseOptions
     let style: RenderStyle
     let theme: MarkdownTheme?
@@ -243,6 +257,9 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
     let resourceErrorHandler: MarkdownResourceErrorHandler?
 
     static func dismantleNSView(_ nsView: MarkdownLabelView, coordinator: Coordinator) {
+        if let cache = coordinator.renderCache, let source = coordinator.currentSource?.source {
+            nsView.preserveRenderedContent(in: cache, source: source)
+        }
         nsView.dismantleRenderSession()
         coordinator.currentSource?.removeListener(coordinator.listenerID)
         coordinator.listenerID = nil
@@ -261,6 +278,7 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MarkdownLabelView, context: Context) {
+        context.coordinator.renderCache = self.renderCache
         nsView.parseOptions = self.parseOptions
         nsView.theme = self.theme
         nsView.onResourceError = self.resourceErrorHandler
@@ -313,6 +331,9 @@ private struct _MarkdownStreamingTextRepresentable: NSViewRepresentable {
     )
         -> CGSize? {
         let width = proposal.width ?? nsView.fittingSize.width
+        if let cache = self.renderCache {
+            nsView.restoreRenderedContent(from: cache, source: self.source.source, width: width)
+        }
         let targetWidth = max(width, 1)
         let previousWidth = nsView.frame.width
         if abs(previousWidth - targetWidth) > 0.5 {

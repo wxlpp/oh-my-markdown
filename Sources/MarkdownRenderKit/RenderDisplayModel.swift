@@ -146,6 +146,27 @@ public struct RenderDisplayModel: Sendable, Equatable {
         self.placeholderMode = model.placeholderMode
     }
 
+    /// 缓存共享不可变节点，但不能继续写入旧解析任务的统计或增量基线。
+    package func detachedForReuse(source: String) -> Self {
+        Self(reusing: self, source: source)
+    }
+
+    private init(reusing model: Self, source: String) {
+        self.identity = UUID()
+        self.materializationDelta = nil
+        self.bundles = model.bundles
+        self.standaloneRuns = model.standaloneRuns
+        self.standaloneResources = model.standaloneResources
+        self.standaloneAccessibility = model.standaloneAccessibility
+        self.preparedDocument = model.preparedDocument.map {
+            MarkdownDocument(blockStorage: $0.blockStorage, options: $0.parseOptions)
+        }
+        self.storedSource = source
+        self.sourceBuffer = nil
+        self.availableWidth = model.availableWidth
+        self.placeholderMode = model.placeholderMode
+    }
+
     package static func prepareSyntax(
         _ bundles: PersistentValues<DisplayBlockBundle>, using cache: SyntaxHighlightCache = .shared,
         metrics: inout ParseWorkMetrics
