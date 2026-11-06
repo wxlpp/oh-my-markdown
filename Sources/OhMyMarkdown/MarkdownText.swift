@@ -173,7 +173,7 @@ private struct _MarkdownTextRepresentable: UIViewRepresentable {
     )
         -> CGSize? {
         let width = proposal.width ?? UIView.layoutFittingExpandedSize.width
-        if let cache = self.renderCache {
+        if let cache = self.renderCache, let width = proposal.width {
             uiView.restoreRenderedContent(from: cache, source: self.source, width: width)
         }
         return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
@@ -283,13 +283,13 @@ private struct _MarkdownTextRepresentable: NSViewRepresentable {
     )
         -> CGSize? {
         let width = proposal.width ?? nsView.fittingSize.width
-        if let cache = self.renderCache {
-            nsView.restoreRenderedContent(from: cache, source: self.source, width: width)
-        }
         let targetWidth = max(width, 1)
         let previousWidth = nsView.frame.width
         if abs(previousWidth - targetWidth) > 0.5 {
             nsView.frame.size.width = targetWidth
+        }
+        if let cache = self.renderCache, let width = proposal.width {
+            nsView.restoreRenderedContent(from: cache, source: self.source, width: width)
         }
         let fitted = nsView.intrinsicContentSize
         return CGSize(width: targetWidth, height: fitted.height)

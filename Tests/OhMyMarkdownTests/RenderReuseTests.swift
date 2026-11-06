@@ -35,6 +35,8 @@ struct RenderReuseTests {
         #expect(fresh.intrinsicContentSize.height > 1)
         #expect(fresh.currentCommitToken?.sequence == 0)
         fresh.appendMarkdown("\n\n后续输出")
+        fresh.restoreRenderedContent(from: cache, source: source + "\n\n后续输出", width: width)
+        #expect(fresh.currentSnapshot?.attributedString.string == text)
         await fresh.settled { fresh.currentSnapshot?.attributedString.string.contains("后续输出") == true }
         #expect((fresh.currentCommitToken?.sequence ?? 0) > 0)
         #expect(fresh.currentSnapshot?.attributedString.string.hasPrefix(text) == true)
@@ -134,6 +136,31 @@ struct RenderReuseTests {
         #endif
         await fresh.settled { fresh.currentSnapshot?.displayModel.availableWidth == 280 }
         #expect(fresh.currentSnapshot?.displayModel.availableWidth == 280)
+        fresh.dismantleRenderSession()
+    }
+
+    @Test func changedProposalClearsBootstrapAfterFrameWasAssigned() async {
+        let source = "| A | B |\n|---|---|\n| Text | More text |"
+        let cache = MarkdownRenderCache()
+        let old = await self.rendered(source)
+        old.preserveRenderedContent(in: cache, source: source)
+        old.dismantleRenderSession()
+        let fresh = imageTestView(frame: .zero)
+        fresh.setMarkdown(source)
+        fresh.restoreRenderedContent(from: cache, source: source, width: 320)
+        fresh.frame = CGRect(x: 0, y: 0, width: 320, height: 600)
+        fresh.restoreRenderedContent(from: cache, source: source, width: 240)
+        #expect(fresh.currentSnapshot == nil)
+        fresh.frame.size.width = 240
+        #if canImport(UIKit)
+        fresh.setNeedsLayout()
+        fresh.layoutIfNeeded()
+        #else
+        fresh.needsLayout = true
+        fresh.layoutSubtreeIfNeeded()
+        #endif
+        await fresh.settled { fresh.currentSnapshot?.displayModel.availableWidth == 240 }
+        #expect(fresh.currentSnapshot?.displayModel.availableWidth == 240)
         fresh.dismantleRenderSession()
     }
 

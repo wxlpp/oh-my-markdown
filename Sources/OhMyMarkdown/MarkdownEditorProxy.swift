@@ -1,3 +1,4 @@
+// swiftformat:disable environmentEntry
 import Foundation
 import MarkdownPlatformView
 import SwiftUI
@@ -78,7 +79,10 @@ public struct MarkdownEditorReader<Content: View>: View {
 extension EnvironmentValues {
     @Entry var markdownEditorProxy: MarkdownEditorProxy? = nil
 
-    @Entry var markdownEditorInsertTextHandler: ((NSRange, String) -> MarkdownEditorInputAction)? = nil
+    var markdownEditorInsertTextHandler: ((NSRange, String) -> MarkdownEditorInputAction)? {
+        get { self[MarkdownEditorInsertTextHandlerKey.self] }
+        set { self[MarkdownEditorInsertTextHandlerKey.self] = newValue }
+    }
 }
 
 extension View {
@@ -106,5 +110,12 @@ extension MarkdownEditorProxy {
     /// updated. Not part of the public API.
     static func _attach(_ proxy: MarkdownEditorProxy?, to view: MarkdownEditorTextView) {
         proxy?.attach(view)
+    }
+}
+
+/// 闭包使用显式环境键；保留原有回调语义，避免 @Entry 对不可比较值的诊断。
+private struct MarkdownEditorInsertTextHandlerKey: EnvironmentKey {
+    static var defaultValue: ((NSRange, String) -> MarkdownEditorInputAction)? {
+        nil
     }
 }

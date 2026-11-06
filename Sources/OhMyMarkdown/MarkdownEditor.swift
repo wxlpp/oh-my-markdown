@@ -1,3 +1,4 @@
+// swiftformat:disable environmentEntry
 import MarkdownCore
 import MarkdownPlatformView
 import MarkdownRenderKit
@@ -35,7 +36,10 @@ public struct MarkdownEditor: View {
 extension EnvironmentValues {
     @Entry fileprivate var markdownEditorOptions: MarkdownEditorOptions = .default
 
-    @Entry fileprivate var markdownEditorSelectionHandler: ((MarkdownEditorSelection) -> Void)? = nil
+    fileprivate var markdownEditorSelectionHandler: ((MarkdownEditorSelection) -> Void)? {
+        get { self[MarkdownEditorSelectionHandlerKey.self] }
+        set { self[MarkdownEditorSelectionHandlerKey.self] = newValue }
+    }
 }
 
 extension View {
@@ -166,3 +170,10 @@ private struct _MarkdownEditorRepresentable: NSViewRepresentable {
     }
 }
 #endif
+
+/// 闭包使用显式环境键；保留原有回调语义，避免 @Entry 对不可比较值的诊断。
+private struct MarkdownEditorSelectionHandlerKey: EnvironmentKey {
+    static var defaultValue: ((MarkdownEditorSelection) -> Void)? {
+        nil
+    }
+}

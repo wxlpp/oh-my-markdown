@@ -11,8 +11,8 @@ import AppKit
 
 @MainActor @Suite(.serialized, .timeLimit(.minutes(2)))
 struct RenderCacheHostingTests {
-    @Test(arguments: [false, true])
-    func rebuiltSwiftUIBodyHasTextDuringFirstLayout(streaming: Bool) async throws {
+    @Test(arguments: [false, true], [false, true])
+    func rebuiltSwiftUIBodyHasTextDuringFirstLayout(streaming: Bool, darkAndLarge: Bool) async throws {
         let cache = MarkdownRenderCache()
         let source = "Completed **body**\n\nSecond paragraph."
         let stream = MarkdownStreamingSource(source)
@@ -22,7 +22,10 @@ struct RenderCacheHostingTests {
                     if streaming { MarkdownStreamingText(stream) }
                     else { MarkdownText(source) }
                 }
-            }.markdownRenderCache(cache).frame(width: 320)
+            }.markdownRenderCache(cache)
+                .environment(\.colorScheme, darkAndLarge ? .dark : .light)
+                .environment(\.dynamicTypeSize, darkAndLarge ? .xxxLarge : .large)
+                .frame(width: 320)
         }
         #if canImport(UIKit)
         let host = UIHostingController(rootView: content(visible: true))
@@ -52,6 +55,7 @@ struct RenderCacheHostingTests {
         // No async turn between construction and these first-frame assertions.
         let fresh = try #require(firstLabel(in: host))
         #expect(fresh !== old)
+        #expect(fresh.intrinsicContentSize.height > 1)
         #expect(fresh.currentSnapshot?.attributedString.string == text)
         #expect(fresh.currentCommitToken?.sequence == 0)
         withExtendedLifetime(host) {}

@@ -20,3 +20,11 @@
 ## 决策
 
 缓存仅在拆卸时写入，不在每次流式追加时复制或哈希全文；只收无异步资源模型，图片/数学/SVG仍走原有资源授权链。容量是原文UTF8预算，不伪称精确堆字节。缓存不保留UIView、选区或旧session诊断对象。
+
+## 评审修复
+
+- 完整当前主机测试：520 + 30项通过；平台floor、资源ownership、URL activation、format通过。严格Release失败在旧编辑器两个closure @Entry的新版编译器诊断，未绕过；改显式EnvironmentKey并局部禁止formatter改回宏，保持API/回调语义。
+- iOS27.2：24项平台会话/首帧/SwiftUI测试通过（ios-first-frame.xcresult）。
+- 独立checkpoint评审BLOCK：有效bounds后第二个proposal提前返回，保留了旧宽度bootstrap。新增失败复现width-red.log，修正拒绝路径清理；macOS先设置测量frame再恢复，匹配bounds的proposal同步交给driver。
+- Claude Opus5.5/high标准模式评审REVISE：R1追加后缓存未命中不应清正文；R2 nil宽度探测不应发送巨宽replaceWidth。追加复现append-red.log后修复：只有宽度不匹配清临时正文，nil proposal不尝试缓存恢复。
+- 深色+xxxLarge SwiftUI拆装以及首次高度断言已补；37项定向测试通过（review-green.log）。待严格Release复跑和评审修复复核。
