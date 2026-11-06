@@ -28,3 +28,12 @@
 - 独立checkpoint评审BLOCK：有效bounds后第二个proposal提前返回，保留了旧宽度bootstrap。新增失败复现width-red.log，修正拒绝路径清理；macOS先设置测量frame再恢复，匹配bounds的proposal同步交给driver。
 - Claude Opus5.5/high标准模式评审REVISE：R1追加后缓存未命中不应清正文；R2 nil宽度探测不应发送巨宽replaceWidth。追加复现append-red.log后修复：只有宽度不匹配清临时正文，nil proposal不尝试缓存恢复。
 - 深色+xxxLarge SwiftUI拆装以及首次高度断言已补；37项定向测试通过（review-green.log）。待严格Release复跑和评审修复复核。
+
+## 当前通过结果（代码2e2cf69）
+
+- static-reviewed：全部门槛通过；521项主测试 + 30项数学测试通过，严格Release `-warnings-as-errors`通过，format/平台floor/资源ownership/链接检查通过。
+- ios-reviewed.xcresult：iOS27.2共25项测试通过（4 suites，包含新增width回归和4组hosting参数），不冒称iOS18。
+- 独立checkpoint修复复核PASS；Claude Opus5.5/high复核PASS，完整报告 claude-fix.md。复用既有token、资源、LRU评审，不重复全审。
+- Claude留有非阻断取舍：多宽度试探型容器可能重新排版/撤掉宽度失配bootstrap；App固定聊天列宽的目标路径仍须原始帧验证。当前缓存不是任意布局的无闪烁保证。
+- 两处旧编辑器文件使用文件级swiftformat:disable environmentEntry，不是单行禁用；仅关闭该宏转换规则，其他格式规则仍运行。
+- App已固定消费2e2cf69012aed243bb17481fab0696cf40733220，未合并。App真实回归/录屏进行中。
